@@ -109,6 +109,34 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+# Loader node -> the input whose choices are the model files ComfyUI can see.
+MODEL_LOADERS = {
+    "checkpoints": ("CheckpointLoaderSimple", "ckpt_name"),
+    "diffusion_models": ("UNETLoader", "unet_name"),
+    "vae": ("VAELoader", "vae_name"),
+    "text_encoders": ("CLIPLoader", "clip_name"),
+    "clip_vision": ("CLIPVisionLoader", "clip_name"),
+    "loras": ("LoraLoaderModelOnly", "lora_name"),
+    "controlnet": ("ControlNetLoader", "control_net_name"),
+    "upscale_models": ("UpscaleModelLoader", "model_name"),
+}
+
+
+def comfy_model_files(object_info: dict[str, Any]) -> dict[str, Any]:
+    """List the model files each core loader offers, read from ``/object_info`` combo inputs."""
+    out: dict[str, Any] = {}
+    for kind, (node, field) in MODEL_LOADERS.items():
+        spec = object_info.get(node, {}).get("input", {}).get("required", {}).get(field)
+        if not spec:
+            out[kind] = None  # loader node not installed
+            continue
+        choices = spec[0]
+        if choices == "COMBO" and len(spec) > 1:  # newer schema: ["COMBO", {"options": [...]}]
+            choices = spec[1].get("options", [])
+        out[kind] = sorted(choices) if isinstance(choices, list) else []
+    return out
+
+
 def _try(fn: Any) -> Any:
     try:
         return fn()
@@ -135,8 +163,9 @@ def cmd_audit(args: argparse.Namespace) -> int:
         timeout=20).stdout[:2000] or "docker not available")
     report["comfyui_system_stats"] = _try(
         lambda: httpx.get(f"{settings.comfyui.url}/system_stats", timeout=5).json())
-    report["comfyui_node_classes"] = _try(lambda: sorted(
-        httpx.get(f"{settings.comfyui.url}/object_info", timeout=30).json()))
+    object_info = _try(lambda: httpx.get(f"{settings.comfyui.url}/object_info", timeout=30).json())
+    report["comfyui_node_classes"] = (object_info if "error" in object_info else sorted(object_info))
+    report["comfyui_models"] = (object_info if "error" in object_info else comfy_model_files(object_info))
     report["ollama_models"] = _try(
         lambda: httpx.get(f"{settings.ollama.url}/api/tags", timeout=5).json())
     report["ollama_loaded"] = _try(

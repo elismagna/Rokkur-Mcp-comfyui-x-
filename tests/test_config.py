@@ -28,3 +28,17 @@ def test_env_overrides_are_typed_and_nested():
 
 def test_env_override_parser_ignores_unrelated():
     assert env_overrides({"PATH": "/bin", "STUDIO_X": "1"}) == {}
+
+
+def test_comfy_model_files_reads_both_combo_schemas() -> None:
+    from rokkur_studio.cli import comfy_model_files
+
+    info = {
+        "CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [["b.safetensors", "a.st"]]}}},
+        "UNETLoader": {"input": {"required": {"unet_name": ["COMBO", {"options": ["wan.safetensors"]}],
+                                              "weight_dtype": [["default"]]}}},
+    }
+    files = comfy_model_files(info)
+    assert files["checkpoints"] == ["a.st", "b.safetensors"]
+    assert files["diffusion_models"] == ["wan.safetensors"]
+    assert files["vae"] is None

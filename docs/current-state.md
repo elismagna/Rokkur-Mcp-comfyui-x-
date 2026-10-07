@@ -38,10 +38,10 @@ documented, public interfaces:
 |---|---|
 | Studio stack | Image builds, Postgres 16.15 up, migrations applied, FFmpeg present in the image. Docker Desktop runs on WSL2. |
 | Ollama | **Reachable** at `host.docker.internal:11434`. Nothing loaded at audit time. Installed: `qwen3.5:9b`, `qwen3.5:4b`, `odysseus-vision:9b` (from qwen3.5:9b), `satan-odysseus:9b` and `satan:latest` (qwen3.5 9B), `gemma4:12b`, `gemma3:12b`, `qwen2.5-coder:7b`, `deepseek-r1:8b`, all Q4_K_M. Studio's default agent model is now `qwen3.5:9b` (tools + vision, ~6.6 GB). The `odysseus-*` and `satan*` models look like Odysseus's own; Studio does not use or change them. |
-| ComfyUI | **Not reachable** from the containers (`Network is unreachable` on `host.docker.internal:8188`). Either ComfyUI was not running, runs on another port, or listens on 127.0.0.1 only. Node classes and GPU stats are therefore still unknown. |
+| ComfyUI | **Reachable** (second audit, 2026-10-07). ComfyUI Desktop 0.39.1 (standalone), PyTorch 2.12.1+cu130, launched with `--listen 0.0.0.0`. GPU: RTX 3070, 8.0 GB VRAM (3.0 GB free at audit time, so something else held ~5 GB); 32 GB RAM with only 3 GB free. 969 node classes, all core or API nodes: **no custom node packs** (no VideoHelperSuite). Every node `v2v_preview` uses is present. Local video model families available as core nodes: Wan 2.1/2.2 (`WanVaceToVideo`, `WanFunControlToVideo`, `Wan22FunControlToVideo`), LTX-Video, HunyuanVideo 1.5, Cosmos; also `FrameInterpolate`, `SeedVR2*` and `SAM3_VideoTrack`. Installed model files not yet listed: the audit now records them under `comfyui_models`. |
 | Docker CLI inside the container | Not present, by design: the Docker socket is not mounted. |
 
 ## Next audit step
 
-Make ComfyUI reachable from Docker (see `docs/troubleshooting.md`), then rerun
-`scripts/studio.ps1 audit` and `scripts/studio.ps1 comfy-check`.
+Rerun `scripts/studio.ps1 audit` (now lists model files) and `scripts/studio.ps1 comfy-check`, then add a
+`v2v_3070_quality` template built on the models actually installed.
