@@ -139,3 +139,12 @@ def test_validate_against_object_info_reports_missing_nodes_and_options():
     problems = validate_against_object_info(t, info)
     assert any("LoadVideo not installed" in p for p in problems)
     assert any("ckpt_name" in p for p in problems)
+
+
+def test_validate_flags_loader_with_no_files_installed():
+    t = TemplateRegistry(WF).get("v2v_preview")
+    info = {cls: {"input": {"required": {k: [[]] if k == "ckpt_name" else ["INT"]
+                                         for k in node["inputs"]}}}
+            for cls, node in ((n["class_type"], n) for n in t.workflow.values())}
+    problems = validate_against_object_info(t, info)
+    assert any("ckpt_name" in p and "none installed" in p for p in problems)

@@ -177,8 +177,9 @@ def validate_against_object_info(template: WorkflowTemplate,
             choices = spec[0]
             if choices == "COMBO" and len(spec) > 1 and isinstance(spec[1], dict):
                 choices = spec[1].get("options")
-            if isinstance(choices, list) and not isinstance(value, list) and choices \
-                    and value not in choices:
+            if isinstance(choices, list) and not isinstance(value, list) and value not in choices:
+                # An empty list means ComfyUI has no files at all for this loader (e.g. no checkpoints).
+                hint = f"e.g. {choices[:3]}" if choices else "none installed"
                 problems.append(f"node {node_id} ({cls}): {key}={value!r} not among installed "
-                                f"options (e.g. {choices[:3]})")
+                                f"options ({hint})")
     return problems
