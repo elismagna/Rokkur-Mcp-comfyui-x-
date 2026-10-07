@@ -106,6 +106,7 @@ names via `scripts\studio.ps1`.
 
 ## Documentation
 
+- `docs/AI_HANDOFF.md` – shared handoff for AI assistants: state, decisions, verified results, open issues (start here)
 - `docs/current-state.md` – Phase 0 audit and assumptions
 - `docs/adr/0001-rokkur-studio-architecture.md` – architecture decision record
 - `docs/milestones.md` – phase plan and status
