@@ -50,6 +50,7 @@ def settings(tmp_path: Path) -> Settings:
         "STUDIO_GPU__UNLOAD_OLLAMA_BEFORE_HEAVY": "false",
         "STUDIO_GPU__FREE_COMFYUI_AFTER_HEAVY": "false",
         "STUDIO_RENDER__DEFAULT_PROFILE": "PREVIEW",
+        "STUDIO_AGENTS__PROVIDER": "rule_based",  # no Ollama in CI; roles are tested with fakes
     })
     s.database.url = TEST_DB
     return s

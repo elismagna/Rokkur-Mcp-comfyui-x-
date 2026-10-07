@@ -167,6 +167,7 @@ class PublicationOut(BaseModel):
     status: str
     request: dict[str, Any]
     youtube_video_id: str | None
+    error: dict[str, Any] | None = None
     created_at: datetime
 
 

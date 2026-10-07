@@ -50,6 +50,19 @@ class YoutubeSection(BaseModel):
     enabled: bool = False
     auto_publish: bool = False
     default_privacy: Literal["private", "unlisted", "public"] = "private"
+    allow_public: bool = False       # a public upload needs this AND an explicit privacy=public
+    secrets_dir: Path = Path("secrets")
+    client_secret_file: str = "youtube_client_secret.json"
+    token_file: str = "youtube_token.json"
+    auth_port: int = 8401            # loopback redirect for the sign-in flow
+
+    @property
+    def client_secret_path(self) -> Path:
+        return self.secrets_dir / self.client_secret_file
+
+    @property
+    def token_path(self) -> Path:
+        return self.secrets_dir / self.token_file
 
 
 class AgentsSection(BaseModel):

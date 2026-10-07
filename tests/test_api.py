@@ -53,7 +53,8 @@ def test_full_flow_over_http(client, ctx, sample_video):
     final = next(a for a in detail["assets"] if a["kind"] == "final")
     video = client.get(f"/projects/{pid}/assets/{final['id']}/file")
     assert video.status_code == 200 and len(video.content) == final["size_bytes"]
-    assert client.post(f"/projects/{pid}/publish", json={"dry_run": False}).status_code == 501
+    r = client.post(f"/projects/{pid}/publish", json={"dry_run": False})
+    assert r.status_code == 409 and "disabled" in r.json()["detail"]  # youtube.enabled false
     pub = client.post(f"/projects/{pid}/publish", json={
         "privacy": "private", "publish_at": "2026-12-01T18:00:00Z"}).json()
     assert pub["dry_run"] and pub["request"]["body"]["status"]["publishAt"] == \

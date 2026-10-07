@@ -16,6 +16,7 @@ x-studio: &studio
     - ./data:/app/data
     - ${STUDIO_MEDIA_DIR:-./media}:/media:ro
     - ./workflows:/app/workflows:ro
+    - ./secrets:/app/secrets        # OAuth client + YouTube token; git-ignored, never baked in
     - ./config:/app/config:ro
   extra_hosts:
     - "host.docker.internal:host-gateway"

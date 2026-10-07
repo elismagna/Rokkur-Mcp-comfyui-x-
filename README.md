@@ -48,6 +48,13 @@ Or render straight from the command line (Windows):
 This runs the whole pipeline (rights gate, ComfyUI render, QC, dry-run publish) and prints
 where the final video landed. Add `--profile PREVIEW` for a quick low-res pass.
 
+To put a finished video on YouTube (private by default, after a one-time sign-in described
+in `docs/youtube.md`):
+
+```powershell
+.\scripts\studio.ps1 publish <project id>
+```
+
 ## Quick start (no Docker)
 
 ```bash

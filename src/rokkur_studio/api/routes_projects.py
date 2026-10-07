@@ -32,6 +32,8 @@ from rokkur_studio.pipeline.driver import advance, next_job_kind
 from rokkur_studio.services import commands, publishing
 from rokkur_studio.services.assets import import_file, project_assets
 from rokkur_studio.services.projects import get_project, latest_document, latest_rights
+from rokkur_studio.youtube.client import YouTubeError
+from rokkur_studio.youtube.oauth import OAuthError
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -200,14 +202,21 @@ def render_project(project_id: str, ctx: Ctx, session: Db) -> Job | None:
     return advance(session, project, ctx.settings, manual=True)
 
 
-@router.post("/{project_id}/publish", response_model=PublicationOut)
-def publish(project_id: str, body: PublishIn, session: Db) -> Publication:
+@router.post("/{project_id}/publish", response_model=PublicationOut,
+             summary="Dry-run (default) or really upload a READY_TO_PUBLISH project to YouTube")
+def publish(project_id: str, body: PublishIn, ctx: Ctx, session: Db) -> Publication:
     project = _project(session, project_id, for_update=True)
-    if not body.dry_run:
-        raise HTTPException(501, "Real YouTube uploads arrive in Phase 6 (OAuth + resumable "
-                                 "upload + approval gate). Use dry_run=true.")
     try:
-        return publishing.dry_run(session, project, privacy=body.privacy,
-                                  publish_at=body.publish_at, playlist_id=body.playlist_id)
+        if body.dry_run:
+            return publishing.dry_run(session, project, privacy=body.privacy,
+                                      publish_at=body.publish_at, playlist_id=body.playlist_id)
+        client = ctx.extras.get("youtube_client") or publishing.make_client(ctx.settings)
+        return publishing.upload(session, project, settings=ctx.settings, store=ctx.store,
+                                 client=client, privacy=body.privacy,  # type: ignore[arg-type]
+                                 publish_at=body.publish_at)
     except publishing.PublishGateError as exc:
         raise HTTPException(409, str(exc)) from exc
+    except OAuthError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except YouTubeError as exc:
+        raise HTTPException(502, str(exc)) from exc

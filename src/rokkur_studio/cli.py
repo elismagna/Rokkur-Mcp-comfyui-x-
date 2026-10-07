@@ -246,9 +246,128 @@ def cmd_audit(args: argparse.Namespace) -> int:
 
 
 def cmd_youtube_auth(args: argparse.Namespace) -> int:
-    print("YouTube OAuth is Phase 6 and not implemented yet. Publishing works in dry-run "
-          "mode only (POST /projects/{id}/publish with dry_run=true).")
-    return 2
+    """Sign in to YouTube once; the refresh token lands in secrets/ (git-ignored)."""
+    from rokkur_studio.youtube.client import YouTubeClient, YouTubeError
+    from rokkur_studio.youtube.oauth import OAuthClient, OAuthError, TokenStore, installed_flow
+
+    settings = _settings(args)
+    yt = settings.youtube
+    try:
+        client = OAuthClient.load(yt.client_secret_path)
+    except OAuthError as exc:
+        print(f"[FAIL] {exc}")
+        return 1
+    store = TokenStore(yt.token_path)
+    if args.status:
+        if not store.exists():
+            print(f"not signed in ({yt.token_path} missing)")
+            return 1
+    elif args.sign_out:
+        store.delete()
+        print("signed out: token deleted (revoke the app at myaccount.google.com/permissions "
+              "if you want Google to forget it too)")
+        return 0
+    else:
+        def show(url: str) -> None:
+            print("Open this link in your browser and allow access:\n\n  " + url + "\n")
+            if args.paste:
+                print("After allowing, the browser lands on a 127.0.0.1 page that may not "
+                      "load. Copy its full address from the address bar and paste it here.")
+            else:
+                print(f"Waiting for Google to send the browser back to port {yt.auth_port} …")
+
+        try:
+            with httpx.Client(timeout=30) as http:
+                installed_flow(client, store, port=yt.auth_port, http=http, open_url=show,
+                               paste=args.paste, read_line=lambda: input("redirect URL: "))
+        except OAuthError as exc:
+            print(f"[FAIL] {exc}")
+            return 1
+        except OSError as exc:
+            print(f"[FAIL] could not listen on port {yt.auth_port}: {exc}. Run again with "
+                  "--paste, or publish the port (studio.ps1 youtube-auth does).")
+            return 1
+        print(f"signed in; token saved to {yt.token_path}")
+    api = YouTubeClient(client, store)
+    try:
+        ch = api.my_channel()
+    except (OAuthError, YouTubeError) as exc:
+        print(f"[FAIL] token does not work: {exc}")
+        return 1
+    finally:
+        api.close()
+    print(f"[ok] signed in as channel '{ch['title']}' ({ch.get('custom_url') or ch['id']})")
+    if not yt.enabled:
+        print("note: youtube.enabled is false; set STUDIO_YOUTUBE__ENABLED=true in .env "
+              "before `publish` will upload anything")
+    return 0
+
+
+def cmd_publish(args: argparse.Namespace) -> int:
+    """Upload one finished project to YouTube (private unless told otherwise)."""
+    from rokkur_studio.pipeline.context import build_context
+    from rokkur_studio.services import publishing
+    from rokkur_studio.services.projects import get_project, latest_document
+    from rokkur_studio.youtube.client import YouTubeError, video_url
+    from rokkur_studio.youtube.oauth import OAuthError
+
+    settings = _settings(args)
+    ctx = build_context(settings)
+    with ctx.db.session() as s:
+        project = get_project(s, args.project_id)
+        meta = latest_document(s, project.id, "metadata")
+        print(f"project {project.id} '{project.name}' is {project.status}")
+        if meta:
+            print(f"  title: {meta.data.get('title')}")
+            print(f"  tags: {', '.join(meta.data.get('tags') or [])}")
+            for w in meta.data.get("warnings") or []:
+                print(f"  warning: {w}")
+        try:
+            privacy = publishing.resolve_privacy(settings, project, args.privacy)
+        except publishing.PublishGateError as exc:
+            print(f"[FAIL] {exc}")
+            return 1
+    print(f"  privacy: {privacy}")
+    if args.dry_run:
+        with ctx.db.transaction() as s:
+            project = get_project(s, args.project_id, for_update=True)
+            try:
+                pub = publishing.dry_run(s, project, privacy=privacy, actor="cli-publish")
+            except publishing.PublishGateError as exc:
+                print(f"[FAIL] {exc}")
+                return 1
+            print("dry run OK; this is the request that would be sent:")
+            print(json.dumps(pub.request["body"], indent=2))
+        return 0
+    if not args.yes:
+        answer = input(f"Upload to YouTube as {privacy}? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("cancelled")
+            return 1
+    try:
+        client = publishing.make_client(settings)
+    except OAuthError as exc:
+        print(f"[FAIL] {exc}")
+        return 1
+    try:
+        with ctx.db.transaction() as s:
+            project = get_project(s, args.project_id, for_update=True)
+            pub = publishing.upload(s, project, settings=settings, store=ctx.store, client=client,
+                                    privacy=privacy, actor="cli-publish")
+            video_id = pub.youtube_video_id or ""
+            thumb_err = pub.error
+    except publishing.PublishGateError as exc:
+        print(f"[FAIL] {exc}")
+        return 1
+    except YouTubeError as exc:
+        print(f"[FAIL] upload failed: {exc}")
+        return 1
+    finally:
+        client.close()
+    print(f"[ok] uploaded as {privacy}: {video_url(video_id)}")
+    if thumb_err:
+        print(f"  thumbnail not set: {thumb_err.get('message')}")
+    return 0
 
 
 def cmd_smoke_test(args: argparse.Namespace) -> int:
@@ -365,7 +484,19 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("agent-check", help="ask the Ollama agents for a brief and metadata")
     p.add_argument("--theme", default="1970s stop-motion claymation, warm film grain")
     p.set_defaults(func=cmd_agent_check)
-    sub.add_parser("youtube-auth", help="(Phase 6)").set_defaults(func=cmd_youtube_auth)
+    p = sub.add_parser("youtube-auth", help="sign in to YouTube (token stays in secrets/)")
+    p.add_argument("--paste", action="store_true",
+                   help="paste the redirect URL instead of listening on the auth port")
+    p.add_argument("--status", action="store_true", help="only check the saved sign-in")
+    p.add_argument("--sign-out", action="store_true", help="delete the saved token")
+    p.set_defaults(func=cmd_youtube_auth)
+    p = sub.add_parser("publish", help="upload a READY_TO_PUBLISH project to YouTube")
+    p.add_argument("project_id")
+    p.add_argument("--privacy", choices=["private", "unlisted", "public"],
+                   help="default: private")
+    p.add_argument("--dry-run", action="store_true", help="show the request, upload nothing")
+    p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    p.set_defaults(func=cmd_publish)
     p = sub.add_parser("smoke-test", help="run the end-to-end fixture")
     p.add_argument("--renderer", choices=["ffmpeg_preview", "comfyui"])
     p.add_argument("--profile", default="PREVIEW")
