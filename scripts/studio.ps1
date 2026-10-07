@@ -12,8 +12,8 @@ function Compose { docker compose @args; if ($LASTEXITCODE -ne 0) { exit $LASTEX
 function InApi { Compose run --rm api rokkur-studio @args }
 
 switch ($Command) {
-  "build"        { Compose build }
-  "up"           { Compose up -d --build }
+  "build"        { Compose build migrate }
+  "up"           { Compose build migrate; Compose up -d }
   "down"         { Compose down }
   "logs"         { Compose logs -f --tail=200 }
   "migrate"      { InApi migrate }

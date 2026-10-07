@@ -3,9 +3,11 @@
 # Every port is bound to 127.0.0.1 only: nothing is exposed to the network by default.
 name: rokkur-studio
 
+# Only `migrate` builds the image; api and worker reuse it. Building the same tag from three
+# services in parallel fails on Docker Desktop ("image ... already exists").
 x-studio: &studio
-  build: .
   image: rokkur-studio:local
+  pull_policy: never
   env_file: .env
   environment:
     DATABASE_URL: postgresql+psycopg://rokkur:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/rokkur
@@ -43,6 +45,8 @@ services:
 
   migrate:
     <<: *studio
+    build: .
+    pull_policy: build
     command: ["rokkur-studio", "migrate"]
     restart: "no"
 

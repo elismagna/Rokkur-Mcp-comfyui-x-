@@ -4,8 +4,8 @@ RUN = $(COMPOSE) run --rm api
 
 .PHONY: up down logs test migrate studio worker comfy-check youtube-auth smoke-test audit lint build
 
-build:        ; $(COMPOSE) build
-up:           ; $(COMPOSE) up -d --build
+build:        ; $(COMPOSE) build migrate
+up:           ; $(COMPOSE) build migrate && $(COMPOSE) up -d
 down:         ; $(COMPOSE) down
 logs:         ; $(COMPOSE) logs -f --tail=200
 migrate:      ; $(RUN) rokkur-studio migrate
