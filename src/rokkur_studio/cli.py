@@ -29,7 +29,13 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     from alembic.config import Config
 
     settings = _settings(args)
-    root = Path(__file__).resolve().parents[2]
+    # Source checkout: repo root is two levels above the package. Installed (Docker image): the
+    # package lives in site-packages, so fall back to the working directory (/app).
+    candidates = [Path(__file__).resolve().parents[2], Path.cwd()]
+    root = next((c for c in candidates if (c / "migrations" / "env.py").exists()), None)
+    if root is None:
+        print("migrations/ not found next to the package or in the working directory", file=sys.stderr)
+        return 1
     ini = root / "alembic.ini"
     cfg = Config(str(ini)) if ini.exists() else Config()
     cfg.set_main_option("script_location", str(root / "migrations"))
