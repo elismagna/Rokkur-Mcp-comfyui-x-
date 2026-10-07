@@ -51,6 +51,7 @@ class ShotSpec(BaseModel):
     camera: CameraSpec = CameraSpec()
     controls: ControlsSpec = ControlsSpec()
     seed: int = 0
+    prompt: str = ""  # compiled per-shot prompt; empty means the manifest's style prompt
     overrides: dict[str, float | int | str | bool] = Field(default_factory=dict)
 
     @model_validator(mode="after")

@@ -1,0 +1,95 @@
+{% extends "base.html" %}{% block title %}Director · Rökkur Studio{% endblock %}{% block body %}
+{% set d = settings.director %}
+<h1>Director</h1>
+<p class="sub">How each shot's prompt is built. The Creative Director writes what every shot shows, the Director of Photography picks framing and lighting from the allowed terms below, and the prompt compiler applies the rules and your global look.</p>
+{% if problem %}<div class="note">{{ problem }}</div>{% endif %}
+{% if not d.enabled %}<div class="note">The director passes are off (<code>director.enabled: false</code>); every shot renders with the brief's single prompt.</div>{% endif %}
+
+{% if tracker %}
+<div class="grid">
+<div class="card"><h2>Global look</h2>
+  <form method="post" action="/ui/director/look">
+    <label for="prompt_prefix">Prompt prefix</label>
+    <input id="prompt_prefix" name="prompt_prefix" value="{{ tracker.prompt_prefix }}" maxlength="200">
+    <label for="style_modifiers">Style modifiers, added to the end of every prompt</label>
+    <textarea id="style_modifiers" name="style_modifiers" rows="3" maxlength="1000">{{ tracker.style_modifiers }}</textarea>
+    <label for="negative_prompt">Negative prompt</label>
+    <textarea id="negative_prompt" name="negative_prompt" rows="3" maxlength="1000">{{ tracker.negative_prompt }}</textarea>
+    <p style="margin:12px 0 0"><button>Save look</button></p>
+  </form>
+  <p class="hint">Used by every video with "Apply the global look" ticked. A negative term the video's theme asks for (say "cartoon" in a cartoon theme) is left out for that video.</p>
+</div>
+
+<div class="card"><h2>Characters</h2>
+  <div class="table-wrap" style="border:0;box-shadow:none"><table>
+  {% for key, desc in tracker.characters.items() %}<tr><td><b>{{ key }}</b></td><td>{{ desc }}</td>
+    <td style="text-align:right"><form class="inline" method="post" action="/ui/director/characters/{{ key }}/delete" onsubmit="return confirm('Remove {{ key }}?')"><button class="secondary">Remove</button></form></td></tr>
+  {% else %}<tr><td class="empty">No characters yet.</td></tr>{% endfor %}</table></div>
+  <form method="post" action="/ui/director/characters" style="margin-top:6px">
+    <label for="ckey">Name</label>
+    <input id="ckey" name="key" placeholder="NEO" required maxlength="40">
+    <label for="cdesc">Description: appearance and clothing, nouns first</label>
+    <textarea id="cdesc" name="description" rows="3" required maxlength="600" placeholder="a 20s athletic male, wearing a tattered black hooded jacket, dark denim jeans"></textarea>
+    <p style="margin:12px 0 0"><button class="secondary">Add or update</button></p>
+  </form>
+  <p class="hint">Pick a character on New video and its description opens the subject of every shot, so clothes and looks stay the same from shot to shot. Saving the same name again replaces its description.</p>
+</div>
+</div>
+
+<h2 style="margin-top:24px">Try the rules</h2>
+<div class="card">
+  <form method="get" action="/ui/director">
+    <input type="hidden" name="run" value="1">
+    <div class="grid">
+      <div>
+        <label for="subject">Subject, written any way</label>
+        <textarea id="subject" name="subject" rows="3" placeholder="he is walking through the rain, suddenly turns and runs, thinking about home">{{ form.subject }}</textarea>
+        <label for="background">Background</label>
+        <input id="background" name="background" value="{{ form.background }}" placeholder="neon alley, wet asphalt">
+        <label for="ptheme">Theme</label>
+        <input id="ptheme" name="theme" value="{{ form.theme }}" placeholder="1970s stop-motion claymation">
+      </div>
+      <div>
+        {% for field, label, options in [('shot_size','Shot size',vocabulary['Shot sizes']),('camera_angle','Camera angle',vocabulary['Camera angles']),('camera_movement','Camera movement',vocabulary['Camera movement']),('lighting','Lighting',vocabulary['Lighting styles'])] %}
+        <label for="p_{{field}}">{{ label }}</label>
+        <select id="p_{{field}}" name="{{field}}"><option value="">—</option>{% for o in options %}<option {% if form[field]==o %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
+        {% endfor %}
+        <label for="p_char">Character</label>
+        <select id="p_char" name="character_key"><option value="">None</option>{% for key in tracker.characters %}<option {% if form.character_key==key %}selected{% endif %}>{{ key }}</option>{% endfor %}</select>
+        <label class="check" style="margin-top:14px"><input type="checkbox" name="global_look" value="on" {% if form.global_look %}checked{% endif %}> Apply the global look</label>
+      </div>
+    </div>
+    <p style="margin:14px 0 0"><button>Compile prompt</button> <span class="hint">No model and no render: this only runs the rules.</span></p>
+  </form>
+  {% if result %}
+  <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+  {% if result.error %}<p class="bad">{{ result.error }}</p>{% else %}
+  <dl class="kv">
+    <dt>Subject as states</dt><dd>{{ result.subject_state or '—' }}</dd>
+    {% if result.unknown_character %}<dt>Character</dt><dd class="warn">not in the tracker</dd>{% endif %}
+    {% if result.dropped_negatives %}<dt>Left out</dt><dd class="muted">{{ result.dropped_negatives|join(', ') }} (the theme asks for it)</dd>{% endif %}
+  </dl>
+  <h3>Prompt</h3><pre>{{ result.prompt }}</pre>
+  <h3>Negative</h3><pre>{{ result.negative or '—' }}</pre>
+  {% endif %}{% endif %}
+</div>
+{% endif %}
+
+<h2 style="margin-top:24px">Allowed vocabulary</h2>
+<p class="hint" style="margin:-6px 0 12px">The Director of Photography can only answer with these exact terms: the model's output is constrained to them and anything else is rejected.</p>
+<div class="grid">
+  {% for name, terms in vocabulary.items() %}<div class="card"><h2>{{ name }}</h2><div class="chips" style="margin:0">{% for t in terms %}<span class="pill">{{ t }}</span>{% endfor %}</div></div>{% endfor %}
+</div>
+
+<h2 style="margin-top:24px">Prompt rules</h2>
+<div class="card">
+  <dl class="kv">
+    <dt>Rule of Nouns</dt><dd>Framing and nouns first: prefix, shot size, angle, movement, subject, lighting, background, theme, global style. The subject is one unbroken block: the character's description, then the shot's pose and expression, with commas only.</dd>
+    <dt>Action strip-out</dt><dd>Story phrasing becomes physical states: "is walking" → in mid-stride, "suddenly runs" → in full sprint, "thinking about home" → focused expression.</dd>
+    <dt>Token weights</dt><dd>Shot size × {{ d.framing_weight }}, camera angle × {{ d.angle_weight }}, e.g. <code>(close-up shot:{{ d.framing_weight }})</code>. Brackets and weights inside agent or user text are removed.</dd>
+    <dt>Prompt schedule</dt><dd>A keyframe every {{ d.schedule_interval }} frames at {{ d.schedule_fps }} fps, plus one on each side of every cut so cuts stay hard{% if d.schedule_inline_negative %}; negatives after <code>--neg</code>{% endif %}. Each video's page has it ready to copy into FizzNodes' Batch Prompt Schedule.</dd>
+    <dt>Vision</dt><dd>{% if d.vision == 'off' %}off{% else %}When the model ({{ d.vision_model or settings.ollama.model }}) can read images, the Director of Photography sees the middle frame of every shot and frames what is there.{% endif %}</dd>
+    <dt>Stored in</dt><dd><code>data\director\asset_tracker.json</code> in the studio folder</dd>
+  </dl>
+</div>
+{% endblock %}

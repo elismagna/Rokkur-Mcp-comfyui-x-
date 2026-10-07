@@ -40,6 +40,15 @@ agents:
   max_per_project: 8
   max_output_retries: 2
 
+director:                    # cinematography pass + prompt compiler (docs/director.md)
+  enabled: true
+  framing_weight: 1.3        # shot size emphasis, e.g. (close-up shot:1.3); 1.0 = no weight
+  angle_weight: 1.25         # camera angle emphasis, e.g. (low-angle shot:1.25)
+  vision: auto               # auto: the DP sees a frame of each shot when the model supports images
+  vision_model: ""           # optional Ollama vision model just for the DP pass
+  schedule_fps: 24           # Batch Prompt Schedule export: frame 24 = one second
+  schedule_interval: 24
+
 render:
   renderer: ffmpeg_preview   # ffmpeg_preview (non-AI stand-in) | comfyui
   default_profile: RTX3070_QUALITY

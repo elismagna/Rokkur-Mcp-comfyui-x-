@@ -1,5 +1,5 @@
 """``rokkur-studio`` command line: migrate, api, worker, comfy-check, agent-check, audit,
-smoke-test, render."""
+smoke-test, render, prompt-schedule."""
 
 from __future__ import annotations
 
@@ -156,11 +156,32 @@ _SAMPLE_ANALYSIS: dict[str, Any] = {
 }
 
 
+def _test_image(width: int = 96, height: int = 160) -> bytes:
+    """A small gradient PNG, only to prove the model accepts an image."""
+    import struct
+    import zlib
+
+    rows = b"".join(
+        b"\x00" + bytes(v for x in range(width)
+                         for v in (x * 255 // width, y * 255 // height, 128))
+        for y in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2,
+                                                                 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
 def run_agent_check(settings: Settings, *, theme: str,
                     transport: httpx.BaseTransport | None = None) -> int:
-    """Prove the configured Ollama model answers the agent roles with valid JSON."""
+    """Prove the configured Ollama models answer every agent role with valid JSON."""
     from rokkur_studio.agents.providers import AgentOutputError, OllamaProvider
-    from rokkur_studio.agents.roles import ChannelManager, CreativeDirector
+    from rokkur_studio.agents.roles import ChannelManager, CreativeDirector, DirectorOfPhotography
+    from rokkur_studio.director.assets import TrackerError, load_tracker, tracker_path
+    from rokkur_studio.director.prompts import Weights, build_schedule, compile_brief
     from rokkur_studio.pipeline.context import free_idle_comfyui
 
     hook = free_idle_comfyui(settings) if (settings.gpu.free_comfyui_before_agents
@@ -196,9 +217,50 @@ def run_agent_check(settings: Settings, *, theme: str,
     else:
         print(f"[ok] creative_director answered in {dt:.1f}s")
         print(f"     style: {brief.style}")
-        print(f"     prompt: {brief.prompt[:160]}")
         for shot in brief.shot_plan:
             print(f"     {shot.shot_id} {shot.start:.1f}-{shot.end:.1f}s: {shot.intent[:90]}")
+            if shot.subject:
+                print(f"       subject: {shot.subject[:110]}")
+
+    d = settings.director
+    dp = provider
+    if d.vision_model and d.vision_model != settings.ollama.model:
+        dp = OllamaProvider(settings.ollama.url, d.vision_model,
+                            max_retries=settings.agents.max_output_retries, transport=transport,
+                            before_generate=hook)
+        problem = dp.check()
+        if problem:
+            print(f"[FAIL] director.vision_model: {problem}")
+            return 1
+    sees = d.vision == "auto" and dp.supports_images()
+    print(f"asking director_of_photography ({dp.model}; "
+          f"{'can read images' if sees else 'text only'}) ...", flush=True)
+    t0 = time.monotonic()
+    images = {s.shot_id: _test_image() for s in brief.shot_plan} if sees else None
+    framed, framing_by = DirectorOfPhotography(dp, vision=sees).run(brief, images)
+    dt = time.monotonic() - t0
+    if framing_by == "rule_based" or framing_by == "mixed":
+        print(f"[FAIL] director_of_photography fell back to rules after {dt:.1f}s (see log)")
+        ok = False
+    else:
+        print(f"[ok] director_of_photography answered in {dt:.1f}s ({framing_by})")
+    for shot in framed.shot_plan:
+        print(f"     {shot.shot_id}: {shot.shot_size} · {shot.camera_angle} · "
+              f"{shot.camera_movement} · {shot.lighting}")
+    try:
+        tracker = load_tracker(tracker_path(settings.studio.data_dir))
+    except TrackerError as exc:
+        print(f"[FAIL] asset tracker: {exc}")
+        return 1
+    compiled = compile_brief(framed, creative_input=creative_input, tracker=tracker, anchor=None,
+                             character_key=None,
+                             weights=Weights(framing=d.framing_weight, angle=d.angle_weight))
+    print(f"     prompt: {compiled.shot_plan[0].prompt[:300]}")
+    schedule = build_schedule(compiled.shot_plan, compiled.negative_prompt,
+                              duration=_SAMPLE_ANALYSIS["duration"], fps=d.schedule_fps,
+                              interval=d.schedule_interval,
+                              inline_negative=d.schedule_inline_negative)
+    print(f"     schedule: {len(schedule.keyframes)} keyframes, max_frames {schedule.max_frames}")
     print("asking channel_manager ...", flush=True)
     t0 = time.monotonic()
     draft, by = ChannelManager(provider).run(creative_input, brief.model_dump(), "youtube_short",
@@ -464,11 +526,35 @@ def cmd_render(args: argparse.Namespace) -> int:
             name=args.name or source.stem, target_format=args.format, render_profile=args.profile,
             source=SourceIn(platform="local", local_path=str(source.resolve())),
             rights=RightsIn(category=RightsCategory(args.rights), permission_evidence=args.evidence),
-            creative=CreativeIn(theme=args.theme, prompt=args.prompt), autostart=True),
+            creative=CreativeIn(theme=args.theme, prompt=args.prompt,
+                                character_key=args.character,
+                                use_global_look=not args.no_global_look), autostart=True),
             settings, actor="cli")
         pid = project.id
     print(f"project {pid} created; rendering with {args.renderer} / {args.profile or 'default profile'}")
     return _drive(ctx, pid, args.timeout, actor="cli-render")
+
+
+def cmd_prompt_schedule(args: argparse.Namespace) -> int:
+    """Print a project's Batch Prompt Schedule, ready to paste into FizzNodes."""
+    from rokkur_studio.db.session import Database
+    from rokkur_studio.services.projects import get_project, latest_document
+
+    settings = _settings(args)
+    with Database(settings.database.url).session() as s:
+        try:
+            get_project(s, args.project_id)
+        except LookupError:
+            print(f"no project {args.project_id}", file=sys.stderr)
+            return 2
+        doc = latest_document(s, args.project_id, "prompt_schedule")
+    if doc is None:
+        print("this project has no prompt schedule yet: the brief stage writes it",
+              file=sys.stderr)
+        return 1
+    print(doc.data["text"])
+    print(f"\n(max_frames {doc.data['max_frames']}, {doc.data['fps']} fps)", file=sys.stderr)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -490,7 +576,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("comfy-check", help="validate ComfyUI + templates").set_defaults(
         func=cmd_comfy_check)
     sub.add_parser("audit", help="inspect the local environment").set_defaults(func=cmd_audit)
-    p = sub.add_parser("agent-check", help="ask the Ollama agents for a brief and metadata")
+    p = sub.add_parser("agent-check",
+                       help="ask the Ollama agents for a brief, framing and metadata")
     p.add_argument("--theme", default="1970s stop-motion claymation, warm film grain")
     p.set_defaults(func=cmd_agent_check)
     p = sub.add_parser("youtube-auth", help="sign in to YouTube (token stays in secrets/)")
@@ -516,6 +603,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("path", help="video file, e.g. /media/clip.mp4")
     p.add_argument("--theme", required=True, help="look to apply, e.g. '1970s claymation'")
     p.add_argument("--prompt", help="extra detail for the style prompt")
+    p.add_argument("--character", help="character name from the Director page, e.g. NEO")
+    p.add_argument("--no-global-look", action="store_true",
+                   help="skip the global prefix, style modifiers and negative prompt")
     p.add_argument("--rights", required=True,
                    choices=[c.value for c in RightsCategory if c.value not in ("UNKNOWN", "REJECTED")],
                    help="why you may use this video; unknown rights are never rendered")
@@ -526,6 +616,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--name")
     p.add_argument("--timeout", type=float, default=4 * 3600)
     p.set_defaults(func=cmd_render)
+    p = sub.add_parser("prompt-schedule", help="print a project's Batch Prompt Schedule")
+    p.add_argument("project_id")
+    p.set_defaults(func=cmd_prompt_schedule)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

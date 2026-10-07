@@ -32,6 +32,7 @@ class StudioContext:
     provider: AgentProvider
     comfy_factory: Callable[[], ComfyClient]
     extras: dict[str, object] = field(default_factory=dict)
+    dp_provider: AgentProvider | None = None  # None: the DP pass uses ``provider``
 
 
 def free_idle_comfyui(settings: Settings) -> Callable[[], None]:
@@ -60,6 +61,17 @@ def make_provider(settings: Settings) -> AgentProvider:
     if settings.agents.provider == "rokkur_collective":
         return RokkurCollectiveProvider()
     return RuleBasedProvider()
+
+
+def make_dp_provider(settings: Settings) -> AgentProvider | None:
+    """A separate Ollama model for the Director of Photography, when one is configured."""
+    model = settings.director.vision_model.strip()
+    if settings.agents.provider != "ollama" or not model or model == settings.ollama.model:
+        return None
+    return OllamaProvider(
+        settings.ollama.url, model, max_retries=settings.agents.max_output_retries,
+        before_generate=free_idle_comfyui(settings)
+        if settings.gpu.free_comfyui_before_agents else None)
 
 
 def build_context(settings: Settings, db: Database | None = None) -> StudioContext:
@@ -91,4 +103,5 @@ def build_context(settings: Settings, db: Database | None = None) -> StudioConte
         registry=TemplateRegistry(settings.workflows_dir),
         provider=make_provider(settings),
         comfy_factory=comfy_factory,
+        dp_provider=make_dp_provider(settings),
     )

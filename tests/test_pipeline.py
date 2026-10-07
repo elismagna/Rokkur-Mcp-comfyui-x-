@@ -242,7 +242,11 @@ def test_comfyui_render_path_with_fake_server(ctx, sample_video):
     assert status(ctx, pid) == "READY_TO_PUBLISH"
     assert len(fake.prompts) == 2  # one ComfyUI prompt per shot
     wf = next(iter(fake.prompts.values()))
-    assert wf["5"]["inputs"]["text"].startswith("retro clay sci-fi")
+    # Each shot renders with its own compiled prompt: framing first, then subject and look.
+    text = wf["5"]["inputs"]["text"]
+    assert text.startswith("Cinematic film still, (medium shot:1.3), (eye-level shot:1.25)")
+    assert "retro clay sci-fi" in text and "--neg" not in text
+    assert "distorted hands" in wf["6"]["inputs"]["text"]  # global negative prompt
     with ctx.db.session() as s:
         renders = s.scalars(select(Render).where(Render.project_id == pid)).all()
         assert all(r.remote_id and r.workflow == "v2v_3070_quality" for r in renders)

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from collections.abc import Callable
@@ -36,7 +37,9 @@ class AgentProvider(Protocol):
     name: str
 
     def generate(self, role: str, instructions: str, payload: dict[str, Any],
-                 schema: type[T]) -> T: ...
+                 schema: type[T], images: list[bytes] | None = None) -> T: ...
+
+    def supports_images(self) -> bool: ...
 
 
 class RuleBasedProvider:
@@ -45,8 +48,11 @@ class RuleBasedProvider:
     name = "rule_based"
 
     def generate(self, role: str, instructions: str, payload: dict[str, Any],
-                 schema: type[T]) -> T:
+                 schema: type[T], images: list[bytes] | None = None) -> T:
         raise AgentUnavailable("rule_based provider has no generative model")
+
+    def supports_images(self) -> bool:
+        return False
 
 
 # Ollama compiles ``format`` into a llama.cpp grammar. String length bounds expand into one
@@ -75,13 +81,17 @@ class OllamaProvider:
         self.before_generate = before_generate
         self.http = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout_s,
                                  transport=transport)
+        self._vision: bool | None = None
 
     def generate(self, role: str, instructions: str, payload: dict[str, Any],
-                 schema: type[T]) -> T:
-        messages: list[dict[str, str]] = [
+                 schema: type[T], images: list[bytes] | None = None) -> T:
+        user: dict[str, Any] = {"role": "user", "content": json.dumps(payload, default=str)}
+        if images:
+            user["images"] = [base64.b64encode(i).decode("ascii") for i in images]
+        messages: list[dict[str, Any]] = [
             {"role": "system", "content": f"You are the {role} of Rökkur Studio. {instructions} "
              "Reply with JSON only, matching the provided schema."},
-            {"role": "user", "content": json.dumps(payload, default=str)},
+            user,
         ]
         if self.before_generate is not None:
             try:
@@ -114,6 +124,17 @@ class OllamaProvider:
                               f"{exc.errors()[:5]}. Return corrected JSON only."}]
         raise AgentOutputError(role, f"invalid output after {self.max_retries + 1} attempts",
                                last_raw)
+
+    def supports_images(self) -> bool:
+        """True when Ollama reports the model can read images (``/api/show`` capabilities)."""
+        if self._vision is None:
+            try:
+                r = self.http.post("/api/show", json={"model": self.model}, timeout=10)
+                caps = (r.json().get("capabilities") or []) if r.status_code == 200 else []
+            except (httpx.HTTPError, ValueError):
+                return False  # not cached: Ollama may just be starting
+            self._vision = "vision" in caps
+        return self._vision
 
     def installed_models(self) -> list[str]:
         r = self.http.get("/api/tags")
@@ -148,8 +169,11 @@ class OllamaProvider:
 class RokkurCollectiveProvider:
     name = "rokkur_collective"
 
+    def supports_images(self) -> bool:
+        return False
+
     def generate(self, role: str, instructions: str, payload: dict[str, Any],
-                 schema: type[T]) -> T:
+                 schema: type[T], images: list[bytes] | None = None) -> T:
         raise AgentUnavailable(
             "Rökkur Collective integration is not implemented: its interface has not been "
             "audited yet (see docs/current-state.md). Use agents.provider=ollama or rule_based.")

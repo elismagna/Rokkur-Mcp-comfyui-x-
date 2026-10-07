@@ -39,14 +39,36 @@
   </div>
   {% endif %}
 
-  {% if docs.creative_brief %}{% set b = docs.creative_brief.data %}
+  {% if docs.creative_brief %}{% set b = docs.creative_brief.data %}{% set dn = b.director or {} %}
   <div class="card"><h2>Creative brief <span class="pill {{ 'info' if docs.creative_brief.created_by=='ollama' else '' }}">by {{ docs.creative_brief.created_by|replace('_',' ') }}</span></h2>
-    <dl class="kv"><dt>Style</dt><dd>{{ b.style }}</dd><dt>Prompt</dt><dd>{{ b.prompt }}</dd>
-    {% if b.character %}<dt>Character</dt><dd>{{ b.character }}</dd>{% endif %}
+    <dl class="kv"><dt>Style</dt><dd>{{ b.style }}</dd>
+    {% if b.character %}<dt>Character</dt><dd>{% if dn.character_key %}<b>{{ dn.character_key }}</b> · {% endif %}{{ b.character }}</dd>{% endif %}
     <dt>Look</dt><dd>{{ b.visual_identity }}</dd><dt>Avoid</dt><dd class="muted">{{ b.negative_prompt }}</dd>
-    <dt>Strength</dt><dd>style {{ b.style_strength }} · identity {{ b.identity_strength }} · motion {{ b.motion_preservation }}</dd></dl>
+    <dt>Strength</dt><dd>style {{ b.style_strength }} · identity {{ b.identity_strength }} · motion {{ b.motion_preservation }}</dd>
+    {% if dn %}<dt>Framing</dt><dd>by {{ (dn.framing_by or 'rule_based')|replace('_',' ') }}{% if dn.vision %} <span class="pill info">saw each shot</span>{% endif %}{% if not dn.global_look %} · global look off{% endif %}</dd>{% endif %}
+    {% if not dn %}<dt>Prompt</dt><dd>{{ b.prompt }}</dd>{% endif %}</dl>
+    {% if dn.warnings %}<div class="note" style="margin:10px 0 0">{{ dn.warnings|join('; ') }}</div>{% endif %}
     <h3>Shots</h3>
-    <ul class="shotlist">{% for s in b.shot_plan %}<li><b>{{ s.shot_id|replace('shot_','Shot ') }}</b> <span class="muted">{{ '%.1f'|format(s.start) }}–{{ '%.1f'|format(s.end) }} s · {{ s.motion_type }}</span>{% if s.intent %}<div>{{ s.intent }}</div>{% endif %}</li>{% endfor %}</ul>
+    {% for s in b.shot_plan %}<div class="shotrow">
+      {% if keyframes.get(s.shot_id) %}<img class="kf" src="{{ keyframes[s.shot_id] }}" alt="Middle frame of {{ s.shot_id|replace('shot_','shot ') }}" loading="lazy">{% endif %}
+      <div style="min-width:0;flex:1">
+        <b>{{ s.shot_id|replace('shot_','Shot ') }}</b> <span class="muted">{{ '%.1f'|format(s.start) }}–{{ '%.1f'|format(s.end) }} s · {{ s.motion_type }}</span>
+        {% if s.shot_size %}<div class="chips">{% for t in [s.shot_size, s.camera_angle, s.camera_movement, s.lighting] if t %}<span class="pill">{{ t }}</span>{% endfor %}</div>{% endif %}
+        {% if s.intent %}<div>{{ s.intent }}</div>{% endif %}
+        {% if s.subject %}<div class="hint">Subject: {{ s.subject }}</div>{% endif %}
+        {% if s.prompt %}<details><summary>Prompt</summary><pre>{{ s.prompt }}</pre></details>{% endif %}
+      </div>
+    </div>{% endfor %}
+  </div>{% endif %}
+
+  {% if docs.prompt_schedule %}{% set sc = docs.prompt_schedule.data %}
+  <div class="card"><h2>Prompt schedule <span class="pill">{{ sc.keyframes|length }} keyframes</span></h2>
+    <p class="hint" style="margin:0 0 10px">For FizzNodes' Batch Prompt Schedule: a keyframe every {{ sc.interval }} frames at {{ sc.fps }} fps, plus both sides of each cut. Set the node's max_frames to {{ sc.max_frames }}. The studio's own Wan render does not use this; it renders each shot with that shot's prompt.</p>
+    <pre id="schedule">{{ sc.text }}</pre>
+    <div class="row" style="margin-top:10px">
+      <button type="button" class="secondary" onclick="navigator.clipboard.writeText(document.getElementById('schedule').textContent).then(()=>{this.textContent='Copied'})">Copy</button>
+      <a class="btn secondary" href="/projects/{{p.id}}/prompt-schedule" download="{{ p.name }} prompt schedule.txt">Download .txt</a>
+    </div>
   </div>{% endif %}
 
   {% if docs.qc_report %}{% set q = docs.qc_report.data %}
@@ -118,7 +140,7 @@
 
 <h2 style="margin-top:24px">Behind the scenes</h2>
 <div class="card">
-  {% for kind in ['analysis','manifest','repair_plan','creative_brief','metadata','qc_report'] %}{% if docs[kind] %}
+  {% for kind in ['analysis','creative_brief','prompt_schedule','manifest','repair_plan','metadata','qc_report'] %}{% if docs[kind] %}
   <details><summary>{{ kind|replace('_',' ')|capitalize }} · v{{ docs[kind].version }} · {{ docs[kind].created_by }}</summary><pre>{{ docs[kind].data|pretty }}</pre></details>{% endif %}{% endfor %}
   <details><summary>Jobs ({{ d.jobs|length }})</summary>
     <div class="table-wrap" style="margin-top:8px"><table><tr><th>Kind</th><th>Status</th><th>Tries</th><th>Time</th><th>Error</th></tr>

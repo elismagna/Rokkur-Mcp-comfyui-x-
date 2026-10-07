@@ -104,6 +104,9 @@ video,img.shot{width:100%;max-height:520px;border-radius:10px;background:#000;di
 .chips a.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .chips a:hover{text-decoration:none}
 .kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;font-size:13px}.kv dt{color:var(--muted)}.kv dd{margin:0;word-break:break-word}
+.shotrow{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}.shotrow:last-child{border:0}
+.shotrow .kf{width:72px;max-height:128px;object-fit:cover;border-radius:6px;background:var(--bg2);flex:none;align-self:flex-start}
+.shotrow .chips{margin:4px 0}
 .shotlist{list-style:none;padding:0;margin:0}.shotlist li{padding:8px 0;border-bottom:1px solid var(--line)}.shotlist li:last-child{border:0}
 .empty{color:var(--muted);text-align:center;padding:28px}
 @media (max-width:860px){
@@ -122,6 +125,7 @@ video,img.shot{width:100%;max-height:520px;border-radius:10px;background:#000;di
 {%- elif name=='queue' %}<path d="M4 6h16M4 12h16M4 18h10"/>
 {%- elif name=='check' %}<path d="M20 6L9 17l-5-5"/>
 {%- elif name=='yt' %}<rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9l5 3-5 3z"/>
+{%- elif name=='camera' %}<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>
 {%- elif name=='agent' %}<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>
 {%- elif name=='sys' %}<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>
 {%- elif name=='api' %}<path d="M8 6l-6 6 6 6M16 6l6 6-6 6"/>
@@ -136,6 +140,7 @@ video,img.shot{width:100%;max-height:520px;border-radius:10px;background:#000;di
   <a class="nav {% if path=='/ui/approvals' %}on{% endif %}" href="/ui/approvals">{{icon('check')}}Approvals</a>
   <div class="sep">Studio</div>
   <a class="nav {% if path=='/ui/youtube' %}on{% endif %}" href="/ui/youtube">{{icon('yt')}}YouTube</a>
+  <a class="nav {% if path=='/ui/director' %}on{% endif %}" href="/ui/director">{{icon('camera')}}Director</a>
   <a class="nav {% if path=='/ui/agents' %}on{% endif %}" href="/ui/agents">{{icon('agent')}}Agents</a>
   <a class="nav {% if path=='/ui/system' %}on{% endif %}" href="/ui/system">{{icon('sys')}}System</a>
   <a class="nav" href="/docs">{{icon('api')}}API docs</a>

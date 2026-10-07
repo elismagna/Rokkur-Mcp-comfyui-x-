@@ -37,6 +37,8 @@ class CreativeIn(BaseModel):
     style: str | None = None
     prompt: str | None = None
     character_description: str | None = None
+    character_key: str | None = None      # a character from the director's asset tracker
+    use_global_look: bool = True          # apply the tracker's prefix, modifiers, negatives
     character_reference_path: str | None = None
     style_strength: float = Field(0.7, ge=0, le=1)
     identity_strength: float = Field(0.8, ge=0, le=1)

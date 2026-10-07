@@ -2,10 +2,13 @@
 .SYNOPSIS
   Windows equivalent of the Makefile. Usage: .\scripts\studio.ps1 <command>
   Commands: up, down, logs, test, migrate, studio, worker, comfy-check, youtube-auth,
-            smoke-test, audit, lint, build, install-models, comfy-render, render, agent-check, publish
+            smoke-test, audit, lint, build, install-models, comfy-render, render, agent-check, publish,
+            prompt-schedule
   publish: .\scripts\studio.ps1 publish <project id> [--privacy unlisted] [--dry-run]
   render: .\scripts\studio.ps1 render myclip.mp4 --theme "1970s claymation" --rights USER_OWNED --evidence "I filmed it"
-          (the file must be in the media folder; extra options are passed to rokkur-studio render)
+          (the file must be in the media folder; extra options are passed to rokkur-studio render,
+          e.g. --character NEO)
+  prompt-schedule: .\scripts\studio.ps1 prompt-schedule <project id>   (FizzNodes Batch Prompt Schedule text)
 #>
 # Plain (non-advanced) param block on purpose: options like --theme land in $args
 # instead of being rejected as unknown PowerShell parameters.
@@ -34,6 +37,7 @@ switch ($Command) {
     Compose run --rm -p 127.0.0.1:8401:8401 api rokkur-studio youtube-auth @Rest
   }
   "publish"      { InApi publish @Rest }
+  "prompt-schedule" { InApi prompt-schedule @Rest }
   "smoke-test"   { InApi smoke-test --inject-fault }
   "comfy-render" { InApi smoke-test --renderer comfyui --profile PREVIEW --timeout 3600 }
   "render"       {

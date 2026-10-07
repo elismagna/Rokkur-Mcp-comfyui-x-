@@ -48,8 +48,12 @@ def test_full_flow_over_http(client, ctx, sample_video):
     Worker(ctx).drain()
     detail = client.get(f"/projects/{pid}").json()
     assert detail["project"]["status"] == "READY_TO_PUBLISH"
-    assert {"analysis", "creative_brief", "manifest", "qc_report", "metadata"} <= set(
-        detail["documents"])
+    assert {"analysis", "creative_brief", "prompt_schedule", "manifest", "qc_report",
+            "metadata"} <= set(detail["documents"])
+    keyframes = [a for a in detail["assets"] if a["kind"] == "keyframe"]
+    assert len(keyframes) == len(detail["documents"]["creative_brief"]["data"]["shot_plan"])
+    schedule = client.get(f"/projects/{pid}/prompt-schedule")
+    assert schedule.status_code == 200 and schedule.text.startswith('"0": "Cinematic film still')
     final = next(a for a in detail["assets"] if a["kind"] == "final")
     video = client.get(f"/projects/{pid}/assets/{final['id']}/file")
     assert video.status_code == 200 and len(video.content) == final["size_bytes"]
@@ -61,6 +65,22 @@ def test_full_flow_over_http(client, ctx, sample_video):
         "2026-12-01T18:00:00Z"
     assert client.get("/jobs", params={"project_id": pid}).json()
     assert "queue" in client.get("/workers").json()
+
+
+def test_director_endpoints(client, settings):
+    assert "Rembrandt lighting" in client.get("/director/vocabulary").json()["Lighting styles"]
+    tracker = client.get("/director/assets").json()
+    assert "NEO" in tracker["CHARACTERS"]
+    tracker["CHARACTERS"]["mara"] = "a tall woman, red raincoat"
+    saved = client.put("/director/assets", json=tracker).json()
+    assert saved["CHARACTERS"]["MARA"] == "a tall woman, red raincoat"
+    assert (settings.studio.data_dir / "director" / "asset_tracker.json").is_file()
+    assert client.put("/director/assets", json={"CHARACTERS": {"!": "x"}}).status_code == 422
+    out = client.post("/director/preview", json={
+        "subject": "is running", "shot_size": "Close-up", "character_key": "MARA"}).json()
+    assert out["prompt"].startswith("Cinematic film still, (close-up shot:1.3), a tall woman")
+    assert client.post("/director/preview", json={"shot_size": "Giant"}).status_code == 422
+    assert client.get("/projects/nope/prompt-schedule").status_code == 404
 
 
 def test_upload_source_cancel_and_rights_decision(client, sample_video):

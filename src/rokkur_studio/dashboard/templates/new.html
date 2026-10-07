@@ -27,6 +27,14 @@
     <textarea id="prompt" name="prompt" placeholder="What should the agents emphasise? Characters, palette, mood…"></textarea>
     <label for="name">Project name (optional)</label>
     <input id="name" name="name" placeholder="Defaults to the file name">
+    <label for="character_key">Character</label>
+    <select id="character_key" name="character_key"><option value="">None</option>{% for key, desc in characters.items() %}<option value="{{ key }}">{{ key }} · {{ desc|truncate(60) }}</option>{% endfor %}</select>
+    <p class="hint">Characters are kept on the <a href="/ui/director">Director</a> page; the chosen one's description opens every shot's prompt.</p>
+    <details><summary>Or describe a character just for this video</summary>
+      <label for="character_description">Appearance and clothing, nouns first</label>
+      <input id="character_description" name="character_description" placeholder="an old fisherman, yellow oilskin coat, grey beard">
+    </details>
+    <label class="check" style="margin-top:14px"><input type="checkbox" name="use_global_look" value="true" checked> Apply the global look <span class="muted">(prefix, style modifiers, negative prompt)</span></label>
     <details><summary>Character reference image</summary>
       <label for="character_reference_path">Path to an image the worker can read, e.g. /media/hero.png</label>
       <input id="character_reference_path" name="character_reference_path">

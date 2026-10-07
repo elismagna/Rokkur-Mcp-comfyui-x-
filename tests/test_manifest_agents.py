@@ -176,7 +176,9 @@ def test_agent_check_runs_both_roles(capsys):
     from rokkur_studio.cli import run_agent_check
     from rokkur_studio.config import load_settings
 
-    replies = [brief().model_dump_json(),
+    framing = json.dumps({"shot_size": "Full Shot", "camera_angle": "Eye-level",
+                          "camera_movement": "Static", "lighting": "Golden hour diffusion"})
+    replies = [brief().model_dump_json(), framing, framing,
                json.dumps({"title": "Test", "description": "D", "tags": ["a"]})]
 
     def handle(request):
@@ -191,6 +193,8 @@ def test_agent_check_runs_both_roles(capsys):
     assert run_agent_check(settings, theme="t", transport=httpx.MockTransport(handle)) == 0
     out = capsys.readouterr().out
     assert "[ok] creative_director" in out and "[ok] channel_manager" in out
+    assert "[ok] director_of_photography" in out and "Full Shot · Eye-level" in out
+    assert "prompt: Cinematic film still, (full shot:1.3)" in out and "schedule: " in out
 
 
 def test_free_idle_comfyui_only_when_queue_empty(settings):

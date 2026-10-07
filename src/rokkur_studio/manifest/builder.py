@@ -55,6 +55,7 @@ def build_manifest(*, project_id: str, source_asset: str, analysis: dict[str, An
             controls=ControlsSpec(**{k: bool(v) for k, v in profile.controls.items()
                                      if k in ControlsSpec.model_fields}),
             seed=shot_seed(project_id, plan.shot_id),
+            prompt=plan.prompt,
         ))
     return ReconstructionManifest(
         project_id=project_id,
@@ -82,7 +83,7 @@ def shot_params(manifest: ReconstructionManifest, shot: ShotSpec,
                                manifest.video.width, manifest.video.height)
     frames = min(profile.max_frames, max(1, round(shot.duration * fps)))
     params: dict[str, Any] = {
-        "STYLE_PROMPT": manifest.style.prompt,
+        "STYLE_PROMPT": shot.prompt or manifest.style.prompt,
         "NEGATIVE_PROMPT": manifest.style.negative_prompt,
         "SEED": int(o.get("seed", shot.seed)),
         "WIDTH": width,

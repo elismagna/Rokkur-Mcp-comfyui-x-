@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -40,7 +40,8 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 Ctx = Annotated[StudioContext, Depends(get_ctx)]
 Db = Annotated[Session, Depends(get_session)]
 
-DOC_KINDS = ("analysis", "creative_brief", "manifest", "qc_report", "repair_plan", "metadata")
+DOC_KINDS = ("analysis", "creative_brief", "prompt_schedule", "manifest", "qc_report",
+             "repair_plan", "metadata")
 
 
 def _project(session: Session, project_id: str, for_update: bool = False) -> Project:
@@ -183,6 +184,16 @@ def project_events(project_id: str, session: Db) -> list[Event]:
 def list_assets(project_id: str, session: Db, kind: str | None = None) -> list[Asset]:
     _project(session, project_id)
     return project_assets(session, project_id, kind)
+
+
+@router.get("/{project_id}/prompt-schedule", response_class=PlainTextResponse)
+def prompt_schedule(project_id: str, session: Db) -> PlainTextResponse:
+    """The Batch Prompt Schedule text (FizzNodes format), ready to paste into the node."""
+    _project(session, project_id)
+    doc = latest_document(session, project_id, "prompt_schedule")
+    if doc is None:
+        raise HTTPException(404, "no prompt schedule yet: the brief stage writes it")
+    return PlainTextResponse(doc.data["text"] + "\n")
 
 
 @router.get("/{project_id}/assets/{asset_id}/file")

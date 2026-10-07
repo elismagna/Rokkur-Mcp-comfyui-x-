@@ -21,6 +21,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -39,6 +40,16 @@ from rokkur_studio.db.models import (
     Project,
     Publication,
 )
+from rokkur_studio.director.assets import (
+    AssetTracker,
+    TrackerError,
+    load_tracker,
+    normalise_key,
+    save_tracker,
+    tracker_path,
+)
+from rokkur_studio.director.prompts import Weights, preview
+from rokkur_studio.director.vocabulary import VOCABULARY
 from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.domain.states import ProjectStatus as S
 from rokkur_studio.pipeline.context import StudioContext
@@ -218,9 +229,18 @@ def projects_page(request: Request, ctx: Ctx, session: Db, group: str = "all",
                  groups=list(GROUPS), thumbs=_thumbs(session, [p.id for p in projects]))
 
 
+def _tracker(ctx: StudioContext) -> tuple[AssetTracker | None, str | None]:
+    try:
+        return load_tracker(tracker_path(ctx.settings.studio.data_dir)), None
+    except TrackerError as exc:
+        return None, str(exc)
+
+
 @router.get("/new", response_class=HTMLResponse)
 def new_page(request: Request, ctx: Ctx) -> HTMLResponse:
+    tracker, _ = _tracker(ctx)
     return _page(request, "new.html", ctx, media=media_files(ctx),
+                 characters=tracker.characters if tracker else {},
                  profiles=ctx.settings.profiles,
                  default_profile=ctx.settings.render.default_profile,
                  categories=[c.value for c in RightsCategory
@@ -237,6 +257,9 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                      prompt: Annotated[str, Form()] = "",
                      permission_evidence: Annotated[str, Form()] = "",
                      character_reference_path: Annotated[str, Form()] = "",
+                     character_key: Annotated[str, Form()] = "",
+                     character_description: Annotated[str, Form()] = "",
+                     use_global_look: Annotated[bool, Form()] = False,
                      render_profile: Annotated[str, Form()] = "",
                      target_format: Annotated[str, Form()] = "youtube_short",
                      autostart: Annotated[bool, Form()] = False) -> RedirectResponse:
@@ -269,6 +292,9 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
             rights=RightsIn(category=RightsCategory(rights_category),
                             permission_evidence=permission_evidence or None),
             creative=CreativeIn(theme=theme, prompt=prompt or None,
+                                character_key=character_key or None,
+                                character_description=character_description or None,
+                                use_global_look=use_global_look,
                                 character_reference_path=character_reference_path or None),
             autostart=autostart)
         project = commands.create_project(session, body, ctx.settings, actor="dashboard")
@@ -293,7 +319,10 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
         publish_block = "YouTube uploads are off. Set STUDIO_YOUTUBE__ENABLED=true in .env."
     elif not yt.token_path.is_file():
         publish_block = "Not signed in to YouTube. Run: .\\scripts\\studio.ps1 youtube-auth"
+    keyframes = {a.meta.get("shot_id"): f"/projects/{project_id}/assets/{a.id}/file"
+                 for a in detail.assets if a.kind == "keyframe"}
     return _page(request, "project.html", ctx, d=detail, p=project, events=events,
+                 keyframes=keyframes,
                  steps=stage_progress(project.status, project.failed_from_state),
                  publish_block=publish_block,
                  privacies=["private", "unlisted"] + (["public"] if yt.allow_public else []))
@@ -458,9 +487,74 @@ def agents_check(ctx: Ctx, theme: Annotated[str, Form()] = "") -> RedirectRespon
                                theme=theme or "1970s stop-motion claymation, warm film grain")
     out = buf.getvalue()[-3000:]
     return RedirectResponse(f"/ui/agents?out={quote(out)}&"
-                            + ("msg=Both+agents+answered" if code == 0
+                            + ("msg=All+agents+answered" if code == 0
                                else "err=Agent+check+failed%3B+see+the+output"),
                             status_code=303)
+
+
+# -- director ------------------------------------------------------------------------------
+@router.get("/director", response_class=HTMLResponse)
+def director_page(request: Request, ctx: Ctx, subject: str = "", theme: str = "",
+                  background: str = "", shot_size: str = "", camera_angle: str = "",
+                  camera_movement: str = "", lighting: str = "", character_key: str = "",
+                  global_look: str = "", run: str = "") -> HTMLResponse:
+    tracker, problem = _tracker(ctx)
+    look_on = global_look == "on" or not run  # an unticked box is absent from the form
+    form = {"subject": subject, "theme": theme, "background": background,
+            "shot_size": shot_size, "camera_angle": camera_angle,
+            "camera_movement": camera_movement, "lighting": lighting,
+            "character_key": character_key, "global_look": look_on}
+    result = None
+    if run and tracker is not None:
+        d = ctx.settings.director
+        try:
+            result = preview(tracker, theme=theme, subject=subject, background=background,
+                             shot_size=shot_size or None, camera_angle=camera_angle or None,
+                             camera_movement=camera_movement or None,
+                             lighting=lighting or None, character_key=character_key or None,
+                             global_look=look_on,
+                             weights=Weights(framing=d.framing_weight, angle=d.angle_weight))
+        except ValueError as exc:
+            result = {"error": str(exc)}
+    return _page(request, "director.html", ctx, tracker=tracker, problem=problem,
+                 vocabulary=VOCABULARY, form=form, result=result)
+
+
+def _save(ctx: StudioContext, change: Any) -> RedirectResponse:
+    tracker, problem = _tracker(ctx)
+    if tracker is None:
+        return _back("/ui/director", err=problem)
+    try:
+        updated = AssetTracker.model_validate(change(tracker.to_json()))
+    except ValidationError as exc:
+        return _back("/ui/director", err="; ".join(
+            str(e["msg"]).removeprefix("Value error, ") for e in exc.errors())[:300])
+    save_tracker(tracker_path(ctx.settings.studio.data_dir), updated)
+    return _back("/ui/director", msg="Saved")
+
+
+@router.post("/director/look")
+def director_look(ctx: Ctx, prompt_prefix: Annotated[str, Form()] = "",
+                  style_modifiers: Annotated[str, Form()] = "",
+                  negative_prompt: Annotated[str, Form()] = "") -> RedirectResponse:
+    return _save(ctx, lambda t: {**t, "PROMPT_PREFIX": prompt_prefix.strip(),
+                                 "GLOBAL_STYLE_MODIFIERS": style_modifiers.strip(),
+                                 "GLOBAL_NEGATIVE_PROMPT": negative_prompt.strip()})
+
+
+@router.post("/director/characters")
+def director_character(ctx: Ctx, key: Annotated[str, Form()],
+                       description: Annotated[str, Form()]) -> RedirectResponse:
+    if not normalise_key(key):
+        return _back("/ui/director", err="give the character a name, e.g. NEO")
+    return _save(ctx, lambda t: {**t, "CHARACTERS": {**t["CHARACTERS"],
+                                                     normalise_key(key): description}})
+
+
+@router.post("/director/characters/{key}/delete")
+def director_character_delete(key: str, ctx: Ctx) -> RedirectResponse:
+    return _save(ctx, lambda t: {**t, "CHARACTERS": {
+        k: v for k, v in t["CHARACTERS"].items() if k != normalise_key(key)}})
 
 
 # -- system --------------------------------------------------------------------------------

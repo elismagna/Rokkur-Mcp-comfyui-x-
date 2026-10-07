@@ -19,12 +19,13 @@ ComfyUI and Ollama keep running where they run; Studio talks to them over their 
 | Rights gate (unknown rights block ingestion; human approval flow) | Working |
 | FFmpeg service, scene detection, shot planning, motion analysis | Working |
 | Versioned reconstruction manifest + per-shot semantic render params | Working |
-| ComfyUI client + template compiler + GPU lease + OOM recovery ladder | Working against a fake ComfyUI in tests; **not yet run against a real ComfyUI** |
+| ComfyUI client + template compiler + GPU lease + OOM recovery ladder | Working; first real Wan 2.1 VACE render on the RTX 3070 on 2026-10-07 |
 | `ffmpeg_preview` renderer (non-AI colour-grade stand-in) | Working, used by default |
 | QC (temporal/motion/structure/artifacts/detail) + shot-level repair loop with budget | Working; identity/prompt adherence reported as *not measured* |
 | Final Shorts encode, thumbnail, preview GIF, metadata draft | Working |
-| YouTube publish | **Dry run only** (validated `videos.insert` request). OAuth/upload is Phase 6 |
-| Ollama agent provider (JSON-schema output, malformed-output retry) | Working against a fake Ollama |
+| YouTube publish (OAuth, resumable upload, thumbnail, quota ledger; private by default) | Built and tested against a fake Google; waiting for the first real sign-in (`docs/youtube.md`) |
+| Ollama agents (Creative Director, Channel Manager) | Working on the workstation's GPU (qwen3.5:9b, checked with `agent-check`) |
+| AI director: cinematography vocabulary, Director of Photography pass, per-shot prompts, character tracker, Batch Prompt Schedule export (`docs/director.md`) | Built and tested against a fake Ollama; not yet run on the workstation |
 | Rökkur Collective / Odysseus integration | Not built: their interfaces could not be inspected (see `docs/current-state.md`) |
 | Discovery, comments, analytics, learning, autonomy loop | Phases 5–10, not started |
 
@@ -42,8 +43,11 @@ Open http://127.0.0.1:8400/ui. The dashboard has:
   Ollama and YouTube are reachable.
 - **New video**: pick a clip from the `media` folder (or upload one), describe the look,
   declare the rights, choose the quality, start.
-- **Project page**: pipeline progress, the final video, the model-written brief, QC scores,
-  and an editable title/description/tags with Dry run and Upload to YouTube buttons.
+- **Project page**: pipeline progress, the final video, the model-written brief with each
+  shot's frame, framing and prompt, the prompt schedule, QC scores, and an editable
+  title/description/tags with Dry run and Upload to YouTube buttons.
+- **Director**: the global look, your characters, the allowed cinematography terms, and a
+  form that shows how the prompt rules turn a description into a prompt.
 - **YouTube**, **Agents** (with a one-click model check), **Queue**, **Approvals**, **System**.
 
 See `docs/setup-windows.md`.
@@ -55,7 +59,8 @@ Or render straight from the command line (Windows):
 ```
 
 This runs the whole pipeline (rights gate, ComfyUI render, QC, dry-run publish) and prints
-where the final video landed. Add `--profile PREVIEW` for a quick low-res pass.
+where the final video landed. Add `--profile PREVIEW` for a quick low-res pass, and
+`--character NEO` to keep a character from the Director page in every shot.
 
 To put a finished video on YouTube (private by default, after a one-time sign-in described
 in `docs/youtube.md`):
@@ -91,14 +96,16 @@ curl -X POST localhost:8400/projects -H 'content-type: application/json' -d '{
 
 ## Commands
 
-`make up | down | logs | test | migrate | studio | worker | comfy-check | youtube-auth |
-smoke-test | audit | lint` — or the same names via `scripts\studio.ps1`.
+`make up | down | logs | test | migrate | studio | worker | comfy-check | agent-check |
+render | youtube-auth | publish | prompt-schedule | smoke-test | audit | lint` — or the same
+names via `scripts\studio.ps1`.
 
 ## Documentation
 
 - `docs/current-state.md` – Phase 0 audit and assumptions
 - `docs/adr/0001-rokkur-studio-architecture.md` – architecture decision record
 - `docs/milestones.md` – phase plan and status
+- `docs/director.md` – how each shot's prompt is built: vocabulary, rules, characters, schedule
 - `docs/architecture.md`, `docs/state-machine.md`, `docs/comfyui.md`, `docs/agents.md`,
   `docs/rights.md`, `docs/youtube.md`, `docs/setup-windows.md`, `docs/setup-docker.md`,
   `docs/troubleshooting.md`

@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from rokkur_studio.agents.roles import ChannelManager, CreativeDirector, RepairPlanner
+from rokkur_studio.agents.roles import ChannelManager, RepairPlanner
 from rokkur_studio.agents.schemas import CreativeBrief
 from rokkur_studio.comfyui.compiler import TemplateError, compile_workflow
 from rokkur_studio.db.models import (
@@ -24,6 +24,9 @@ from rokkur_studio.db.models import (
     RightsDecision,
     utcnow,
 )
+from rokkur_studio.director.assets import TrackerError, load_tracker, tracker_path
+from rokkur_studio.director.passes import direct
+from rokkur_studio.director.prompts import build_schedule
 from rokkur_studio.domain.rights import RightsCategory, RightsStatus, evaluate
 from rokkur_studio.domain.states import ProjectStatus
 from rokkur_studio.gpu.lease import GpuUnavailable
@@ -209,6 +212,35 @@ def analyze(ctx: StudioContext, job: Job) -> dict[str, Any]:
 
 
 # -- creative -----------------------------------------------------------------------------
+def _keyframes(ctx: StudioContext, pid: str, analysis: dict[str, Any]) -> dict[str, bytes]:
+    """The middle frame of every shot (for the DP's eyes and the dashboard), made once."""
+    source = ctx.store.path_for(analysis["source_asset"])
+    out_dir = ctx.store.project_dir(pid, "analysis/keyframes")
+    with ctx.db.session() as s:
+        known = {a.meta.get("shot_id") for a in s.scalars(select(Asset).where(
+            Asset.project_id == pid, Asset.kind == "keyframe"))}
+    frames: dict[str, bytes] = {}
+    new: list[tuple[str, Path]] = []
+    for shot in analysis["shots"]:
+        path = out_dir / f"{shot['shot_id']}.jpg"
+        if not path.is_file():
+            try:
+                ctx.ffmpeg.thumbnail(source, path, at=(shot["start"] + shot["end"]) / 2,
+                                     width=512)
+            except FFmpegError as exc:
+                log.warning("keyframe extraction failed", extra={"data": {
+                    "shot": shot["shot_id"], "error": exc.summary}})
+                continue
+        if shot["shot_id"] not in known:
+            new.append((shot["shot_id"], path))
+        frames[shot["shot_id"]] = path.read_bytes()
+    if new:
+        with ctx.db.transaction() as s:
+            for shot_id, path in new:
+                register_asset(s, ctx.store, pid, "keyframe", path, meta={"shot_id": shot_id})
+    return frames
+
+
 def creative_plan(ctx: StudioContext, job: Job) -> dict[str, Any]:
     project = _enter(ctx, job, {S.ANALYZED}, S.CREATIVE_PLANNING)
     with ctx.db.session() as s:
@@ -216,15 +248,42 @@ def creative_plan(ctx: StudioContext, job: Job) -> dict[str, Any]:
         if analysis is None:
             raise PermanentJobError("no_analysis", "analysis missing")
         data = analysis.data
-    brief, by = CreativeDirector(ctx.provider).run(project.creative_input, data,
-                                                   project.target_format)
+    path = tracker_path(ctx.settings.studio.data_dir)
+    try:
+        tracker = load_tracker(path)
+    except TrackerError as exc:
+        raise PermanentJobError("asset_tracker_invalid",
+                                f"{exc}. Fix it on the Director page or delete the file.") from exc
+    keyframes = _keyframes(ctx, project.id, data)
+    brief, by = direct(ctx.provider, project.creative_input, data, project.target_format,
+                       tracker=tracker, settings=ctx.settings.director,
+                       dp_provider=ctx.dp_provider, keyframes=keyframes)
+    d = ctx.settings.director
+    schedule = None
+    if d.enabled and all(shot.prompt for shot in brief.shot_plan):
+        schedule = build_schedule(brief.shot_plan, brief.negative_prompt,
+                                  duration=data["duration"], fps=d.schedule_fps,
+                                  interval=d.schedule_interval,
+                                  inline_negative=d.schedule_inline_negative)
+    notes = brief.director
     with ctx.db.transaction() as s:
         doc = save_document(s, project.id, "creative_brief", brief.model_dump(), created_by=by)
+        info: dict[str, Any] = {"version": doc.version, "story_by": by,
+                                "framing_by": notes.framing_by if notes else None,
+                                "vision": notes.vision if notes else False}
+        if schedule is not None:
+            sdoc = save_document(s, project.id, "prompt_schedule", schedule.to_dict(),
+                                 created_by="prompt_compiler")
+            (ctx.store.project_dir(project.id, "prompts")
+             / f"prompt_schedule_v{sdoc.version}.txt").write_text(schedule.text + "\n",
+                                                                  encoding="utf-8")
+            info["schedule_keyframes"] = len(schedule.keyframes)
         record_event(s, EventType.CREATIVE_BRIEF_CREATED, project_id=project.id, actor=by,
-                     job_id=job.id, data={"version": doc.version})
+                     job_id=job.id, data=info)
         p = get_project(s, project.id, for_update=True)
         transition(s, p, S.CREATIVE_READY, actor="creative_director", job_id=job.id)
-    return {"brief_version": doc.version, "provider": by}
+    return {"brief_version": doc.version, "provider": by, **{
+        k: v for k, v in info.items() if k != "version"}}
 
 
 # -- manifest + workflow compilation ------------------------------------------------------

@@ -6,23 +6,58 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from rokkur_studio.director.vocabulary import CameraAngle, CameraMovement, Lighting, ShotSize
 from rokkur_studio.domain.rights import RightsCategory
 
 TargetFormat = Literal["youtube_short", "youtube_video"]
 
 
-class ShotPlan(BaseModel):
+class ShotStory(BaseModel):
+    """Story pass (Creative Director): what one shot shows, written as visible states."""
+
     shot_id: str
     start: float
     end: float
     intent: str = ""
+    subject: str = ""      # concrete physical states: pose, expression, wardrobe details
+    background: str = ""   # setting details as nouns
     motion_type: str = "unknown"
     camera: str = "unknown"
 
 
-class CreativeBrief(BaseModel):
-    """Creative Director output."""
+class ShotFraming(BaseModel):
+    """Cinematography pass (Director of Photography) for one shot: allowed terms only."""
 
+    shot_size: ShotSize
+    camera_angle: CameraAngle
+    camera_movement: CameraMovement
+    lighting: Lighting
+
+
+class ShotPlan(ShotStory):
+    """A shot as stored in the brief: story + framing + the compiled diffusion prompt."""
+
+    shot_size: ShotSize | None = None
+    camera_angle: CameraAngle | None = None
+    camera_movement: CameraMovement | None = None
+    lighting: Lighting | None = None
+    framing_by: str | None = None
+    prompt: str = ""
+
+
+class DirectorNotes(BaseModel):
+    """How the director passes produced this brief (shown on the dashboard)."""
+
+    story_by: str = "rule_based"
+    framing_by: str = "rule_based"
+    vision: bool = False
+    character_key: str | None = None
+    global_look: bool = True
+    weights: dict[str, float] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class _BriefFields(BaseModel):
     style: str
     theme: str
     character: str | None = None
@@ -36,8 +71,20 @@ class CreativeBrief(BaseModel):
     background_requirements: str = ""
     target_duration: float = Field(gt=0)
     target_aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
-    shot_plan: list[ShotPlan] = Field(min_length=1)
     rationale: str = ""
+
+
+class StoryBrief(_BriefFields):
+    """What the Creative Director model is asked to return (no framing fields)."""
+
+    shot_plan: list[ShotStory] = Field(min_length=1)
+
+
+class CreativeBrief(_BriefFields):
+    """The stored brief: story, framing and per-shot prompts."""
+
+    shot_plan: list[ShotPlan] = Field(min_length=1)
+    director: DirectorNotes | None = None
 
 
 class MetadataDraft(BaseModel):

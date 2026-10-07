@@ -1,12 +1,12 @@
 {% extends "base.html" %}{% block title %}Agents · Rökkur Studio{% endblock %}{% block body %}
 <h1>Agents</h1>
-<p class="sub">Two agents use a language model: the Creative Director writes each video's brief and the Channel Manager writes its title, description and tags. If the model is unavailable they fall back to built-in rules, so a render never waits on it.</p>
+<p class="sub">Three agents use a language model: the Creative Director writes each video's brief and what every shot shows, the Director of Photography picks each shot's framing and lighting from the <a href="/ui/director">allowed terms</a>, and the Channel Manager writes the title, description and tags. If the model is unavailable they fall back to built-in rules, so a render never waits on it.</p>
 
 <div class="grid">
 <div class="card"><h2>Model</h2>
   <dl class="kv">
     <dt>Provider</dt><dd>{{ settings.agents.provider }}{% if settings.agents.provider != 'ollama' %} <span class="warn">(set STUDIO_AGENTS__PROVIDER=ollama in .env to use the model)</span>{% endif %}</dd>
-    <dt>Model</dt><dd>{{ settings.ollama.model }}</dd>
+    <dt>Model</dt><dd>{{ settings.ollama.model }}{% if settings.director.vision_model %} · DP: {{ settings.director.vision_model }}{% endif %}</dd>
     <dt>Ollama</dt><dd>{% if installed is none %}<span class="bad">not reachable at {{ settings.ollama.url }}</span>{% else %}<span class="ok">reachable</span>{% endif %}</dd>
     {% if installed is not none %}<dt>Installed</dt><dd>{% for m in installed %}<span class="pill {{ 'info' if m == settings.ollama.model else '' }}">{{m}}</span> {% endfor %}</dd>
     <dt>In memory</dt><dd>{% for m in loaded %}<span class="pill ok">{{m}}</span> {% else %}<span class="muted">none (loads on the first request)</span>{% endfor %}</dd>{% endif %}
@@ -17,7 +17,7 @@
   <form method="post" action="/ui/agents/check">
     <label for="theme">Theme to try</label>
     <input id="theme" name="theme" placeholder="1970s stop-motion claymation, warm film grain">
-    <p style="margin:12px 0 0"><button>Run check</button> <span class="hint">takes about 10–30 seconds</span></p>
+    <p style="margin:12px 0 0"><button>Run check</button> <span class="hint">takes about 20–60 seconds once the model is loaded</span></p>
   </form>
   {% if check_output %}<pre style="margin-top:12px">{{ check_output }}</pre>{% endif %}
 </div>

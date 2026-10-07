@@ -73,6 +73,20 @@ class AgentsSection(BaseModel):
     max_output_retries: int = 2
 
 
+class DirectorSection(BaseModel):
+    """The cinematography pass and prompt compiler (docs/director.md)."""
+
+    enabled: bool = True             # false: every shot renders with the brief's single prompt
+    framing_weight: float = Field(1.3, ge=0.5, le=2.0)   # (close-up shot:1.3)
+    angle_weight: float = Field(1.25, ge=0.5, le=2.0)    # (low-angle shot:1.25)
+    vision: Literal["auto", "off"] = "auto"  # auto: show the DP a frame of each shot if it can see
+    vision_model: str = ""           # optional separate Ollama model for the DP pass
+    max_framing_calls: int = Field(24, ge=0)  # shots beyond this get rule-based framing
+    schedule_fps: int = Field(24, ge=1, le=120)
+    schedule_interval: int = Field(24, ge=1)
+    schedule_inline_negative: bool = True    # "--neg" inside each keyframe (FizzNodes syntax)
+
+
 class RenderSection(BaseModel):
     renderer: Literal["ffmpeg_preview", "comfyui"] = "ffmpeg_preview"
     default_profile: str = "RTX3070_QUALITY"
@@ -134,6 +148,7 @@ class Settings(BaseModel):
     ollama: OllamaSection = OllamaSection()
     youtube: YoutubeSection = YoutubeSection()
     agents: AgentsSection = AgentsSection()
+    director: DirectorSection = DirectorSection()
     render: RenderSection = RenderSection()
     quality: QualitySection = QualitySection()
     rights: RightsSection = RightsSection()
