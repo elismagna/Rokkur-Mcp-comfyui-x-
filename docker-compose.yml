@@ -1,0 +1,69 @@
+# Rökkur Studio: Postgres + API + worker. ComfyUI and Ollama keep running where they
+# already run (the Windows host) and are reached via host.docker.internal.
+# Every port is bound to 127.0.0.1 only: nothing is exposed to the network by default.
+name: rokkur-studio
+
+x-studio: &studio
+  build: .
+  image: rokkur-studio:local
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://rokkur:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/rokkur
+    STUDIO_STUDIO__DATA_DIR: /app/data
+  volumes:
+    - ./data:/app/data
+    - ${STUDIO_MEDIA_DIR:-./media}:/media:ro
+    - ./workflows:/app/workflows:ro
+    - ./config:/app/config:ro
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  networks: [studio]
+  depends_on:
+    db: {condition: service_healthy}
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rokkur
+      POSTGRES_DB: rokkur
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${STUDIO_DB_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rokkur -d rokkur"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [studio]
+    restart: unless-stopped
+
+  migrate:
+    <<: *studio
+    command: ["rokkur-studio", "migrate"]
+    restart: "no"
+
+  api:
+    <<: *studio
+    command: ["rokkur-studio", "api", "--host", "0.0.0.0", "--port", "8400"]
+    ports:
+      - "127.0.0.1:${STUDIO_API_PORT:-8400}:8400"
+    depends_on:
+      db: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+
+  worker:
+    <<: *studio
+    command: ["rokkur-studio", "worker"]
+    depends_on:
+      db: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+
+volumes:
+  pgdata:
+
+networks:
+  studio:

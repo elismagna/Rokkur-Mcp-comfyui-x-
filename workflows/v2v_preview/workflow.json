@@ -1,0 +1,13 @@
+{
+  "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "v1-5-pruned-emaonly.safetensors"}},
+  "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "STYLE PROMPT", "clip": ["4", 1]}},
+  "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "blurry, deformed, watermark", "clip": ["4", 1]}},
+  "10": {"class_type": "LoadVideo", "inputs": {"file": "input.mp4"}},
+  "11": {"class_type": "GetVideoComponents", "inputs": {"video": ["10", 0]}},
+  "12": {"class_type": "ImageScale", "inputs": {"image": ["11", 0], "upscale_method": "bilinear", "width": 384, "height": 672, "crop": "center"}},
+  "13": {"class_type": "VAEEncode", "inputs": {"pixels": ["12", 0], "vae": ["4", 2]}},
+  "3": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["13", 0], "seed": 0, "steps": 8, "cfg": 6.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 0.55}},
+  "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+  "15": {"class_type": "CreateVideo", "inputs": {"images": ["8", 0], "fps": 12.0}},
+  "16": {"class_type": "SaveVideo", "inputs": {"video": ["15", 0], "filename_prefix": "rokkur/render", "format": "auto"}}
+}

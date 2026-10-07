@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block body %}
+<h1>Approvals</h1>
+<div class="table-wrap"><table><tr><th>Kind</th><th>Project</th><th>Summary</th><th>Status</th><th>Requested</th></tr>
+{% for a in items %}<tr><td>{{a.kind}}</td><td>{% if a.project_id %}<a href="/ui/projects/{{a.project_id}}">{{a.project_id[-8:]}}</a>{% endif %}</td><td>{{a.summary}}</td><td>{{a.status}}</td><td>{{a.requested_at.strftime('%m-%d %H:%M')}}</td></tr>{% else %}<tr><td colspan="5">Nothing waiting.</td></tr>{% endfor %}</table></div>
+<p><small>Decide via the project page or <code>POST /approvals/{id}</code>.</small></p>
+{% endblock %}

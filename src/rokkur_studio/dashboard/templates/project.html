@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{d.project.name}} · Rökkur Studio{% endblock %}
+{% block head %}{% if d.project.status in working %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block body %}{% set p = d.project %}
+<h1>{{p.name}} <span class="pill">{{p.status}}</span></h1>
+<p><small>{{p.id}} · profile {{p.render_profile}} · {{p.target_format}} · repair rounds {{p.repair_rounds}}{% if d.next_job %} · next stage: {{d.next_job}}{% endif %}</small></p>
+<p>
+{% if p.status in ['DISCOVERED','SCORED'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/start"><button>Start</button></form>{% endif %}
+{% if p.status == 'RIGHTS_PENDING' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/approve-rights"><button>Approve rights</button></form>
+<form class="inline" method="post" action="/ui/projects/{{p.id}}/reject-rights"><button class="secondary">Reject rights</button></form>{% endif %}
+{% if p.status == 'FAILED' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/resume"><button>Resume</button></form>{% endif %}
+{% if p.status not in ['ARCHIVED','CANCELLED','RIGHTS_REJECTED'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/cancel"><button class="secondary">Cancel</button></form>{% endif %}
+</p>
+<div class="grid">
+<div class="card"><h2>Source</h2><pre>{{d.source|pretty}}</pre></div>
+<div class="card"><h2>Rights</h2>{% if d.rights %}<p><span class="pill {% if d.rights.status=='approved' %}ok{% elif d.rights.status=='rejected' %}bad{% else %}warn{% endif %}">{{d.rights.category}} · {{d.rights.status}}</span></p><p>{{d.rights.reason}}</p>{% endif %}</div>
+{% for a in d.assets if a.kind=='final' %}<div class="card"><h2>Final output</h2><video controls src="/projects/{{p.id}}/assets/{{a.id}}/file"></video></div>{% endfor %}
+{% for a in d.assets if a.kind=='thumbnail' %}<div class="card"><h2>Thumbnail</h2><img src="/projects/{{p.id}}/assets/{{a.id}}/file" alt="thumbnail"></div>{% endfor %}
+</div>
+{% if d.documents.qc_report %}{% set q = d.documents.qc_report.data %}
+<h2>Quality control (v{{d.documents.qc_report.version}}) <span class="pill {% if q.decision=='PASS' %}ok{% else %}bad{% endif %}">{{q.decision}}</span></h2>
+<div class="table-wrap"><table><tr><th>Shot</th><th>Decision</th><th>Overall</th><th>Temporal</th><th>Motion</th><th>Structure</th><th>Artifacts</th><th>Issues</th><th>Recommendations</th></tr>
+{% for s in q.shots %}<tr><td>{{s.shot_id}} (#{{s.attempt}})</td><td class="{% if s.decision=='PASS' %}ok{% else %}bad{% endif %}">{{s.decision}}</td><td>{{s.overall}}</td><td>{{s.temporal_consistency}}</td><td>{{s.motion}}</td><td>{{s.structure}}</td><td>{{s.artifact_score}}</td><td>{{s.issues|join('; ')}}</td><td>{{s.recommendations|join(', ')}}</td></tr>{% endfor %}</table></div>
+<p><small>Not measured yet: {% for k, v in q.not_measured.items() %}{{k}} ({{v}}){% if not loop.last %}, {% endif %}{% endfor %}</small></p>{% endif %}
+<h2>Renders</h2>
+<div class="table-wrap"><table><tr><th>Shot</th><th>Attempt</th><th>Renderer</th><th>Profile</th><th>Status</th><th>Seconds</th><th>Error</th></tr>
+{% for r in d.renders %}<tr><td>{{r.shot_id}}</td><td>{{r.attempt}}</td><td>{{r.renderer}}{% if r.workflow %} / {{r.workflow}}{% endif %}</td><td>{{r.profile}}</td><td>{{r.status}}</td><td>{{'%.1f'|format(r.duration_s) if r.duration_s else ''}}</td><td>{{r.error.message if r.error else ''}}</td></tr>{% else %}<tr><td colspan="7">No renders yet.</td></tr>{% endfor %}</table></div>
+<div class="grid">
+{% for kind in ['creative_brief','manifest','metadata','analysis','repair_plan'] %}{% if d.documents[kind] %}
+<div class="card"><h2>{{kind|replace('_',' ')|title}} (v{{d.documents[kind].version}}, {{d.documents[kind].created_by}})</h2><pre>{{d.documents[kind].data|pretty}}</pre></div>{% endif %}{% endfor %}
+{% if d.publications %}<div class="card"><h2>Publication</h2>{% for pub in d.publications %}<p>{{'Dry run' if pub.dry_run else 'Upload'}} · {{pub.status}}</p><pre>{{pub.request|pretty}}</pre>{% endfor %}</div>{% endif %}
+</div>
+<h2>Jobs</h2>
+<div class="table-wrap"><table><tr><th>Kind</th><th>Status</th><th>Retries</th><th>Duration</th><th>Error</th></tr>
+{% for j in d.jobs %}<tr><td>{{j.kind}}</td><td>{{j.status}}</td><td>{{j.retry_count}}/{{j.max_attempts}}</td><td>{{'%.1fs'|format(j.duration_s) if j.duration_s else ''}}</td><td>{{j.error.message if j.error else ''}}</td></tr>{% endfor %}</table></div>
+<h2>Audit trail</h2>
+<div class="table-wrap"><table><tr><th>Time</th><th>Event</th><th>Transition</th><th>Actor</th><th>Data</th></tr>
+{% for e in events %}<tr><td>{{e.created_at.strftime('%H:%M:%S')}}</td><td>{{e.type}}</td><td>{{e.from_state or ''}}{% if e.to_state %} → {{e.to_state}}{% endif %}</td><td>{{e.actor}}</td><td><small>{{e.data|tojson|truncate(160)}}</small></td></tr>{% endfor %}</table></div>
+{% endblock %}

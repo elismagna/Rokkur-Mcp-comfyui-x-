@@ -1,0 +1,213 @@
+"""/projects endpoints."""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from rokkur_studio.api.deps import get_ctx, get_session
+from rokkur_studio.api.schemas import (
+    AssetOut,
+    EventOut,
+    JobOut,
+    ProjectCreate,
+    ProjectDetail,
+    ProjectOut,
+    PublicationOut,
+    PublishIn,
+    RenderOut,
+    RightsDecisionIn,
+    RightsOut,
+)
+from rokkur_studio.db.models import Asset, Event, Job, Project, Publication, Render
+from rokkur_studio.domain.states import ProjectStatus
+from rokkur_studio.pipeline.context import StudioContext
+from rokkur_studio.pipeline.driver import advance, next_job_kind
+from rokkur_studio.services import commands, publishing
+from rokkur_studio.services.assets import import_file, project_assets
+from rokkur_studio.services.projects import get_project, latest_document, latest_rights
+
+router = APIRouter(prefix="/projects", tags=["projects"])
+
+Ctx = Annotated[StudioContext, Depends(get_ctx)]
+Db = Annotated[Session, Depends(get_session)]
+
+DOC_KINDS = ("analysis", "creative_brief", "manifest", "qc_report", "repair_plan", "metadata")
+
+
+def _project(session: Session, project_id: str, for_update: bool = False) -> Project:
+    try:
+        return get_project(session, project_id, for_update=for_update)
+    except LookupError as exc:
+        raise HTTPException(404, f"project {project_id} not found") from exc
+
+
+@router.post("", response_model=ProjectOut, status_code=201)
+def create_project(body: ProjectCreate, ctx: Ctx, session: Db) -> Project:
+    try:
+        return commands.create_project(session, body, ctx.settings)
+    except (KeyError, LookupError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("", response_model=list[ProjectOut])
+def list_projects(session: Db, status: ProjectStatus | None = None,
+                  limit: int = Query(100, le=500)) -> list[Project]:
+    stmt = select(Project).order_by(Project.created_at.desc()).limit(limit)
+    if status:
+        stmt = stmt.where(Project.status == status.value)
+    return list(session.scalars(stmt))
+
+
+def project_detail(session: Session, project: Project) -> ProjectDetail:
+    docs = {}
+    for kind in DOC_KINDS:
+        doc = latest_document(session, project.id, kind)
+        if doc is not None:
+            docs[kind] = {"version": doc.version, "created_by": doc.created_by,
+                          "created_at": doc.created_at.isoformat(), "data": doc.data}
+    src = project.source
+    rights = latest_rights(session, project.id)
+    return ProjectDetail(
+        project=ProjectOut.model_validate(project),
+        source={c: getattr(src, c) for c in ("platform", "video_id", "url", "title", "creator",
+                                             "local_path", "asset_id")} if src else None,
+        rights=RightsOut.model_validate(rights) if rights else None,
+        documents=docs,
+        renders=[RenderOut.model_validate(r) for r in session.scalars(
+            select(Render).where(Render.project_id == project.id)
+            .order_by(Render.started_at))],
+        assets=[AssetOut.model_validate(a) for a in project_assets(session, project.id)],
+        jobs=[JobOut.model_validate(j) for j in session.scalars(
+            select(Job).where(Job.project_id == project.id).order_by(Job.created_at))],
+        publications=[PublicationOut.model_validate(p) for p in session.scalars(
+            select(Publication).where(Publication.project_id == project.id))],
+        next_job=next_job_kind(project),
+    )
+
+
+@router.get("/{project_id}", response_model=ProjectDetail)
+def get_project_detail(project_id: str, session: Db) -> ProjectDetail:
+    return project_detail(session, _project(session, project_id))
+
+
+@router.post("/{project_id}/start", response_model=ProjectOut)
+def start_project(project_id: str, ctx: Ctx, session: Db) -> Project:
+    project = _project(session, project_id, for_update=True)
+    try:
+        commands.start(session, project, ctx.settings)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return project
+
+
+@router.post("/{project_id}/advance", response_model=JobOut | None,
+             summary="Manually enqueue the next stage (autonomy level 0/1)")
+def advance_project(project_id: str, ctx: Ctx, session: Db) -> Job | None:
+    project = _project(session, project_id)
+    if next_job_kind(project) is None:
+        raise HTTPException(409, f"no stage job runs in state {project.status}")
+    return advance(session, project, ctx.settings, manual=True)
+
+
+@router.post("/{project_id}/cancel", response_model=ProjectOut)
+def cancel_project(project_id: str, session: Db) -> Project:
+    project = _project(session, project_id, for_update=True)
+    try:
+        commands.cancel(session, project)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return project
+
+
+@router.post("/{project_id}/resume", response_model=ProjectOut)
+def resume_project(project_id: str, ctx: Ctx, session: Db) -> Project:
+    project = _project(session, project_id, for_update=True)
+    try:
+        commands.resume_project(session, project, ctx.settings)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return project
+
+
+@router.post("/{project_id}/rights", response_model=ProjectOut,
+             summary="Record a human rights decision for a project awaiting one")
+def decide_rights(project_id: str, body: RightsDecisionIn, ctx: Ctx, session: Db) -> Project:
+    project = _project(session, project_id, for_update=True)
+    fields = body.model_dump(exclude={"approve", "decided_by", "note"})
+    fields["category"] = body.category.value
+    try:
+        return commands.decide_rights(session, project, ctx.settings, approve=body.approve,
+                                      decided_by=body.decided_by, fields=fields, note=body.note)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/{project_id}/source", response_model=AssetOut,
+             summary="Upload the permitted source video")
+def upload_source(project_id: str, ctx: Ctx, session: Db,
+                  file: UploadFile = File(...)) -> Asset:  # noqa: B008
+    project = _project(session, project_id, for_update=True)
+    if project.status not in (ProjectStatus.DISCOVERED, ProjectStatus.SCORED,
+                              ProjectStatus.RIGHTS_PENDING, ProjectStatus.RIGHTS_OK):
+        raise HTTPException(409, "source can only be replaced before ingestion")
+    suffix = Path(file.filename or "source.mp4").suffix.lower() or ".mp4"
+    tmp = ctx.store.project_dir(project.id, "work") / f"upload{suffix}"
+    with tmp.open("wb") as fh:
+        shutil.copyfileobj(file.file, fh)
+    asset = import_file(session, ctx.store, project.id, "source", "source", tmp,
+                        name=f"source{suffix}")
+    tmp.unlink(missing_ok=True)
+    assert project.source is not None
+    project.source.asset_id = asset.id
+    project.source.platform = "upload"
+    return asset
+
+
+@router.get("/{project_id}/events", response_model=list[EventOut])
+def project_events(project_id: str, session: Db) -> list[Event]:
+    _project(session, project_id)
+    return list(session.scalars(select(Event).where(Event.project_id == project_id)
+                                .order_by(Event.id)))
+
+
+@router.get("/{project_id}/assets", response_model=list[AssetOut])
+def list_assets(project_id: str, session: Db, kind: str | None = None) -> list[Asset]:
+    _project(session, project_id)
+    return project_assets(session, project_id, kind)
+
+
+@router.get("/{project_id}/assets/{asset_id}/file")
+def asset_file(project_id: str, asset_id: str, ctx: Ctx, session: Db) -> FileResponse:
+    asset = session.get(Asset, asset_id)
+    if asset is None or asset.project_id != project_id:
+        raise HTTPException(404, "asset not found")
+    return FileResponse(ctx.store.path_for(asset.rel_path), media_type=asset.mime)
+
+
+@router.post("/{project_id}/render", response_model=JobOut | None,
+             summary="Queue rendering for a project whose workflow is ready")
+def render_project(project_id: str, ctx: Ctx, session: Db) -> Job | None:
+    project = _project(session, project_id)
+    if project.status not in (ProjectStatus.WORKFLOW_READY, ProjectStatus.RENDER_QUEUED):
+        raise HTTPException(409, f"cannot render in state {project.status}")
+    return advance(session, project, ctx.settings, manual=True)
+
+
+@router.post("/{project_id}/publish", response_model=PublicationOut)
+def publish(project_id: str, body: PublishIn, session: Db) -> Publication:
+    project = _project(session, project_id, for_update=True)
+    if not body.dry_run:
+        raise HTTPException(501, "Real YouTube uploads arrive in Phase 6 (OAuth + resumable "
+                                 "upload + approval gate). Use dry_run=true.")
+    try:
+        return publishing.dry_run(session, project, privacy=body.privacy,
+                                  publish_at=body.publish_at, playlist_id=body.playlist_id)
+    except publishing.PublishGateError as exc:
+        raise HTTPException(409, str(exc)) from exc

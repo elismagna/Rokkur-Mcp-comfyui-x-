@@ -1,0 +1,67 @@
+# Rökkur Studio configuration. Every key can be overridden with an environment variable:
+# STUDIO_<SECTION>__<KEY>, e.g. STUDIO_GPU__VRAM_GB=24 or STUDIO_RENDER__RENDERER=comfyui.
+studio:
+  autonomy_level: 2          # 0 manual … 4 automatic within policy; per-channel override in DB
+  data_dir: data
+  log_level: INFO
+  log_json: true
+
+database:
+  url: postgresql+psycopg://rokkur:rokkur@localhost:5432/rokkur
+
+gpu:
+  vram_gb: 8
+  max_heavy_jobs: 1
+  lease_seconds: 3600
+  unload_ollama_before_heavy: true
+  free_comfyui_after_heavy: true
+  class_vram_gb:             # estimated VRAM per resource class, used for the lease budget
+    GPU_LIGHT: 2
+    GPU_MEDIUM: 5
+    GPU_HEAVY: 8
+
+comfyui:
+  url: http://127.0.0.1:8188
+  poll_interval_s: 2.0
+  timeout_s: 3600
+
+ollama:
+  url: http://127.0.0.1:11434
+  model: qwen2.5:7b-instruct
+
+youtube:
+  enabled: false
+  auto_publish: false
+  default_privacy: private
+
+agents:
+  provider: rule_based       # rule_based | ollama | rokkur_collective
+  max_per_project: 8
+  max_output_retries: 2
+
+render:
+  renderer: ffmpeg_preview   # ffmpeg_preview (non-AI stand-in) | comfyui
+  default_profile: RTX3070_QUALITY
+  max_retries: 3             # max repair rounds per project
+  max_renders_per_project: 40
+
+quality:
+  pass_threshold: 6.5
+
+rights:
+  block_unknown: true
+
+comments:
+  auto_reply_enabled: false
+
+costs:
+  max_gpu_minutes_per_project: 120
+  max_cloud_gpu_minutes: 0
+  max_cost_per_project_usd: 0
+
+jobs:
+  default_max_attempts: 3
+  lease_seconds: 900
+  backoff_base_s: 5
+  backoff_max_s: 600
+  poll_interval_s: 1.0

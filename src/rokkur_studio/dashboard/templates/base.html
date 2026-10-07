@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Rökkur Studio{% endblock %}</title>
+{% block head %}{% endblock %}
+<style>
+:root{--bg:#f6f5f2;--fg:#1d1c1a;--muted:#6b6862;--card:#fff;--line:#e2dfd8;--accent:#5b4bc4;--ok:#1e7f4f;--bad:#b3261e;--warn:#9a6700}
+@media (prefers-color-scheme:dark){:root{--bg:#141317;--fg:#ebe9e4;--muted:#9a968e;--card:#1d1b22;--line:#2f2c36;--accent:#a99bff;--ok:#5fcf95;--bad:#ff8a80;--warn:#e3b341}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--fg)}
+nav{display:flex;gap:4px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--card)}
+nav a,nav span{padding:4px 10px;border-radius:6px;text-decoration:none;color:var(--fg);font-size:12px;letter-spacing:.06em}
+nav a:hover{background:var(--line)}nav span{color:var(--muted)}nav b{margin-right:12px;padding:4px 0}
+main{max-width:1200px;margin:0 auto;padding:16px}h1{font-size:20px}h2{font-size:15px;margin:22px 0 8px}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line)}th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:13px}
+th{color:var(--muted);font-weight:500}a{color:var(--accent)}
+.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;border:1px solid var(--line)}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+pre{background:var(--card);border:1px solid var(--line);padding:10px;overflow:auto;max-height:380px;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+form.inline{display:inline}button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer}
+button.secondary{background:transparent;color:var(--fg);border:1px solid var(--line)}
+input,select{width:100%;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+label{display:block;font-size:12px;color:var(--muted);margin-top:8px}video,img{max-width:100%;max-height:420px;border-radius:6px}
+.table-wrap{overflow-x:auto}
+</style></head><body>
+<nav><b>RÖKKUR STUDIO</b>
+<a href="/ui">PROJECTS</a><a href="/ui/queue">QUEUE</a><a href="/ui/approvals">APPROVALS</a><a href="/ui/system">SYSTEM</a>
+<span title="Phase 5-6">CHANNEL</span><span title="Phase 7">COMMENTS</span><span title="Phase 8">ANALYTICS</span><span title="Phase 4">AGENTS</span><span title="Phase 9">SKILLS</span>
+<a href="/docs">API</a></nav>
+<main>{% block body %}{% endblock %}</main></body></html>

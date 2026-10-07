@@ -1,0 +1,61 @@
+# Render profiles. The workflow template is chosen per profile; "degrade" is the
+# ordered CUDA-OOM recovery ladder (each step applied once, never retrying identical work).
+profiles:
+  PREVIEW:
+    description: Fast low-resolution preview, minimal controls
+    workflow: v2v_preview
+    max_width: 384
+    max_height: 672
+    fps: 12
+    max_frames: 48
+    steps: 8
+    denoise: 0.55
+    controls: {pose: false, depth: false, segmentation: false}
+    resource_class: GPU_MEDIUM
+    location: local
+    degrade: [clear_cache, reduce_frames, reduce_resolution]
+
+  RTX3070_QUALITY:
+    description: Best reasonable quality inside 8 GB VRAM; quantization/offloading allowed
+    workflow: v2v_3070_quality
+    max_width: 576
+    max_height: 1024
+    fps: 16
+    max_frames: 81
+    steps: 20
+    denoise: 0.65
+    controls: {pose: true, depth: true, segmentation: false}
+    offload: true
+    quantization: fp8
+    resource_class: GPU_HEAVY
+    location: local
+    degrade: [clear_cache, reduce_frames, reduce_resolution, enable_offload, switch_profile:PREVIEW, split_shot]
+
+  HYBRID_MAX:
+    description: Local preprocessing, remote heavy generation, local postprocessing
+    workflow: hybrid_quality
+    max_width: 720
+    max_height: 1280
+    fps: 24
+    max_frames: 121
+    steps: 30
+    denoise: 0.7
+    controls: {pose: true, depth: true, segmentation: true}
+    resource_class: GPU_LIGHT
+    location: remote          # requires cloud GPU budget approval
+    degrade: [reduce_frames, split_shot]
+
+  FUTURE_24GB:
+    description: Higher resolution, larger models, less offloading, longer sequences
+    workflow: v2v_3070_quality
+    max_width: 1080
+    max_height: 1920
+    fps: 24
+    max_frames: 161
+    steps: 30
+    denoise: 0.7
+    controls: {pose: true, depth: true, segmentation: true}
+    offload: false
+    resource_class: GPU_HEAVY
+    location: local
+    degrade: [clear_cache, reduce_frames, reduce_resolution, enable_offload]

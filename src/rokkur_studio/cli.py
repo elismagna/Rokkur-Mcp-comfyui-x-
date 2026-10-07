@@ -1,0 +1,241 @@
+"""``rokkur-studio`` command line: migrate, api, worker, comfy-check, audit, smoke-test."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import platform
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from rokkur_studio.config import Settings, load_settings
+from rokkur_studio.logging_setup import configure_logging
+
+
+def _settings(args: argparse.Namespace) -> Settings:
+    settings = load_settings(Path(args.config) if args.config else None)
+    configure_logging(settings.studio.log_level, settings.studio.log_json)
+    return settings
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    from alembic import command
+    from alembic.config import Config
+
+    settings = _settings(args)
+    root = Path(__file__).resolve().parents[2]
+    ini = root / "alembic.ini"
+    cfg = Config(str(ini)) if ini.exists() else Config()
+    cfg.set_main_option("script_location", str(root / "migrations"))
+    cfg.attributes["url"] = settings.database.url
+    command.upgrade(cfg, args.revision)
+    print(f"database migrated to {args.revision}")
+    return 0
+
+
+def cmd_api(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from rokkur_studio.api.app import create_app
+
+    settings = _settings(args)
+    uvicorn.run(create_app(settings), host=args.host, port=args.port, log_config=None)
+    return 0
+
+
+def cmd_worker(args: argparse.Namespace) -> int:
+    import signal
+
+    from rokkur_studio.jobs.worker import Worker
+    from rokkur_studio.pipeline.context import build_context
+
+    settings = _settings(args)
+    worker = Worker(build_context(settings), kinds=args.kinds.split(",") if args.kinds else None)
+    signal.signal(signal.SIGTERM, lambda *_: worker.stop())
+    try:
+        worker.run_forever()
+    except KeyboardInterrupt:
+        worker.stop()
+    return 0
+
+
+def cmd_comfy_check(args: argparse.Namespace) -> int:
+    from rokkur_studio.comfyui.client import ComfyClient, ComfyError
+    from rokkur_studio.comfyui.compiler import (
+        TemplateError,
+        TemplateRegistry,
+        validate_against_object_info,
+    )
+
+    settings = _settings(args)
+    client = ComfyClient(settings.comfyui.url)
+    ok = True
+    try:
+        stats = client.system_stats()
+        for dev in stats.get("devices", []):
+            print(f"GPU: {dev.get('name')}  VRAM total {dev.get('vram_total', 0) / 2**30:.1f} GB"
+                  f"  free {dev.get('vram_free', 0) / 2**30:.1f} GB")
+        info = client.object_info()
+        print(f"ComfyUI reachable at {settings.comfyui.url}: {len(info)} node classes")
+    except (ComfyError, httpx.HTTPError) as exc:
+        print(f"ComfyUI NOT reachable at {settings.comfyui.url}: {exc}")
+        return 1
+    registry = TemplateRegistry(settings.workflows_dir)
+    needed = {p.workflow for p in settings.profiles.values()}
+    for name in sorted(set(registry.names()) | needed):
+        try:
+            template = registry.get(name)
+        except TemplateError as exc:
+            print(f"  [missing] {name}: {exc}")
+            ok = ok and name not in needed
+            continue
+        problems = validate_against_object_info(template, info)
+        print(f"  [{'ok' if not problems else 'FAIL'}] {name} v{template.spec.version}")
+        for p in problems:
+            print(f"      - {p}")
+        ok = ok and not problems
+    return 0 if ok else 1
+
+
+def _try(fn: Any) -> Any:
+    try:
+        return fn()
+    except Exception as exc:  # audit reports every failure instead of stopping
+        return {"error": str(exc)}
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    """Inspect the local environment and write data/audit.json (Phase 0 on the workstation)."""
+    from sqlalchemy import create_engine, text
+
+    settings = _settings(args)
+    report: dict[str, Any] = {"platform": platform.platform(), "python": sys.version}
+
+    def db() -> Any:
+        engine = create_engine(settings.database.url)
+        with engine.connect() as c:
+            return {"ok": True, "version": c.execute(text("select version()")).scalar()}
+
+    report["database"] = _try(db)
+    report["ffmpeg"] = {"ffmpeg": shutil.which("ffmpeg"), "ffprobe": shutil.which("ffprobe")}
+    report["docker"] = _try(lambda: subprocess.run(
+        ["docker", "info", "--format", "{{json .}}"], capture_output=True, text=True,
+        timeout=20).stdout[:2000] or "docker not available")
+    report["comfyui_system_stats"] = _try(
+        lambda: httpx.get(f"{settings.comfyui.url}/system_stats", timeout=5).json())
+    report["comfyui_node_classes"] = _try(lambda: sorted(
+        httpx.get(f"{settings.comfyui.url}/object_info", timeout=30).json()))
+    report["ollama_models"] = _try(
+        lambda: httpx.get(f"{settings.ollama.url}/api/tags", timeout=5).json())
+    report["ollama_loaded"] = _try(
+        lambda: httpx.get(f"{settings.ollama.url}/api/ps", timeout=5).json())
+    out = Path(settings.studio.data_dir) / "audit.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    summary = {k: ("error" not in v) if isinstance(v, dict) else bool(v)
+               for k, v in report.items() if k not in ("platform", "python")}
+    print(json.dumps(summary, indent=2))
+    print(f"full report: {out}")
+    return 0
+
+
+def cmd_youtube_auth(args: argparse.Namespace) -> int:
+    print("YouTube OAuth is Phase 6 and not implemented yet. Publishing works in dry-run "
+          "mode only (POST /projects/{id}/publish with dry_run=true).")
+    return 2
+
+
+def cmd_smoke_test(args: argparse.Namespace) -> int:
+    """End-to-end fixture: synthetic legal video → analysis → render → QC → encode → dry-run."""
+    from rokkur_studio.api.schemas import CreativeIn, ProjectCreate, RightsIn, SourceIn
+    from rokkur_studio.db.models import Event
+    from rokkur_studio.domain.rights import RightsCategory
+    from rokkur_studio.jobs.worker import Worker
+    from rokkur_studio.pipeline.context import build_context
+    from rokkur_studio.services import commands, publishing
+    from rokkur_studio.services.projects import get_project, latest_document
+
+    settings = _settings(args)
+    if args.renderer:
+        settings.render.renderer = args.renderer
+    ctx = build_context(settings)
+    fixtures = Path(settings.studio.data_dir) / "fixtures"
+    fixtures.mkdir(parents=True, exist_ok=True)
+    video = fixtures / "smoke_source.mp4"
+    if not video.exists():
+        ctx.ffmpeg.make_test_video(video, seconds=4)
+    creative: dict[str, Any] = {"theme": "1970s stop-motion sci-fi",
+                                "prompt": "clay robot walking through a retro space station"}
+    if args.inject_fault:
+        creative["test_faults"] = {"shot_002": {"kind": "black", "attempts": [1]}}
+    with ctx.db.transaction() as s:
+        project = commands.create_project(s, ProjectCreate(
+            name="Smoke test", source=SourceIn(platform="local", local_path=str(video.resolve())),
+            rights=RightsIn(category=RightsCategory.USER_OWNED,
+                            permission_evidence="synthetic test pattern generated by FFmpeg"),
+            creative=CreativeIn(**creative), render_profile=args.profile, autostart=True),
+            settings, actor="smoke-test")
+        pid = project.id
+    worker = Worker(ctx, worker_id="smoke-test")
+    deadline = time.monotonic() + args.timeout
+    done = {"READY_TO_PUBLISH", "FAILED", "RIGHTS_REJECTED", "CANCELLED", "RIGHTS_PENDING"}
+    while time.monotonic() < deadline:
+        worker.drain()
+        with ctx.db.session() as s:
+            status = get_project(s, pid).status
+        if status in done:
+            break
+        time.sleep(0.5)
+    with ctx.db.transaction() as s:
+        project = get_project(s, pid)
+        print(f"project {pid}: {project.status}")
+        for e in s.query(Event).filter_by(project_id=pid).order_by(Event.id):
+            if e.to_state:
+                print(f"  {e.from_state or '':<24} -> {e.to_state:<24} ({e.actor})")
+        if project.status != "READY_TO_PUBLISH":
+            return 1
+        qc = latest_document(s, pid, "qc_report")
+        print(f"QC: {qc.data['decision']} overall={qc.data['overall']}" if qc else "QC: none")
+        pub = publishing.dry_run(s, project, actor="smoke-test")
+        print("dry-run upload request:")
+        print(json.dumps(pub.request["body"], indent=2))
+        print(f"final video: {ctx.store.path_for(f'{pid}/final/final.mp4')}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="rokkur-studio")
+    parser.add_argument("--config", help="config directory (default: ./config)")
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("migrate", help="apply database migrations")
+    p.add_argument("revision", nargs="?", default="head")
+    p.set_defaults(func=cmd_migrate)
+    p = sub.add_parser("api", help="run the Studio API + dashboard")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8400)
+    p.set_defaults(func=cmd_api)
+    p = sub.add_parser("worker", help="run a job worker")
+    p.add_argument("--kinds", help="comma-separated job kinds to accept")
+    p.set_defaults(func=cmd_worker)
+    sub.add_parser("comfy-check", help="validate ComfyUI + templates").set_defaults(
+        func=cmd_comfy_check)
+    sub.add_parser("audit", help="inspect the local environment").set_defaults(func=cmd_audit)
+    sub.add_parser("youtube-auth", help="(Phase 6)").set_defaults(func=cmd_youtube_auth)
+    p = sub.add_parser("smoke-test", help="run the end-to-end fixture")
+    p.add_argument("--renderer", choices=["ffmpeg_preview", "comfyui"])
+    p.add_argument("--profile", default="PREVIEW")
+    p.add_argument("--inject-fault", action="store_true", help="exercise QC failure + repair")
+    p.add_argument("--timeout", type=float, default=300)
+    p.set_defaults(func=cmd_smoke_test)
+    args = parser.parse_args(argv)
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

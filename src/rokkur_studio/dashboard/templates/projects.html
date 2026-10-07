@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block body %}
+<h1>Projects</h1>
+<div class="table-wrap"><table><tr><th>Name</th><th>Status</th><th>Profile</th><th>Format</th><th>Created</th></tr>
+{% for p in projects %}<tr><td><a href="/ui/projects/{{p.id}}">{{p.name}}</a><br><small>{{p.id}}</small></td>
+<td><span class="pill {% if p.status in ['FAILED','RIGHTS_REJECTED'] %}bad{% elif p.status=='READY_TO_PUBLISH' %}ok{% elif p.status in working %}warn{% endif %}">{{p.status}}</span></td>
+<td>{{p.render_profile}}</td><td>{{p.target_format}}</td><td>{{p.created_at.strftime('%Y-%m-%d %H:%M')}}</td></tr>
+{% else %}<tr><td colspan="5">No projects yet.</td></tr>{% endfor %}</table></div>
+<h2>New project</h2>
+<form method="post" action="/ui/projects" class="card">
+<div class="grid"><div>
+<label>Name</label><input name="name" required>
+<label>Theme / style</label><input name="theme" required placeholder="1970s stop-motion sci-fi">
+<label>Prompt (optional)</label><input name="prompt">
+<label>Character reference image path (optional)</label><input name="character_reference_path">
+</div><div>
+<label>Source video path (readable by the worker)</label><input name="local_path" required>
+<label>Rights category</label><select name="rights_category">{% for c in categories %}<option {% if c=='USER_OWNED' %}selected{% endif %}>{{c}}</option>{% endfor %}</select>
+<label>Permission evidence (required for creator-provided / licensed)</label><input name="permission_evidence">
+<label>Render profile</label><select name="render_profile">{% for p in profiles %}<option {% if p==default_profile %}selected{% endif %}>{{p}}</option>{% endfor %}</select>
+<label>Format</label><select name="target_format"><option>youtube_short</option><option>youtube_video</option></select>
+<label><input type="checkbox" name="autostart" value="true" style="width:auto" checked> Start immediately</label>
+</div></div><p><button>Create project</button></p></form>
+{% endblock %}

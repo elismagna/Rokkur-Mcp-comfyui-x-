@@ -1,0 +1,23 @@
+# Preview video-to-video: per-frame img2img over a decoded clip using ComfyUI core nodes only
+# (LoadVideo / GetVideoComponents / CreateVideo / SaveVideo need a 2025+ ComfyUI).
+# Fast and flickery by design; it exists to prove the render path, not for final quality.
+# Run `make comfy-check` to validate it against your installation's /object_info.
+name: v2v_preview
+version: 1
+description: Core-node per-frame img2img preview
+resource_class: GPU_MEDIUM
+input_kind: video
+output_kinds: [videos, images, gifs]
+parameters:
+  CHECKPOINT: {node: "4", input: ckpt_name, type: str, default: v1-5-pruned-emaonly.safetensors}
+  STYLE_PROMPT: {node: "6", input: text, type: str, required: true}
+  NEGATIVE_PROMPT: {node: "7", input: text, type: str, default: "blurry, deformed, watermark, text"}
+  INPUT_VIDEO: {node: "10", input: file, type: str, required: true}
+  WIDTH: {node: "12", input: width, type: int, min: 64, max: 2048}
+  HEIGHT: {node: "12", input: height, type: int, min: 64, max: 2048}
+  SEED: {node: "3", input: seed, type: int, default: 0, min: 0}
+  STEPS: {node: "3", input: steps, type: int, min: 1, max: 100}
+  CFG: {node: "3", input: cfg, type: float, min: 0, max: 30}
+  DENOISE: {node: "3", input: denoise, type: float, min: 0, max: 1}
+  FPS: {node: "15", input: fps, type: float, min: 1, max: 60}
+  OUTPUT_PREFIX: {node: "16", input: filename_prefix, type: str, default: rokkur/render}

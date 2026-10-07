@@ -1,0 +1,646 @@
+"""Stage handlers. Each runs one pipeline stage for one project and is safe to re-run:
+a handler resumed after a crash continues from what is already recorded in the database."""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy import func, select
+
+from rokkur_studio.agents.roles import CreativeDirector, RepairPlanner
+from rokkur_studio.agents.schemas import CreativeBrief
+from rokkur_studio.comfyui.compiler import TemplateError, compile_workflow
+from rokkur_studio.db.models import (
+    ApprovalRequest,
+    Asset,
+    CostEntry,
+    Job,
+    Project,
+    Render,
+    RightsDecision,
+    utcnow,
+)
+from rokkur_studio.domain.rights import RightsCategory, RightsStatus, evaluate
+from rokkur_studio.domain.states import ProjectStatus
+from rokkur_studio.gpu.lease import GpuUnavailable
+from rokkur_studio.jobs.errors import JobCancelled, JobError, PermanentJobError
+from rokkur_studio.jobs.queue import is_cancelled
+from rokkur_studio.manifest.builder import build_manifest, shot_params
+from rokkur_studio.manifest.schema import ReconstructionManifest, ShotSpec
+from rokkur_studio.media.ffmpeg import FFmpegError
+from rokkur_studio.pipeline import qc as qc_mod
+from rokkur_studio.pipeline.analysis import analyze_video
+from rokkur_studio.pipeline.context import StudioContext
+from rokkur_studio.pipeline.renderers import (
+    ComfyUIRenderer,
+    FFmpegPreviewRenderer,
+    Renderer,
+    RenderOOM,
+    RenderRejected,
+    RenderUnavailable,
+)
+from rokkur_studio.services import publishing
+from rokkur_studio.services.assets import import_file, register_asset
+from rokkur_studio.services.events import EventType, record_event
+from rokkur_studio.services.projects import (
+    get_project,
+    latest_document,
+    latest_rights,
+    save_document,
+    transition,
+)
+
+log = logging.getLogger(__name__)
+S = ProjectStatus
+
+Handler = Callable[[StudioContext, Job], dict[str, Any]]
+
+
+def _enter(ctx: StudioContext, job: Job, trigger: set[ProjectStatus],
+           working: ProjectStatus | None) -> Project:
+    """Move the project into the stage's working state (idempotent on resume)."""
+    with ctx.db.transaction() as s:
+        project = get_project(s, job.project_id or "", for_update=True)
+        status = S(project.status)
+        if working is not None and status == working:
+            return project
+        if status not in trigger:
+            raise PermanentJobError("wrong_state", f"{job.kind} cannot run in state {status}",
+                                    {"state": status.value})
+        if working is not None:
+            transition(s, project, working, actor=job.kind, job_id=job.id)
+        return project
+
+
+def _finish(ctx: StudioContext, job: Job, target: ProjectStatus,
+            data: dict[str, Any] | None = None) -> None:
+    with ctx.db.transaction() as s:
+        project = get_project(s, job.project_id or "", for_update=True)
+        transition(s, project, target, actor=job.kind, job_id=job.id, data=data)
+
+
+def _write_json(path: Path, data: dict[str, Any]) -> Path:
+    path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    return path
+
+
+def _manifest(ctx: StudioContext, project_id: str) -> tuple[ReconstructionManifest, int]:
+    with ctx.db.session() as s:
+        doc = latest_document(s, project_id, "manifest")
+        if doc is None:
+            raise PermanentJobError("no_manifest", "project has no manifest")
+        return ReconstructionManifest.model_validate(doc.data), doc.version
+
+
+# -- rights -------------------------------------------------------------------------------
+def rights_check(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    with ctx.db.transaction() as s:
+        project = get_project(s, job.project_id or "", for_update=True)
+        if S(project.status) is not S.RIGHTS_PENDING:
+            raise PermanentJobError("wrong_state", f"rights_check in {project.status}")
+        current = latest_rights(s, project.id)
+        category = RightsCategory(current.category) if current else RightsCategory.UNKNOWN
+        status, reason = evaluate(
+            category, has_evidence=bool(current and current.permission_evidence),
+            block_unknown=ctx.settings.rights.block_unknown,
+            commercial_use=current.commercial_use if current else None)
+        decision = RightsDecision(
+            project_id=project.id, category=category.value, status=status.value, reason=reason,
+            license=current.license if current else None,
+            owner=current.owner if current else None,
+            permission_evidence=current.permission_evidence if current else None,
+            attribution_required=current.attribution_required if current else False,
+            attribution_text=current.attribution_text if current else None,
+            allowed_transformations=current.allowed_transformations if current else [],
+            commercial_use=current.commercial_use if current else None,
+            decided_by="rights_gate")
+        s.add(decision)
+        s.flush()
+        if status is RightsStatus.APPROVED:
+            transition(s, project, S.RIGHTS_OK, actor="rights_gate", reason=reason, job_id=job.id)
+        elif status is RightsStatus.REJECTED:
+            transition(s, project, S.RIGHTS_REJECTED, actor="rights_gate", reason=reason,
+                       job_id=job.id)
+        else:
+            s.add(ApprovalRequest(project_id=project.id, kind="rights_ambiguity",
+                                  summary=reason, requested_by="rights_gate",
+                                  payload={"category": category.value}))
+            record_event(s, EventType.RIGHTS_NEEDS_HUMAN, project_id=project.id,
+                         actor="rights_gate", job_id=job.id, data={"reason": reason})
+            record_event(s, EventType.APPROVAL_REQUESTED, project_id=project.id,
+                         actor="rights_gate", job_id=job.id, data={"kind": "rights_ambiguity"})
+        return {"rights": status.value, "reason": reason,
+                "awaiting_human": status is RightsStatus.NEEDS_HUMAN}
+
+
+# -- ingest -------------------------------------------------------------------------------
+def ingest(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    pid = job.project_id or ""
+    with ctx.db.transaction() as s:
+        project = get_project(s, pid, for_update=True)
+        if S(project.status) is not S.RIGHTS_OK:
+            raise PermanentJobError("wrong_state", f"ingest in {project.status}")
+        source = project.source
+        if source is None:
+            raise PermanentJobError("no_source", "project has no source")
+        if source.asset_id is None:
+            if not source.local_path:
+                raise PermanentJobError(
+                    "no_source_file",
+                    "Studio never downloads platform videos. Supply the permitted file "
+                    "(upload it, or set local_path to a file the worker can read).")
+            src = Path(source.local_path)
+            if not src.is_file():
+                raise PermanentJobError("source_missing", f"source file not found: {src}")
+            asset = import_file(s, ctx.store, pid, "source", "source", src,
+                                name=f"source{src.suffix.lower() or '.mp4'}")
+            source.asset_id = asset.id
+        found = s.get(Asset, source.asset_id)
+        assert found is not None
+        asset = found
+        try:
+            info = ctx.ffmpeg.probe(ctx.store.path_for(asset.rel_path))
+        except FFmpegError as exc:
+            raise PermanentJobError("unreadable_source", "source is not a readable video",
+                                    exc.to_dict()) from exc
+        asset.meta = {**asset.meta, "probe": info.to_dict()}
+        ref = project.creative_input.get("character_reference_path")
+        if ref and not project.creative_input.get("character_reference_asset"):
+            ref_path = Path(ref)
+            if not ref_path.is_file():
+                raise PermanentJobError("reference_missing", f"reference image not found: {ref}")
+            ref_asset = import_file(s, ctx.store, pid, "reference", "references", ref_path,
+                                    name=f"character{ref_path.suffix.lower()}")
+            project.creative_input = {**project.creative_input,
+                                      "character_reference_asset": ref_asset.rel_path}
+        transition(s, project, S.DOWNLOADED_OR_INGESTED, actor="ingest", job_id=job.id,
+                   data={"asset": asset.rel_path})
+        return {"source_asset": asset.rel_path, "probe": info.to_dict()}
+
+
+# -- analysis -----------------------------------------------------------------------------
+def analyze(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    project = _enter(ctx, job, {S.DOWNLOADED_OR_INGESTED}, S.ANALYZING)
+    pid = project.id
+    with ctx.db.session() as s:
+        p = get_project(s, pid)
+        source = p.source
+        asset = s.get(Asset, source.asset_id) if source and source.asset_id else None
+        profile = ctx.settings.profile(p.render_profile)
+    if asset is None:
+        raise PermanentJobError("no_source_asset", "source was not ingested")
+    try:
+        analysis = analyze_video(ctx.ffmpeg, ctx.store.path_for(asset.rel_path),
+                                 max_shot_s=profile.max_frames / profile.fps)
+    except FFmpegError as exc:
+        raise JobError("ffmpeg_failed", "analysis failed", exc.to_dict()) from exc
+    analysis["source_asset"] = asset.rel_path
+    _write_json(ctx.store.project_dir(pid, "analysis") / "analysis.json", analysis)
+    with ctx.db.transaction() as s:
+        save_document(s, pid, "analysis", analysis, created_by="video_analyst")
+        p = get_project(s, pid, for_update=True)
+        transition(s, p, S.ANALYZED, actor="video_analyst", job_id=job.id,
+                   data={"shots": len(analysis["shots"])})
+    return {"shots": len(analysis["shots"]), "duration": analysis["duration"]}
+
+
+# -- creative -----------------------------------------------------------------------------
+def creative_plan(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    project = _enter(ctx, job, {S.ANALYZED}, S.CREATIVE_PLANNING)
+    with ctx.db.session() as s:
+        analysis = latest_document(s, project.id, "analysis")
+        if analysis is None:
+            raise PermanentJobError("no_analysis", "analysis missing")
+        data = analysis.data
+    brief, by = CreativeDirector(ctx.provider).run(project.creative_input, data,
+                                                   project.target_format)
+    with ctx.db.transaction() as s:
+        doc = save_document(s, project.id, "creative_brief", brief.model_dump(), created_by=by)
+        record_event(s, EventType.CREATIVE_BRIEF_CREATED, project_id=project.id, actor=by,
+                     job_id=job.id, data={"version": doc.version})
+        p = get_project(s, project.id, for_update=True)
+        transition(s, p, S.CREATIVE_READY, actor="creative_director", job_id=job.id)
+    return {"brief_version": doc.version, "provider": by}
+
+
+# -- manifest + workflow compilation ------------------------------------------------------
+def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    project = _enter(ctx, job, {S.CREATIVE_READY, S.WORKFLOW_READY}, S.WORKFLOW_COMPILING)
+    pid = project.id
+    profile = ctx.settings.profile(project.render_profile)
+    with ctx.db.session() as s:
+        brief_doc = latest_document(s, pid, "creative_brief")
+        analysis = latest_document(s, pid, "analysis")
+        if brief_doc is None or analysis is None:
+            raise PermanentJobError("missing_inputs", "brief or analysis missing")
+        brief = CreativeBrief.model_validate(brief_doc.data)
+        a = analysis.data
+    manifest = build_manifest(
+        project_id=pid, source_asset=a["source_asset"], analysis=a, brief=brief,
+        profile=profile, target_format=project.target_format,
+        reference_image=project.creative_input.get("character_reference_asset"))
+    compiled: dict[str, Any] = {}
+    if ctx.settings.render.renderer == "comfyui":
+        try:
+            template = ctx.registry.get(profile.workflow)
+            for shot in manifest.shots:
+                c = compile_workflow(template, {**shot_params(manifest, shot, profile),
+                                                "INPUT_VIDEO": f"{pid}_{shot.shot_id}.mp4"})
+                compiled[shot.shot_id] = {"applied": c.applied, "ignored": sorted(c.ignored)}
+        except TemplateError as exc:
+            raise PermanentJobError("template_error", str(exc)) from exc
+    with ctx.db.transaction() as s:
+        doc = save_document(s, pid, "manifest", manifest.model_dump(), created_by="workflow_planner",
+                            schema_version=manifest.version)
+        _write_json(ctx.store.project_dir(pid, "manifests") / f"manifest_v{doc.version}.json",
+                    manifest.model_dump())
+        record_event(s, EventType.MANIFEST_CREATED, project_id=pid, actor="workflow_planner",
+                     job_id=job.id, data={"version": doc.version, "shots": len(manifest.shots)})
+        if compiled:
+            record_event(s, EventType.WORKFLOW_COMPILED, project_id=pid,
+                         actor="workflow_compiler", job_id=job.id,
+                         data={"workflow": profile.workflow, "shots": compiled})
+        p = get_project(s, pid, for_update=True)
+        transition(s, p, S.WORKFLOW_READY, actor="workflow_planner", job_id=job.id)
+    return {"manifest_version": doc.version, "shots": len(manifest.shots),
+            "renderer": ctx.settings.render.renderer}
+
+
+# -- rendering ----------------------------------------------------------------------------
+def _renderer(ctx: StudioContext, job: Job) -> Renderer:
+    if ctx.settings.render.renderer == "comfyui":
+        def cancelled() -> bool:
+            with ctx.db.session() as s:
+                return is_cancelled(s, job.id)
+        return ComfyUIRenderer(ctx.comfy_factory(), ctx.registry, ctx.ffmpeg,
+                               timeout_s=ctx.settings.comfyui.timeout_s,
+                               poll_s=ctx.settings.comfyui.poll_interval_s,
+                               should_cancel=cancelled)
+    custom = ctx.extras.get("renderer")
+    if custom is not None:
+        return custom  # type: ignore[return-value]
+    return FFmpegPreviewRenderer(ctx.ffmpeg)
+
+
+def _shot_clip(ctx: StudioContext, manifest: ReconstructionManifest, shot: ShotSpec,
+               fps: float | None = None) -> Path:
+    fps = fps or manifest.video.fps
+    clip = ctx.store.project_dir(manifest.project_id, "work/clips") / \
+        f"{shot.shot_id}_{fps:g}fps.mp4"
+    if not clip.exists():
+        ctx.ffmpeg.cut(ctx.store.path_for(manifest.source_asset), clip, start=shot.start,
+                       end=shot.end, fps=fps, width=manifest.video.width,
+                       height=manifest.video.height)
+    return clip
+
+
+def _latest_renders(ctx: StudioContext, project_id: str) -> dict[str, Render]:
+    with ctx.db.session() as s:
+        rows = s.scalars(select(Render).where(Render.project_id == project_id,
+                                              Render.status == "succeeded")
+                         .order_by(Render.attempt)).all()
+    return {r.shot_id: r for r in rows}
+
+
+def _check_budget(ctx: StudioContext, project_id: str) -> None:
+    with ctx.db.session() as s:
+        renders = s.scalar(select(func.count(Render.id)).where(Render.project_id == project_id))
+        gpu_min = s.scalar(select(func.coalesce(func.sum(CostEntry.amount), 0.0)).where(
+            CostEntry.project_id == project_id, CostEntry.kind == "gpu_minutes")) or 0.0
+    limits = ctx.settings
+    reason = None
+    if (renders or 0) >= limits.render.max_renders_per_project:
+        reason = f"render budget exhausted ({renders}/{limits.render.max_renders_per_project})"
+    elif gpu_min >= limits.costs.max_gpu_minutes_per_project:
+        reason = f"GPU budget exhausted ({gpu_min:.1f} min)"
+    if reason:
+        with ctx.db.transaction() as s:
+            record_event(s, EventType.BUDGET_EXCEEDED, project_id=project_id, actor="cost_guard",
+                         data={"reason": reason})
+        raise PermanentJobError("budget_exceeded", reason)
+
+
+def _apply_degrade(ctx: StudioContext, manifest: ReconstructionManifest, shot: ShotSpec,
+                   steps: list[str]) -> str | None:
+    """Apply the next unused OOM recovery step to the shot. Returns the step or None."""
+    raw = str(shot.overrides.get("_oom_steps", ""))
+    applied = raw.split(",") if raw else []
+    for step in steps:
+        if step in applied:
+            continue
+        o = shot.overrides
+        if step == "clear_cache":
+            if ctx.settings.render.renderer == "comfyui":
+                client = ctx.comfy_factory()
+                try:
+                    client.free()
+                finally:
+                    client.close()
+        elif step == "reduce_frames":
+            o["fps"] = max(6.0, round(float(o.get("fps", manifest.video.fps)) * 0.75, 2))
+        elif step == "reduce_resolution":
+            o["resolution_scale"] = round(float(o.get("resolution_scale", 1.0)) * 0.75, 3)
+        elif step == "enable_offload":
+            o["offload"] = True
+        elif step.startswith("switch_profile:"):
+            o["profile"] = step.split(":", 1)[1]
+        else:  # split_shot and anything unknown: not automated yet → escalate
+            return None
+        applied.append(step)
+        o["_oom_steps"] = ",".join(applied)
+        return step
+    return None
+
+
+def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    # RENDERING is accepted so a render interrupted by a crash or retry resumes in place.
+    project = _enter(ctx, job, {S.WORKFLOW_READY, S.RENDER_QUEUED, S.RENDERING}, None)
+    pid = project.id
+    with ctx.db.transaction() as s:
+        p = get_project(s, pid, for_update=True)
+        if S(p.status) is S.WORKFLOW_READY:
+            transition(s, p, S.RENDER_QUEUED, actor="render", job_id=job.id)
+        if S(p.status) is S.RENDER_QUEUED:
+            transition(s, p, S.RENDERING, actor="render", job_id=job.id)
+    manifest, manifest_version = _manifest(ctx, pid)
+    base_profile = ctx.settings.profile(manifest.render_profile)
+    renderer = _renderer(ctx, job)
+    done = _latest_renders(ctx, pid)
+    faults = project.creative_input.get("test_faults") or {}
+    rendered: list[str] = []
+
+    for shot in manifest.shots:
+        if shot.shot_id in done:
+            continue
+        while True:
+            with ctx.db.session() as s:
+                if is_cancelled(s, job.id):
+                    raise JobCancelled()
+            _check_budget(ctx, pid)
+            profile = ctx.settings.profile(str(shot.overrides.get("profile",
+                                                                   base_profile.name)))
+            params = shot_params(manifest, shot, profile)
+            with ctx.db.session() as s:
+                attempt = (s.scalar(select(func.count(Render.id)).where(
+                    Render.project_id == pid, Render.shot_id == shot.shot_id)) or 0) + 1
+            fault = faults.get(shot.shot_id)
+            if fault and attempt in fault.get("attempts", [1]):
+                params["_FAULT"] = fault.get("kind", "black")
+            clip = _shot_clip(ctx, manifest, shot, fps=params["FPS"])
+            out_dir = ctx.store.project_dir(pid, f"renders/{shot.shot_id}")
+            out = out_dir / f"attempt_{attempt:02d}.mp4"
+            with ctx.db.transaction() as s:
+                row = Render(project_id=pid, job_id=job.id, shot_id=shot.shot_id,
+                             attempt=attempt, profile=profile.name, renderer=renderer.name,
+                             workflow=profile.workflow if renderer.name == "comfyui" else None,
+                             status="running", params={k: v for k, v in params.items()})
+                s.add(row)
+                s.flush()
+                render_id = row.id
+                record_event(s, EventType.RENDER_SUBMITTED, project_id=pid, actor="render",
+                             job_id=job.id, data={"shot_id": shot.shot_id, "attempt": attempt,
+                                                  "renderer": renderer.name})
+            try:
+                if renderer.name == "ffmpeg_preview":
+                    outcome = renderer.render_shot(clip=clip, params=params,
+                                                   workflow=profile.workflow, out=out)
+                else:
+                    with ctx.gpu.lease(job.id, profile.resource_class):
+                        outcome = renderer.render_shot(clip=clip, params=params,
+                                                       workflow=profile.workflow, out=out)
+            except RenderOOM as exc:
+                step = _apply_degrade(ctx, manifest, shot, profile.degrade)
+                _render_failed(ctx, job, render_id, "oom", str(exc), {"next_step": step})
+                with ctx.db.transaction() as s:
+                    record_event(s, EventType.GPU_OOM, project_id=pid, actor="render",
+                                 job_id=job.id, data={"shot_id": shot.shot_id,
+                                                      "recovery_step": step})
+                    save_document(s, pid, "manifest", manifest.model_dump(),
+                                  created_by="oom_recovery")
+                if step is None:
+                    raise PermanentJobError(
+                        "oom_unrecoverable",
+                        f"{shot.shot_id}: CUDA OOM after the full recovery ladder; needs a "
+                        "smaller shot, a lighter profile or cloud GPU (approval required)") from exc
+                continue  # retry with the degraded settings (never identical)
+            except RenderUnavailable as exc:
+                _render_failed(ctx, job, render_id, "unavailable", str(exc))
+                raise JobError("renderer_unavailable", str(exc)) from exc
+            except (RenderRejected, TemplateError) as exc:
+                _render_failed(ctx, job, render_id, "rejected", str(exc))
+                raise PermanentJobError("render_rejected", str(exc)) from exc
+            except GpuUnavailable as exc:
+                _render_failed(ctx, job, render_id, "gpu_busy", str(exc))
+                raise JobError("gpu_busy", str(exc)) from exc
+            except FFmpegError as exc:
+                _render_failed(ctx, job, render_id, "ffmpeg", str(exc), exc.to_dict())
+                raise JobError("ffmpeg_failed", str(exc), exc.to_dict()) from exc
+            with ctx.db.transaction() as s:
+                asset = register_asset(s, ctx.store, pid, "render", outcome.path,
+                                       {"shot_id": shot.shot_id, "attempt": attempt})
+                done_row = s.get(Render, render_id)
+                assert done_row is not None
+                done_row.status, done_row.output_asset_id = "succeeded", asset.id
+                done_row.remote_id, done_row.duration_s = outcome.remote_id, outcome.seconds
+                done_row.finished_at = utcnow()
+                done_row.params = {**done_row.params, "_details": outcome.details}
+                if renderer.name != "ffmpeg_preview":
+                    s.add(CostEntry(project_id=pid, job_id=job.id, kind="gpu_minutes",
+                                    amount=outcome.seconds / 60, unit="min"))
+                record_event(s, EventType.RENDER_COMPLETED, project_id=pid, actor="render",
+                             job_id=job.id, data={"shot_id": shot.shot_id, "attempt": attempt,
+                                                  "seconds": round(outcome.seconds, 2)})
+            rendered.append(shot.shot_id)
+            break
+
+    assembled = _assemble(ctx, manifest)
+    _finish(ctx, job, S.QUALITY_CHECK, {"assembled": assembled, "rendered": rendered,
+                                        "manifest_version": manifest_version})
+    return {"rendered": rendered, "assembled": assembled}
+
+
+def _render_failed(ctx: StudioContext, job: Job, render_id: str, code: str, message: str,
+                   details: dict[str, Any] | None = None) -> None:
+    with ctx.db.transaction() as s:
+        row = s.get(Render, render_id)
+        if row is not None:
+            row.status, row.finished_at = "failed", utcnow()
+            row.error = {"code": code, "message": message, **(details or {})}
+        record_event(s, EventType.RENDER_FAILED, project_id=job.project_id, actor="render",
+                     job_id=job.id, data={"render_id": render_id, "code": code,
+                                          "message": message})
+
+
+def _assemble(ctx: StudioContext, manifest: ReconstructionManifest) -> str:
+    """Splice the latest good render of every shot, in manifest order."""
+    pid = manifest.project_id
+    latest = _latest_renders(ctx, pid)
+    clips: list[Path] = []
+    with ctx.db.session() as s:
+        for shot in manifest.shots:
+            r = latest.get(shot.shot_id)
+            if r is None or r.output_asset_id is None:
+                raise PermanentJobError("missing_shot", f"no successful render for {shot.shot_id}")
+            asset = s.get(Asset, r.output_asset_id)
+            assert asset is not None
+            clip = ctx.store.path_for(asset.rel_path)
+            # Normalise every shot to the manifest grid so OOM-degraded shots still splice.
+            norm = clip.with_name(clip.stem + "_norm.mp4")
+            if not norm.exists():
+                ctx.ffmpeg.filter_video(clip, norm, f"fps={manifest.video.fps},scale="
+                                        f"{manifest.video.width}:{manifest.video.height}")
+            clips.append(norm)
+    renders_dir = ctx.store.project_dir(pid, "renders")
+    n = len(list(renders_dir.glob("assembled_v*.mp4"))) + 1
+    out = ctx.ffmpeg.concat(clips, renders_dir / f"assembled_v{n:02d}.mp4")
+    with ctx.db.transaction() as s:
+        register_asset(s, ctx.store, pid, "assembled", out, {"version": n})
+    return ctx.store.rel(out)
+
+
+# -- quality control ----------------------------------------------------------------------
+def quality_check(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    project = _enter(ctx, job, {S.QUALITY_CHECK}, S.QUALITY_CHECK)
+    pid = project.id
+    manifest, _ = _manifest(ctx, pid)
+    latest = _latest_renders(ctx, pid)
+    threshold = ctx.settings.quality.pass_threshold
+    fps = manifest.video.fps
+    shots = []
+    offset = 0
+    with ctx.db.session() as s:
+        for shot in manifest.shots:
+            r = latest[shot.shot_id]
+            asset = s.get(Asset, r.output_asset_id)
+            assert asset is not None
+            src = ctx.ffmpeg.read_gray_frames(_shot_clip(ctx, manifest, shot), 64, 64, fps=fps)
+            out = ctx.ffmpeg.read_gray_frames(ctx.store.path_for(asset.rel_path), 64, 64, fps=fps)
+            result = qc_mod.score_shot(src, out, threshold=threshold, shot_id=shot.shot_id,
+                                       frame_offset=offset)
+            result["render_id"] = r.id
+            result["attempt"] = r.attempt
+            shots.append(result)
+            offset += len(src)
+    report = qc_mod.summarize(shots, threshold)
+    with ctx.db.transaction() as s:
+        doc = save_document(s, pid, "qc_report", report, created_by="qc")
+        _write_json(ctx.store.project_dir(pid, "qc") / f"qc_v{doc.version}.json", report)
+        p = get_project(s, pid, for_update=True)
+        target = S.QUALITY_PASSED if report["decision"] == "PASS" else S.QUALITY_FAILED
+        transition(s, p, target, actor="qc", job_id=job.id,
+                   data={"overall": report["overall"], "failed_shots": report["failed_shots"]})
+    return {"decision": report["decision"], "overall": report["overall"],
+            "failed_shots": report["failed_shots"]}
+
+
+# -- repair -------------------------------------------------------------------------------
+def repair(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    project = _enter(ctx, job, {S.QUALITY_FAILED}, None)
+    pid = project.id
+    manifest, _ = _manifest(ctx, pid)
+    with ctx.db.session() as s:
+        qc_doc = latest_document(s, pid, "qc_report")
+        assert qc_doc is not None
+        report = qc_doc.data
+    if project.repair_rounds >= ctx.settings.render.max_retries:
+        with ctx.db.transaction() as s:
+            p = get_project(s, pid, for_update=True)
+            record_event(s, EventType.REPAIR_BUDGET_EXHAUSTED, project_id=pid, actor="repair",
+                         job_id=job.id, data={"rounds": p.repair_rounds,
+                                              "failed_shots": report["failed_shots"]})
+            s.add(ApprovalRequest(project_id=pid, kind="repair_budget", requested_by="repair",
+                                  summary=f"QC still failing after {p.repair_rounds} repair "
+                                  "rounds", payload={"failed_shots": report["failed_shots"]}))
+            transition(s, p, S.REPAIRING, actor="repair", job_id=job.id)
+            transition(s, p, S.FAILED, actor="repair", job_id=job.id,
+                       reason="repair budget exhausted")
+        return {"repaired": False, "reason": "repair budget exhausted"}
+
+    round_ = project.repair_rounds + 1
+    current = {s.shot_id: {"seed": s.overrides.get("seed", s.seed),
+                           "style_strength": s.overrides.get("style_strength",
+                                                             manifest.style.strength),
+                           "identity_strength": s.overrides.get("identity_strength",
+                                                                manifest.identity.strength)}
+               for s in manifest.shots}
+    plan = RepairPlanner().plan(report, round_, current)
+    for action in plan.actions:
+        manifest.shot(action.shot_id).overrides.update(action.changes)
+    failing = [a.shot_id for a in plan.actions]
+    with ctx.db.transaction() as s:
+        p = get_project(s, pid, for_update=True)
+        transition(s, p, S.REPAIRING, actor="repair_planner", job_id=job.id,
+                   data={"round": round_, "shots": failing})
+        save_document(s, pid, "repair_plan", plan.model_dump(), created_by="repair_planner")
+        mdoc = save_document(s, pid, "manifest", manifest.model_dump(),
+                             created_by="repair_planner")
+        _write_json(ctx.store.project_dir(pid, "manifests") / f"manifest_v{mdoc.version}.json",
+                    manifest.model_dump())
+        for r in s.scalars(select(Render).where(Render.project_id == pid,
+                                                Render.shot_id.in_(failing),
+                                                Render.status == "succeeded")):
+            r.status = "superseded"
+        p.repair_rounds = round_
+        transition(s, p, S.RENDER_QUEUED, actor="repair_planner", job_id=job.id)
+    return {"repaired": True, "round": round_, "shots": failing}
+
+
+# -- edit / encode ------------------------------------------------------------------------
+_FORMATS = {"youtube_short": (1080, 1920), "youtube_video": (1920, 1080)}
+
+
+def edit(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    project = _enter(ctx, job, {S.QUALITY_PASSED}, S.EDITING)
+    pid = project.id
+    manifest, _ = _manifest(ctx, pid)
+    assembled = _assemble(ctx, manifest)
+    final_dir = ctx.store.project_dir(pid, "final")
+    width, height = _FORMATS.get(project.target_format, (1080, 1920))
+    video = ctx.store.path_for(assembled)
+    source = ctx.store.path_for(manifest.source_asset)
+    try:
+        if ctx.ffmpeg.probe(source).has_audio:
+            with_audio = final_dir / "with_audio.mp4"
+            ctx.ffmpeg.attach_audio(video, source, with_audio)
+            video = with_audio
+        final = ctx.ffmpeg.encode_final(video, final_dir / "final.mp4", width=width,
+                                        height=height, fps=manifest.video.fps)
+        info = ctx.ffmpeg.probe(final)
+        thumbs = ctx.store.project_dir(pid, "thumbnails")
+        thumb = ctx.ffmpeg.thumbnail(final, thumbs / "thumbnail.jpg", at=info.duration * 0.4)
+        preview = ctx.ffmpeg.preview_gif(final, final_dir / "preview.gif",
+                                         seconds=min(4.0, info.duration))
+    except FFmpegError as exc:
+        raise JobError("ffmpeg_failed", str(exc), exc.to_dict()) from exc
+    with ctx.db.transaction() as s:
+        p = get_project(s, pid, for_update=True)
+        final_asset = register_asset(s, ctx.store, pid, "final", final, {"probe": info.to_dict()})
+        thumb_asset = register_asset(s, ctx.store, pid, "thumbnail", thumb)
+        register_asset(s, ctx.store, pid, "preview", preview)
+        brief = latest_document(s, pid, "creative_brief")
+        rights = latest_rights(s, pid)
+        metadata = publishing.draft_metadata(p, brief.data if brief else {}, rights,
+                                             duration=info.duration)
+        save_document(s, pid, "metadata", metadata, created_by="channel_manager")
+        record_event(s, EventType.FINAL_ENCODED, project_id=pid, actor="editor", job_id=job.id,
+                     data={"final": final_asset.rel_path, "thumbnail": thumb_asset.rel_path,
+                           "duration": info.duration, "warnings": metadata["warnings"]})
+        transition(s, p, S.READY_TO_PUBLISH, actor="editor", job_id=job.id)
+    return {"final": ctx.store.rel(final), "duration": info.duration}
+
+
+HANDLERS: dict[str, Handler] = {
+    "rights_check": rights_check,
+    "ingest": ingest,
+    "analyze": analyze,
+    "creative_plan": creative_plan,
+    "compile_workflow": compile_stage,
+    "render": render,
+    "qc": quality_check,
+    "repair": repair,
+    "edit": edit,
+}

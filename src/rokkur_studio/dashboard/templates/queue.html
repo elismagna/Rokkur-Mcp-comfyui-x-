@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block head %}<meta http-equiv="refresh" content="5">{% endblock %}{% block body %}
+<h1>Queue</h1>
+<p>{% for s, n in workers.queue.items() %}<span class="pill">{{s}}: {{n}}</span> {% endfor %}</p>
+<p>Active workers: {% for w in workers.active %}<span class="pill ok">{{w.worker_id}} ({{w.running_jobs}})</span> {% else %}none holding jobs right now{% endfor %}</p>
+<div class="table-wrap"><table><tr><th>Job</th><th>Project</th><th>Kind</th><th>Status</th><th>Retries</th><th>Worker</th><th>Created</th><th>Error</th></tr>
+{% for j in jobs %}<tr><td><small>{{j.id}}</small></td><td>{% if j.project_id %}<a href="/ui/projects/{{j.project_id}}">{{j.project_id[-8:]}}</a>{% endif %}</td><td>{{j.kind}}</td><td>{{j.status}}</td><td>{{j.retry_count}}/{{j.max_attempts}}</td><td>{{j.locked_by or ''}}</td><td>{{j.created_at.strftime('%m-%d %H:%M:%S')}}</td><td>{{j.error.message if j.error else ''}}</td></tr>{% endfor %}</table></div>
+{% endblock %}
