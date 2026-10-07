@@ -43,7 +43,7 @@ class ComfySection(BaseModel):
 
 class OllamaSection(BaseModel):
     url: str = "http://127.0.0.1:11434"
-    model: str = "qwen2.5:7b-instruct"
+    model: str = "qwen3.5:9b"
 
 
 class YoutubeSection(BaseModel):

@@ -32,9 +32,16 @@ documented, public interfaces:
 3. Elis's existing video-to-video ComfyUI workflows use custom nodes (e.g. VideoHelperSuite). Studio does not guess those graphs: they are exported in **API format** from ComfyUI and registered as templates with a parameter map (see `docs/comfyui.md`). `make comfy-check` validates every template against the live `/object_info`.
 4. Nothing in this repository modifies Odysseus, Rökkur Collective, ComfyUI or Ollama configuration.
 
+## Workstation audit (2026-10-07, `data/audit.json` from Docker on Elis's PC)
+
+| Check | Result |
+|---|---|
+| Studio stack | Image builds, Postgres 16.15 up, migrations applied, FFmpeg present in the image. Docker Desktop runs on WSL2. |
+| Ollama | **Reachable** at `host.docker.internal:11434`. Nothing loaded at audit time. Installed: `qwen3.5:9b`, `qwen3.5:4b`, `odysseus-vision:9b` (from qwen3.5:9b), `satan-odysseus:9b` and `satan:latest` (qwen3.5 9B), `gemma4:12b`, `gemma3:12b`, `qwen2.5-coder:7b`, `deepseek-r1:8b`, all Q4_K_M. Studio's default agent model is now `qwen3.5:9b` (tools + vision, ~6.6 GB). The `odysseus-*` and `satan*` models look like Odysseus's own; Studio does not use or change them. |
+| ComfyUI | **Not reachable** from the containers (`Network is unreachable` on `host.docker.internal:8188`). Either ComfyUI was not running, runs on another port, or listens on 127.0.0.1 only. Node classes and GPU stats are therefore still unknown. |
+| Docker CLI inside the container | Not present, by design: the Docker socket is not mounted. |
+
 ## Next audit step
 
-Run `scripts/studio.ps1 audit` (or `make audit`) on the workstation. It prints which of
-ComfyUI, Ollama, Docker and Postgres are reachable, the installed ComfyUI node classes and
-GPU stats, and the Ollama models present, and writes `data/audit.json`. Paste that file
-back into the project so this document can be updated with real findings.
+Make ComfyUI reachable from Docker (see `docs/troubleshooting.md`), then rerun
+`scripts/studio.ps1 audit` and `scripts/studio.ps1 comfy-check`.

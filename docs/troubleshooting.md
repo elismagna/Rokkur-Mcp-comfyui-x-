@@ -12,6 +12,7 @@
 | Jobs not running | No worker: `docker compose ps`, `make logs`. `/workers` shows workers holding leases and queue depth. |
 | A crashed worker's job | Its lease expires (`jobs.lease_seconds`); another worker reclaims it automatically, counting one attempt. |
 | GPU busy forever | A lease outlived a crash; it expires after `gpu.lease_seconds`. See `/gpu/leases`. |
+| Audit says ComfyUI `Network is unreachable` or `Connection refused` | Studio runs in Docker and reaches ComfyUI via `host.docker.internal:8188`. Check `http://127.0.0.1:8188` opens on the PC. ComfyUI portable/manual binds to 127.0.0.1 by default, which Docker cannot reach: start it with `--listen 0.0.0.0 --port 8188` (ComfyUI Desktop: Settings > Server-Config > Host 0.0.0.0) and allow it only on **Private** networks in the Windows Firewall prompt. If ComfyUI uses another port, set `STUDIO_COMFYUI__URL` in `.env`. |
 
 Logs are JSON lines on stdout with `job_id`, `project_id`, `stage`, `kind`, `agent_id`.
 Every project's audit trail is at `GET /projects/{id}/events` and on its dashboard page.

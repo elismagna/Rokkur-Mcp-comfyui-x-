@@ -27,7 +27,7 @@ comfyui:
 
 ollama:
   url: http://127.0.0.1:11434
-  model: qwen2.5:7b-instruct
+  model: qwen3.5:9b          # installed on the workstation (audit 2026-10-07); qwen3.5:4b if VRAM is tight
 
 youtube:
   enabled: false
