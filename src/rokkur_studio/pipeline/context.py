@@ -34,10 +34,29 @@ class StudioContext:
     extras: dict[str, object] = field(default_factory=dict)
 
 
+def free_idle_comfyui(settings: Settings) -> Callable[[], None]:
+    """A hook that unloads ComfyUI's models, but only while ComfyUI has nothing running."""
+
+    def hook() -> None:
+        client = ComfyClient(settings.comfyui.url)
+        try:
+            q = client.queue()
+            if q.get("queue_running") or q.get("queue_pending"):
+                return  # never pull models out from under a render
+            client.free()
+        finally:
+            client.close()
+
+    return hook
+
+
 def make_provider(settings: Settings) -> AgentProvider:
     if settings.agents.provider == "ollama":
-        return OllamaProvider(settings.ollama.url, settings.ollama.model,
-                              max_retries=settings.agents.max_output_retries)
+        return OllamaProvider(
+            settings.ollama.url, settings.ollama.model,
+            max_retries=settings.agents.max_output_retries,
+            before_generate=free_idle_comfyui(settings)
+            if settings.gpu.free_comfyui_before_agents else None)
     if settings.agents.provider == "rokkur_collective":
         return RokkurCollectiveProvider()
     return RuleBasedProvider()

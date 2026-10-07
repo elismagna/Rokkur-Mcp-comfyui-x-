@@ -30,6 +30,7 @@ class GpuSection(BaseModel):
     lease_seconds: int = 3600
     unload_ollama_before_heavy: bool = True
     free_comfyui_after_heavy: bool = True
+    free_comfyui_before_agents: bool = True  # an 8 GB card cannot hold Wan and a 9B LLM
     class_vram_gb: dict[str, float] = Field(
         default_factory=lambda: {"GPU_LIGHT": 2.0, "GPU_MEDIUM": 5.0, "GPU_HEAVY": 8.0}
     )

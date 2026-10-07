@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Any, Protocol, TypeVar
 
 import httpx
@@ -52,8 +53,12 @@ class OllamaProvider:
     name = "ollama"
 
     def __init__(self, base_url: str, model: str, *, max_retries: int = 2,
-                 timeout_s: float = 300, transport: httpx.BaseTransport | None = None) -> None:
+                 timeout_s: float = 300, transport: httpx.BaseTransport | None = None,
+                 before_generate: Callable[[], None] | None = None) -> None:
         self.model, self.max_retries = model, max_retries
+        # Called before each request, e.g. to make ComfyUI release VRAM so the model is not
+        # pushed onto the CPU. Failures are logged and ignored.
+        self.before_generate = before_generate
         self.http = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout_s,
                                  transport=transport)
 
@@ -64,6 +69,11 @@ class OllamaProvider:
              "Reply with JSON only, matching the provided schema."},
             {"role": "user", "content": json.dumps(payload, default=str)},
         ]
+        if self.before_generate is not None:
+            try:
+                self.before_generate()
+            except Exception as exc:  # noqa: BLE001 - freeing VRAM is best effort
+                log.warning("before_generate hook failed", extra={"data": {"error": str(exc)}})
         last_raw: str | None = None
         for attempt in range(self.max_retries + 1):
             try:

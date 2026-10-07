@@ -15,6 +15,7 @@ gpu:
   lease_seconds: 3600
   unload_ollama_before_heavy: true
   free_comfyui_after_heavy: true
+  free_comfyui_before_agents: true   # otherwise Ollama falls back to the CPU and crawls
   class_vram_gb:             # estimated VRAM per resource class, used for the lease budget
     GPU_LIGHT: 2
     GPU_MEDIUM: 5

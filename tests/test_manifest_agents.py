@@ -191,3 +191,46 @@ def test_agent_check_runs_both_roles(capsys):
     assert run_agent_check(settings, theme="t", transport=httpx.MockTransport(handle)) == 0
     out = capsys.readouterr().out
     assert "[ok] creative_director" in out and "[ok] channel_manager" in out
+
+
+def test_free_idle_comfyui_only_when_queue_empty(settings):
+    from rokkur_studio.pipeline import context
+
+    calls = []
+
+    class Fake:
+        def __init__(self, url):
+            pass
+
+        def queue(self):
+            return {"queue_running": calls[0] if calls else [], "queue_pending": []}
+
+        def free(self):
+            calls.append("free")
+
+        def close(self):
+            pass
+
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    mp.setattr(context, "ComfyClient", Fake)
+    try:
+        hook = context.free_idle_comfyui(settings)
+        hook()
+        assert calls == ["free"]
+        calls[0] = [["busy"]]  # now something is "running"
+        hook()
+        assert calls == [[["busy"]]]
+    finally:
+        mp.undo()
+
+
+def test_before_generate_failure_does_not_block_the_agent():
+    good = brief().model_dump_json()
+
+    def boom():
+        raise RuntimeError("comfy down")
+
+    provider = OllamaProvider("http://o", "m", transport=ollama_transport([good]),
+                              before_generate=boom)
+    assert isinstance(provider.generate("r", "x", {}, CreativeBrief), CreativeBrief)

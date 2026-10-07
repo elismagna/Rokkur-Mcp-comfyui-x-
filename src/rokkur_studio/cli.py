@@ -161,9 +161,13 @@ def run_agent_check(settings: Settings, *, theme: str,
     """Prove the configured Ollama model answers the agent roles with valid JSON."""
     from rokkur_studio.agents.providers import AgentOutputError, OllamaProvider
     from rokkur_studio.agents.roles import ChannelManager, CreativeDirector
+    from rokkur_studio.pipeline.context import free_idle_comfyui
 
+    hook = free_idle_comfyui(settings) if (settings.gpu.free_comfyui_before_agents
+                                           and transport is None) else None
     provider = OllamaProvider(settings.ollama.url, settings.ollama.model,
-                              max_retries=settings.agents.max_output_retries, transport=transport)
+                              max_retries=settings.agents.max_output_retries, transport=transport,
+                              before_generate=hook)
     problem = provider.check()
     if problem:
         print(f"[FAIL] {problem}")
