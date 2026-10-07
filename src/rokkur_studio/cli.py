@@ -168,12 +168,16 @@ def run_agent_check(settings: Settings, *, theme: str,
     if problem:
         print(f"[FAIL] {problem}")
         return 1
-    print(f"Ollama reachable at {settings.ollama.url}; model {settings.ollama.model} installed")
+    print(f"Ollama reachable at {settings.ollama.url}; model {settings.ollama.model} installed",
+          flush=True)
     if settings.agents.provider != "ollama":
         print(f"note: agents.provider is '{settings.agents.provider}'; the pipeline will not use "
               "Ollama until config/studio.yaml says agents.provider: ollama")
     ok = True
     creative_input = {"theme": theme, "prompt": theme}
+    print("asking creative_director (the first answer loads the model into VRAM; this can "
+          "take a few minutes, longer if it runs on CPU because the GPU is full) ...",
+          flush=True)
     t0 = time.monotonic()
     try:
         brief, by = CreativeDirector(provider).run(creative_input, _SAMPLE_ANALYSIS,
@@ -191,6 +195,7 @@ def run_agent_check(settings: Settings, *, theme: str,
         print(f"     prompt: {brief.prompt[:160]}")
         for shot in brief.shot_plan:
             print(f"     {shot.shot_id} {shot.start:.1f}-{shot.end:.1f}s: {shot.intent[:90]}")
+    print("asking channel_manager ...", flush=True)
     t0 = time.monotonic()
     draft, by = ChannelManager(provider).run(creative_input, brief.model_dump(), "youtube_short",
                                              _SAMPLE_ANALYSIS["duration"])
