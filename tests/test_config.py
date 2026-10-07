@@ -23,7 +23,7 @@ def test_env_overrides_are_typed_and_nested():
     assert s.gpu.vram_gb == 24
     assert s.youtube.enabled is True
     assert s.database.url.endswith("@db/y")
-    assert s.profiles["PREVIEW"].fps == 8 and s.profiles["PREVIEW"].max_frames == 48
+    assert s.profiles["PREVIEW"].fps == 8 and s.profiles["PREVIEW"].max_frames == 33
 
 
 def test_env_override_parser_ignores_unrelated():

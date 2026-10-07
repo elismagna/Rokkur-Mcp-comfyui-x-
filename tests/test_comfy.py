@@ -159,3 +159,10 @@ def test_v2v_3070_quality_compiles_shot_params():
     assert wf["12"]["inputs"]["width"] == wf["14"]["inputs"]["width"] == 480
     assert wf["14"]["inputs"]["length"] == 81 and wf["15"]["inputs"]["seed"] == 7
     assert "DENOISE" in compiled.ignored
+
+
+def test_validate_skips_inputs_filled_at_render_time():
+    t = TemplateRegistry(WF).get("v2v_3070_quality")
+    info = {cls: {"input": {"required": {k: [[]] if k == "file" else ["INT"] for k in node["inputs"]}}}
+            for cls, node in ((n["class_type"], n) for n in t.workflow.values())}
+    assert validate_against_object_info(t, info) == []

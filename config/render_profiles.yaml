@@ -2,12 +2,12 @@
 # ordered CUDA-OOM recovery ladder (each step applied once, never retrying identical work).
 profiles:
   PREVIEW:
-    description: Fast low-resolution preview, minimal controls
-    workflow: v2v_preview
-    max_width: 384
-    max_height: 672
+    description: Fast low-resolution preview, minimal controls (Wan VACE 1.3B at small size)
+    workflow: v2v_3070_quality   # v2v_preview needs an SD 1.5 checkpoint the workstation does not have
+    max_width: 320
+    max_height: 576
     fps: 12
-    max_frames: 48
+    max_frames: 33
     steps: 8
     denoise: 0.55
     controls: {pose: false, depth: false, segmentation: false}

@@ -102,10 +102,11 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
             ok = ok and name not in needed
             continue
         problems = validate_against_object_info(template, info)
-        print(f"  [{'ok' if not problems else 'FAIL'}] {name} v{template.spec.version}")
+        unused = "" if name in needed else "  (not used by any render profile)"
+        print(f"  [{'ok' if not problems else 'FAIL'}] {name} v{template.spec.version}{unused}")
         for p in problems:
             print(f"      - {p}")
-        ok = ok and not problems
+        ok = ok and (not problems or name not in needed)
     return 0 if ok else 1
 
 

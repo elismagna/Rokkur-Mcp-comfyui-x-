@@ -242,10 +242,10 @@ def test_comfyui_render_path_with_fake_server(ctx, sample_video):
     assert status(ctx, pid) == "READY_TO_PUBLISH"
     assert len(fake.prompts) == 2  # one ComfyUI prompt per shot
     wf = next(iter(fake.prompts.values()))
-    assert wf["6"]["inputs"]["text"].startswith("retro clay sci-fi")
+    assert wf["5"]["inputs"]["text"].startswith("retro clay sci-fi")
     with ctx.db.session() as s:
         renders = s.scalars(select(Render).where(Render.project_id == pid)).all()
-        assert all(r.remote_id and r.workflow == "v2v_preview" for r in renders)
+        assert all(r.remote_id and r.workflow == "v2v_3070_quality" for r in renders)
         assert "WORKFLOW_COMPILED" in events(ctx, pid)
 
 

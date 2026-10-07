@@ -161,6 +161,10 @@ def validate_against_object_info(template: WorkflowTemplate,
                                  object_info: dict[str, Any]) -> list[str]:
     """Problems that would make ComfyUI reject this template on this installation."""
     problems = []
+    # Inputs a required parameter fills at render time (e.g. the uploaded INPUT_VIDEO) hold a
+    # placeholder in the template, so their installed-file choices are not checked here.
+    runtime = {(t.node, t.input) for p in template.spec.parameters.values()
+               if p.required and p.default is None for t in p.targets}
     for node_id, node in template.workflow.items():
         cls = node["class_type"]
         info = object_info.get(cls)
@@ -177,6 +181,8 @@ def validate_against_object_info(template: WorkflowTemplate,
             choices = spec[0]
             if choices == "COMBO" and len(spec) > 1 and isinstance(spec[1], dict):
                 choices = spec[1].get("options")
+            if (node_id, key) in runtime:
+                continue
             if isinstance(choices, list) and not isinstance(value, list) and value not in choices:
                 # An empty list means ComfyUI has no files at all for this loader (e.g. no checkpoints).
                 hint = f"e.g. {choices[:3]}" if choices else "none installed"
