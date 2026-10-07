@@ -45,7 +45,7 @@ any non-terminal ─► FAILED (resumable) | CANCELLED (terminal)
 | 0 | Nothing advances automatically; use `POST /projects/{id}/advance` per stage |
 | 1 | Runs rights, ingest, analysis and the creative brief, then waits |
 | 2 (default) | Automatic production up to `READY_TO_PUBLISH`; publishing is manual |
-| 3, 4 | Reserved for scheduled publishing / channel operation (Phases 6–10); behave like 2 today |
+| 3, 4 | Like 2, and a finished video becomes an upload request on the Approvals page with a full plan (visibility, the next free release time, the default playlist). Nothing uploads until a person approves it (`docs/youtube.md`). Level 4 is reserved for channel operation (Phases 7–10) and behaves like 3 |
 
 The level comes from the project's channel (`PATCH /channels/{id}`) or `studio.autonomy_level`.
 

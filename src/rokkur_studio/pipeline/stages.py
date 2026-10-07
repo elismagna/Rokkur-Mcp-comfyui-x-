@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from rokkur_studio.agents.roles import ChannelManager, RepairPlanner
 from rokkur_studio.agents.schemas import CreativeBrief
@@ -38,6 +39,7 @@ from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline import qc as qc_mod
 from rokkur_studio.pipeline.analysis import analyze_video
 from rokkur_studio.pipeline.context import StudioContext
+from rokkur_studio.pipeline.driver import autonomy_level
 from rokkur_studio.pipeline.renderers import (
     ComfyUIRenderer,
     FFmpegPreviewRenderer,
@@ -696,7 +698,20 @@ def edit(ctx: StudioContext, job: Job) -> dict[str, Any]:
                      data={"final": final_asset.rel_path, "thumbnail": thumb_asset.rel_path,
                            "duration": info.duration, "warnings": metadata["warnings"]})
         transition(s, p, S.READY_TO_PUBLISH, actor="editor", job_id=job.id)
+        if autonomy_level(p, ctx.settings) >= 3 and ctx.settings.youtube.enabled:
+            _propose_upload(s, p, ctx, job)
     return {"final": ctx.store.rel(final), "duration": info.duration}
+
+
+def _propose_upload(s: Session, p: Project, ctx: StudioContext, job: Job) -> None:
+    """Autonomy 3+: queue the finished video for a person's approval; nothing uploads here."""
+    try:
+        with s.begin_nested():
+            req = publishing.propose(s, p, ctx.settings, actor="channel_manager")
+        log.info("publish proposal %s", req.id)
+    except publishing.PublishGateError as exc:
+        record_event(s, EventType.PUBLISH_PROPOSAL_SKIPPED, project_id=p.id,
+                     actor="channel_manager", job_id=job.id, data={"reason": str(exc)})
 
 
 HANDLERS: dict[str, Handler] = {

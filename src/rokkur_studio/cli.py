@@ -394,16 +394,35 @@ def cmd_publish(args: argparse.Namespace) -> int:
             for w in meta.data.get("warnings") or []:
                 print(f"  warning: {w}")
         try:
-            privacy = publishing.resolve_privacy(settings, project, args.privacy)
+            privacy = publishing.resolve_privacy(settings, project,
+                                                 args.privacy or ("private" if args.at else None))
+            when = None
+            if args.at == "next":
+                when = publishing.next_release_slot(s, settings, for_project=project.id)
+                if when is None:
+                    print("[FAIL] no free release time: set youtube.release_times and "
+                          "youtube.allow_public in config/studio.yaml")
+                    return 1
+            elif args.at:
+                when = publishing.parse_when(args.at, settings)
+            if when is not None:
+                when = publishing.resolve_schedule(settings, privacy, when)
+            playlist = publishing.find_playlist(settings, args.playlist) if args.playlist else (
+                settings.youtube.default_playlist_id or None)
         except publishing.PublishGateError as exc:
             print(f"[FAIL] {exc}")
             return 1
-    print(f"  privacy: {privacy}")
+    plan = privacy + (f", goes public {publishing.local_label(settings, when)}" if when else "")
+    print(f"  privacy: {plan}")
+    if playlist:
+        print(f"  playlist: {publishing.playlist_title(settings, playlist) or playlist}")
     if args.dry_run:
         with ctx.db.transaction() as s:
             project = get_project(s, args.project_id, for_update=True)
             try:
-                pub = publishing.dry_run(s, project, privacy=privacy, actor="cli-publish")
+                pub = publishing.dry_run(s, project, privacy=privacy, publish_at=when,
+                                         playlist_id=playlist, actor="cli-publish",
+                                         settings=settings)
             except publishing.PublishGateError as exc:
                 print(f"[FAIL] {exc}")
                 return 1
@@ -411,33 +430,55 @@ def cmd_publish(args: argparse.Namespace) -> int:
             print(json.dumps(pub.request["body"], indent=2))
         return 0
     if not args.yes:
-        answer = input(f"Upload to YouTube as {privacy}? [y/N] ").strip().lower()
+        answer = input(f"Upload to YouTube ({plan})? [y/N] ").strip().lower()
         if answer not in ("y", "yes"):
             print("cancelled")
             return 1
+    failure: YouTubeError | None = None
     try:
-        client = publishing.make_client(settings)
-    except OAuthError as exc:
-        print(f"[FAIL] {exc}")
-        return 1
-    try:
-        with ctx.db.transaction() as s:
+        with publishing.youtube_client(settings) as client, ctx.db.transaction() as s:
             project = get_project(s, args.project_id, for_update=True)
-            pub = publishing.upload(s, project, settings=settings, store=ctx.store, client=client,
-                                    privacy=privacy, actor="cli-publish")
-            video_id = pub.youtube_video_id or ""
-            thumb_err = pub.error
-    except publishing.PublishGateError as exc:
+            try:
+                pub = publishing.upload(s, project, settings=settings, store=ctx.store,
+                                        client=client, privacy=privacy, publish_at=when,
+                                        playlist_id=playlist, actor="cli-publish")
+            except YouTubeError as exc:
+                failure = exc  # caught inside the transaction so the failed attempt is kept
+            else:
+                video_id = pub.youtube_video_id or ""
+                warning = pub.error
+    except (publishing.PublishGateError, OAuthError) as exc:
         print(f"[FAIL] {exc}")
         return 1
-    except YouTubeError as exc:
-        print(f"[FAIL] upload failed: {exc}")
+    if failure is not None:
+        print(f"[FAIL] upload failed: {failure}")
         return 1
-    finally:
-        client.close()
-    print(f"[ok] uploaded as {privacy}: {video_url(video_id)}")
-    if thumb_err:
-        print(f"  thumbnail not set: {thumb_err.get('message')}")
+    print(f"[ok] uploaded ({plan}): {video_url(video_id)}")
+    if warning:
+        print(f"  warning: {warning.get('message')}")
+    return 0
+
+
+def cmd_youtube_playlists(args: argparse.Namespace) -> int:
+    """Load the signed-in channel's playlists so publish/the dashboard can offer them."""
+    from rokkur_studio.services import publishing
+    from rokkur_studio.youtube.client import YouTubeError
+    from rokkur_studio.youtube.oauth import OAuthError
+
+    settings = _settings(args)
+    try:
+        with publishing.youtube_client(settings, uploads=False) as client:
+            data = publishing.refresh_playlists(settings, client)
+    except (OAuthError, YouTubeError) as exc:
+        print(f"[FAIL] {exc}")
+        return 1
+    for pl in data["items"]:
+        default = "  (default)" if pl["id"] == settings.youtube.default_playlist_id else ""
+        print(f"{pl['id']}  {pl['title']}  [{pl.get('privacy') or '?'}, "
+              f"{pl.get('videos') if pl.get('videos') is not None else '?'} videos]{default}")
+    if not data["items"]:
+        print("this channel has no playlists")
+    print(f"saved to {publishing.playlists_path(settings)}")
     return 0
 
 
@@ -590,9 +631,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("project_id")
     p.add_argument("--privacy", choices=["private", "unlisted", "public"],
                    help="default: private")
+    p.add_argument("--at", metavar="WHEN",
+                   help="make it public at this time, e.g. '2026-10-09 18:00' (youtube.timezone)"
+                        " or 'next' for the next free release time; uploads as private until then")
+    p.add_argument("--playlist", help="playlist id or exact title (see youtube-playlists)")
     p.add_argument("--dry-run", action="store_true", help="show the request, upload nothing")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     p.set_defaults(func=cmd_publish)
+    sub.add_parser("youtube-playlists", help="load the channel's playlists").set_defaults(
+        func=cmd_youtube_playlists)
     p = sub.add_parser("smoke-test", help="run the end-to-end fixture")
     p.add_argument("--renderer", choices=["ffmpeg_preview", "comfyui"])
     p.add_argument("--profile", default="PREVIEW")

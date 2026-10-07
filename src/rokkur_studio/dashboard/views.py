@@ -30,6 +30,7 @@ from rokkur_studio.api.routes_projects import project_detail
 from rokkur_studio.api.routes_system import gpu_leases as gpu_info
 from rokkur_studio.api.routes_system import system as system_info
 from rokkur_studio.api.routes_system import workers as workers_info
+from rokkur_studio.api.routes_youtube import release_overview
 from rokkur_studio.api.schemas import CreativeIn, ProjectCreate, RightsIn, SourceIn
 from rokkur_studio.db.models import (
     ApprovalRequest,
@@ -62,6 +63,14 @@ router = APIRouter(prefix="/ui", include_in_schema=False)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 templates.env.filters["pretty"] = lambda v: json.dumps(v, indent=2, default=str)
 templates.env.globals["video_url"] = video_url
+
+
+def _release_label(value: datetime | str | None, settings: Any) -> str:
+    when = value if isinstance(value, datetime) else publishing.parse_iso(value)
+    return publishing.local_label(settings, when) if when else ""
+
+
+templates.env.filters["release_label"] = _release_label
 
 Ctx = Annotated[StudioContext, Depends(get_ctx)]
 Db = Annotated[Session, Depends(get_session)]
@@ -321,10 +330,21 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
         publish_block = "Not signed in to YouTube. Run: .\\scripts\\studio.ps1 youtube-auth"
     keyframes = {a.meta.get("shot_id"): f"/projects/{project_id}/assets/{a.id}/file"
                  for a in detail.assets if a.kind == "keyframe"}
+    next_slot = (publishing.next_release_slot(session, ctx.settings, for_project=project_id)
+                 if project.status == S.READY_TO_PUBLISH else None)
+    proposals = publishing.pending_proposals(session, project_id)
     return _page(request, "project.html", ctx, d=detail, p=project, events=events,
                  keyframes=keyframes,
                  steps=stage_progress(project.status, project.failed_from_state),
                  publish_block=publish_block,
+                 schedule_block=None if yt.allow_public else (
+                     "Scheduling makes the video public at the release time, and public "
+                     "uploads are off (youtube.allow_public in config/studio.yaml)."),
+                 next_slot=next_slot,
+                 next_slot_local=(next_slot.astimezone(publishing.zone(ctx.settings))
+                                  .strftime("%Y-%m-%dT%H:%M") if next_slot else ""),
+                 playlists=(publishing.load_playlists(ctx.settings) or {}).get("items", []),
+                 proposal=proposals[0] if proposals else None,
                  privacies=["private", "unlisted"] + (["public"] if yt.allow_public else []))
 
 
@@ -352,25 +372,47 @@ def save_metadata(project_id: str, ctx: Ctx, session: Db, title: Annotated[str, 
 @router.post("/projects/{project_id}/publish")
 def publish_from_ui(project_id: str, ctx: Ctx, session: Db,
                     privacy: Annotated[str, Form()] = "private",
-                    mode: Annotated[str, Form()] = "dry") -> RedirectResponse:
+                    mode: Annotated[str, Form()] = "dry",
+                    release: Annotated[str, Form()] = "now",
+                    publish_at: Annotated[str, Form()] = "",
+                    publish_local: Annotated[str, Form()] = "",
+                    playlist_id: Annotated[str, Form()] = "") -> RedirectResponse:
     url = f"/ui/projects/{project_id}"
     project = get_project(session, project_id, for_update=True)
     try:
+        when: datetime | None = None
+        if release == "schedule":
+            # The page's script sends UTC; without it the field is read in the studio's zone.
+            if publish_at:
+                when = publishing.parse_iso(publish_at)
+            elif publish_local:
+                when = publishing.parse_when(publish_local, ctx.settings)
+            else:
+                return _back(url, err="Pick the release time")
+            privacy = "private"
+        plan = (f"private, public {publishing.local_label(ctx.settings, when)}" if when
+                else privacy)
         if mode == "dry":
-            publishing.dry_run(session, project, privacy=privacy, actor="dashboard")
-            return _back(url, msg="Dry run OK: everything checks out, nothing was uploaded")
+            publishing.dry_run(session, project, privacy=privacy, publish_at=when,
+                               playlist_id=playlist_id or None, actor="dashboard",
+                               settings=ctx.settings)
+            return _back(url, msg=f"Dry run OK ({plan}): everything checks out, "
+                                  "nothing was uploaded")
         privacy = publishing.resolve_privacy(ctx.settings, project, privacy)
-        client = ctx.extras.get("youtube_client") or publishing.make_client(ctx.settings)
-        pub = publishing.upload(session, project, settings=ctx.settings, store=ctx.store,
-                                client=client, privacy=privacy,  # type: ignore[arg-type]
-                                actor="dashboard")
-    except (publishing.PublishGateError, OAuthError) as exc:
+        with publishing.youtube_client(ctx.settings, ctx.extras.get("youtube_client")) as yt:
+            pub = publishing.upload(session, project, settings=ctx.settings, store=ctx.store,
+                                    client=yt, privacy=privacy, publish_at=when,
+                                    playlist_id=playlist_id or None, actor="dashboard")
+    except (publishing.PublishGateError, OAuthError, ValueError) as exc:
         return _back(url, err=str(exc))
     except YouTubeError as exc:
         # Returning normally commits the request transaction, which keeps the failed
         # publication row and the audit event that upload() recorded.
         return _back(url, err=f"YouTube refused the upload: {exc}")
-    return _back(url, msg=f"Uploaded as {privacy}: {video_url(pub.youtube_video_id or '')}")
+    done = f"Uploaded ({plan}): {video_url(pub.youtube_video_id or '')}"
+    if pub.error:
+        done += f". Warning: {pub.error['message']}"
+    return _back(url, msg=done)
 
 
 @router.post("/projects/{project_id}/{action}")
@@ -409,7 +451,11 @@ def queue_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
 def approvals_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
     items = list(session.scalars(select(ApprovalRequest)
                                  .order_by(ApprovalRequest.requested_at.desc()).limit(200)))
-    return _page(request, "approvals.html", ctx, items=items)
+    names = dict(session.execute(select(Project.id, Project.name).where(
+        Project.id.in_(list({a.project_id for a in items if a.project_id})))).all())
+    return _page(request, "approvals.html", ctx, items=items, names=names,
+                 thumbs=_thumbs(session, [a.project_id for a in items
+                                          if a.project_id and a.kind == "publish"]))
 
 
 @router.post("/approvals/{approval_id}/{decision}")
@@ -417,6 +463,20 @@ def decide_approval(approval_id: str, decision: str, ctx: Ctx, session: Db) -> R
     req = session.get(ApprovalRequest, approval_id, with_for_update=True)
     if req is None or decision not in ("approve", "reject"):
         raise HTTPException(404)
+    if req.kind == "publish" and decision == "approve":
+        try:
+            with publishing.youtube_client(ctx.settings, ctx.extras.get("youtube_client")) as yt:
+                pub = publishing.approve_proposal(session, req, settings=ctx.settings,
+                                                  store=ctx.store, client=yt,
+                                                  decided_by="dashboard")
+        except (publishing.PublishGateError, OAuthError) as exc:
+            return _back("/ui/approvals", err=str(exc))
+        except YouTubeError as exc:  # returning commits the failed attempt's audit trail
+            return _back("/ui/approvals", err=f"YouTube refused the upload: {exc}")
+        done = f"Uploaded: {video_url(pub.youtube_video_id or '')}"
+        if pub.error:
+            done += f". Warning: {pub.error['message']}"
+        return _back("/ui/approvals", msg=done)
     try:
         commands.decide_approval(session, req, ctx.settings, approve=decision == "approve",
                                  decided_by="dashboard", note="decided in dashboard")
@@ -436,7 +496,24 @@ def youtube_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
                                  .order_by(Project.updated_at.desc())))
     return _page(request, "youtube.html", ctx, yt=yt,
                  client_file=yt.client_secret_path.is_file(), signed_in=yt.token_path.is_file(),
-                 quota=quota_today(session), pubs=pubs, ready=ready)
+                 quota=quota_today(session), pubs=pubs, ready=ready,
+                 playlists=publishing.load_playlists(ctx.settings),
+                 default_playlist=publishing.playlist_title(ctx.settings,
+                                                            yt.default_playlist_id),
+                 releases=release_overview(ctx, session),
+                 proposals=len(publishing.pending_proposals(session)))
+
+
+@router.post("/youtube/playlists")
+def youtube_playlists(ctx: Ctx) -> RedirectResponse:
+    try:
+        with publishing.youtube_client(ctx.settings, ctx.extras.get("youtube_client"),
+                                       uploads=False) as yt:
+            data = publishing.refresh_playlists(ctx.settings, yt)
+    except (OAuthError, YouTubeError, httpx.HTTPError) as exc:
+        return _back("/ui/youtube", err=f"Could not load playlists: {exc}")
+    n = len(data["items"])
+    return _back("/ui/youtube", msg=f"Loaded {n} playlist{'' if n == 1 else 's'}")
 
 
 @router.post("/youtube/check")

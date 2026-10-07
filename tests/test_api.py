@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -59,10 +59,15 @@ def test_full_flow_over_http(client, ctx, sample_video):
     assert video.status_code == 200 and len(video.content) == final["size_bytes"]
     r = client.post(f"/projects/{pid}/publish", json={"dry_run": False})
     assert r.status_code == 409 and "disabled" in r.json()["detail"]  # youtube.enabled false
-    pub = client.post(f"/projects/{pid}/publish", json={
-        "privacy": "private", "publish_at": "2026-12-01T18:00:00Z"}).json()
+    at = (datetime.now(UTC) + timedelta(days=30)).replace(hour=18, minute=0, second=0,
+                                                          microsecond=0)
+    body = {"privacy": "private", "publish_at": at.isoformat()}
+    r = client.post(f"/projects/{pid}/publish", json=body)
+    assert r.status_code == 409 and "allow_public" in r.json()["detail"]  # release goes public
+    ctx.settings.youtube.allow_public = True
+    pub = client.post(f"/projects/{pid}/publish", json=body).json()
     assert pub["dry_run"] and pub["request"]["body"]["status"]["publishAt"] == \
-        "2026-12-01T18:00:00Z"
+        at.strftime("%Y-%m-%dT%H:%M:%SZ")
     assert client.get("/jobs", params={"project_id": pid}).json()
     assert "queue" in client.get("/workers").json()
 

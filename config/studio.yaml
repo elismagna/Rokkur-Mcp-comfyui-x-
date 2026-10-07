@@ -32,8 +32,13 @@ ollama:
 
 youtube:
   enabled: false
-  auto_publish: false
+  auto_publish: false        # not used: nothing uploads without a person's click
   default_privacy: private
+  allow_public: false        # needed for public uploads and scheduled releases (they go public)
+  timezone: UTC              # zone for release_times and dates, e.g. Europe/Oslo
+  release_times: []          # daily release slots, quoted: ["18:00"]; the dashboard suggests the next free one
+  min_lead_minutes: 30       # a scheduled release must be at least this far ahead
+  default_playlist_id: ""    # e.g. PLxxxx; see `youtube-playlists` or the YouTube page
 
 agents:
   provider: ollama           # rule_based | ollama | rokkur_collective; falls back to rules if Ollama is down

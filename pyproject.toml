@@ -16,6 +16,7 @@ dependencies = [
   "jinja2>=3.1",
   "numpy>=1.26",
   "python-multipart>=0.0.9",
+  "tzdata>=2024.1",  # time zone names for release times on Windows and slim images
 ]
 
 [project.optional-dependencies]

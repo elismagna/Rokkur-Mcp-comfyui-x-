@@ -106,6 +106,9 @@ def decide_approval(session: Session, request: ApprovalRequest, settings: Settin
                     approve: bool, decided_by: str, note: str | None) -> ApprovalRequest:
     if request.status != "pending":
         raise ValueError(f"approval {request.id} already {request.status}")
+    if request.kind == "publish" and approve:
+        # Approving uploads the video; that needs the YouTube client (publishing.approve_proposal).
+        raise ValueError("a publish request is approved through publishing.approve_proposal")
     if request.kind == "rights_ambiguity" and request.project_id:
         project = get_project(session, request.project_id, for_update=True)
         decide_rights(session, project, settings, approve=approve, decided_by=decided_by,

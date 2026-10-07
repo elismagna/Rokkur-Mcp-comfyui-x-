@@ -1,4 +1,5 @@
-"""An in-memory Google: token endpoint, channels.list, resumable videos.insert, thumbnails.set."""
+"""An in-memory Google: token endpoint, channels.list, resumable videos.insert, thumbnails.set,
+playlists.list (paged) and playlistItems.insert."""
 
 from __future__ import annotations
 
@@ -9,13 +10,21 @@ import httpx
 
 
 class FakeGoogle:
+    PLAYLISTS = [{"id": "PLshorts0001", "title": "Shorts", "count": 12, "privacy": "public"},
+                 {"id": "PLclaymation1", "title": "claymation", "count": 3, "privacy": "public"},
+                 {"id": "PLdrafts00001", "title": "Drafts", "count": 0, "privacy": "private"}]
+
     def __init__(self, *, chunk_308: bool = False, fail_upload: int | None = None,
-                 fail_thumbnail: bool = False) -> None:
+                 fail_thumbnail: bool = False, fail_playlist_item: bool = False,
+                 playlist_page_size: int = 50) -> None:
         self.tokens: list[dict[str, Any]] = []
         self.uploads: list[dict[str, Any]] = []
         self.received = bytearray()
         self.thumbnails: list[str] = []
+        self.playlist_items: list[dict[str, Any]] = []
+        self.playlist_pages = 0
         self.chunk_308, self.fail_upload, self.fail_thumbnail = chunk_308, fail_upload, fail_thumbnail
+        self.fail_playlist_item, self.playlist_page_size = fail_playlist_item, playlist_page_size
         self.refreshes = 0
         self.transport = httpx.MockTransport(self.handle)
 
@@ -59,6 +68,24 @@ class FakeGoogle:
                 return httpx.Response(308, headers={"Range": f"bytes=0-{end}"})
             return httpx.Response(200, json={"id": "vid123", "status": {
                 "privacyStatus": self.uploads[-1]["body"]["status"]["privacyStatus"]}})
+        if path == "/youtube/v3/playlists" and request.method == "GET":
+            assert url.params["mine"] == "true"
+            self.playlist_pages += 1
+            start = int(url.params.get("pageToken") or 0)
+            end = start + self.playlist_page_size
+            page = {"items": [{"id": p["id"], "snippet": {"title": p["title"]},
+                               "contentDetails": {"itemCount": p["count"]},
+                               "status": {"privacyStatus": p["privacy"]}}
+                              for p in self.PLAYLISTS[start:end]]}
+            if end < len(self.PLAYLISTS):
+                page["nextPageToken"] = str(end)
+            return httpx.Response(200, json=page)
+        if path == "/youtube/v3/playlistItems" and request.method == "POST":
+            if self.fail_playlist_item:
+                return httpx.Response(404, json={"error": {
+                    "message": "playlist not found", "errors": [{"reason": "playlistNotFound"}]}})
+            self.playlist_items.append(json.loads(request.content)["snippet"])
+            return httpx.Response(200, json={"id": f"item{len(self.playlist_items)}"})
         if path == "/upload/youtube/v3/thumbnails/set":
             if self.fail_thumbnail:
                 return httpx.Response(400, json={"error": {"message": "bad image"}})

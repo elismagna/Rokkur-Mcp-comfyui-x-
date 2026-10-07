@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 ResourceClass = Literal["GPU_LIGHT", "GPU_MEDIUM", "GPU_HEAVY"]
+PLAYLIST_ID = re.compile(r"[A-Za-z0-9_-]{10,64}")
 
 
 class StudioSection(BaseModel):
@@ -50,13 +53,50 @@ class OllamaSection(BaseModel):
 
 class YoutubeSection(BaseModel):
     enabled: bool = False
-    auto_publish: bool = False
+    auto_publish: bool = False       # not used: nothing uploads without a person's click
     default_privacy: Literal["private", "unlisted", "public"] = "private"
-    allow_public: bool = False       # a public upload needs this AND an explicit privacy=public
+    allow_public: bool = False       # a public upload or a scheduled release (which goes public)
+                                     # needs this AND an explicit request
     secrets_dir: Path = Path("secrets")
     client_secret_file: str = "youtube_client_secret.json"
     token_file: str = "youtube_token.json"
     auth_port: int = 8401            # loopback redirect for the sign-in flow
+    timezone: str = "UTC"            # release times and dates in the dashboard, e.g. Europe/Oslo
+    release_times: list[str] = Field(default_factory=list)  # daily release slots, e.g. ["18:00"]
+    min_lead_minutes: int = Field(30, ge=5, le=1440)  # a scheduled release is at least this far off
+    default_playlist_id: str = ""    # playlist a finished video is added to unless you pick another
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown time zone {v!r}; use a name like Europe/Oslo or UTC") from exc
+        return v
+
+    @field_validator("release_times", mode="before")
+    @classmethod
+    def _clock_times(cls, v: Any) -> list[str]:
+        if isinstance(v, str | int):  # "18:00, 21:00" from an env var
+            v = str(v).split(",") if isinstance(v, str) else [v]
+        out = set()
+        for t in v or []:
+            if isinstance(t, int):  # unquoted 18:00 in YAML is the base-60 integer 1080
+                t = f"{t // 60}:{t % 60:02d}"
+            m = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", str(t).strip())
+            if not m:
+                raise ValueError(f"release time {t!r} is not HH:MM (24-hour)")
+            out.add(f"{int(m.group(1)):02d}:{m.group(2)}")
+        return sorted(out)
+
+    @field_validator("default_playlist_id")
+    @classmethod
+    def _playlist_id(cls, v: str) -> str:
+        v = v.strip()
+        if v and not PLAYLIST_ID.fullmatch(v):
+            raise ValueError(f"{v!r} does not look like a YouTube playlist id (PL…)")
+        return v
 
     @property
     def client_secret_path(self) -> Path:

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -215,19 +215,23 @@ def render_project(project_id: str, ctx: Ctx, session: Db) -> Job | None:
 
 @router.post("/{project_id}/publish", response_model=PublicationOut,
              summary="Dry-run (default) or really upload a READY_TO_PUBLISH project to YouTube")
-def publish(project_id: str, body: PublishIn, ctx: Ctx, session: Db) -> Publication:
+def publish(project_id: str, body: PublishIn, ctx: Ctx, session: Db) -> Publication | Response:
+    """``publish_at`` schedules a public release (private until then; needs allow_public)."""
     project = _project(session, project_id, for_update=True)
     try:
         if body.dry_run:
             return publishing.dry_run(session, project, privacy=body.privacy,
-                                      publish_at=body.publish_at, playlist_id=body.playlist_id)
+                                      publish_at=body.publish_at, playlist_id=body.playlist_id,
+                                      settings=ctx.settings)
         client = ctx.extras.get("youtube_client") or publishing.make_client(ctx.settings)
         return publishing.upload(session, project, settings=ctx.settings, store=ctx.store,
                                  client=client, privacy=body.privacy,  # type: ignore[arg-type]
-                                 publish_at=body.publish_at)
+                                 publish_at=body.publish_at, playlist_id=body.playlist_id)
     except publishing.PublishGateError as exc:
         raise HTTPException(409, str(exc)) from exc
     except OAuthError as exc:
         raise HTTPException(409, str(exc)) from exc
     except YouTubeError as exc:
-        raise HTTPException(502, str(exc)) from exc
+        # Returned, not raised: the request transaction then commits the failed publication
+        # and its audit event instead of rolling them back.
+        return JSONResponse({"detail": str(exc)}, status_code=502)

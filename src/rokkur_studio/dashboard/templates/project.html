@@ -88,8 +88,9 @@
 <div class="stack">
   {% if docs.metadata %}{% set m = docs.metadata.data %}
   <div class="card"><h2>YouTube</h2>
-    {% for pub in uploaded %}<p class="flash ok" style="margin:0 0 12px">Uploaded ({{ pub.request.body.status.privacyStatus }}): <a href="{{ video_url(pub.youtube_video_id) }}" target="_blank" rel="noopener">{{ video_url(pub.youtube_video_id) }}</a></p>{% endfor %}
+    {% for pub in uploaded %}{% set at = pub.request.body.status.publishAt %}<p class="flash ok" style="margin:0 0 12px">Uploaded ({{ pub.request.body.status.privacyStatus }}{% if at %}, goes public {{ at|release_label(settings) }}{% endif %}): <a href="{{ video_url(pub.youtube_video_id) }}" target="_blank" rel="noopener">{{ video_url(pub.youtube_video_id) }}</a>{% if pub.error %}<br><span class="hint warn">Warning: {{ pub.error.message }}</span>{% endif %}</p>{% endfor %}
     {% if m.warnings %}<div class="note">{{ m.warnings|join('; ') }}</div>{% endif %}
+    {% if proposal %}<div class="note">Waiting for your approval: {{ proposal.summary }}. <a href="/ui/approvals">Open Approvals</a>, or publish below instead.</div>{% endif %}
     {% if p.status in ['READY_TO_PUBLISH','EDITING'] %}
     <form method="post" action="/ui/projects/{{p.id}}/metadata">
       <label for="title">Title <span class="muted">(by {{ docs.metadata.created_by|replace('channel_manager:','')|replace('_',' ') }})</span></label>
@@ -101,9 +102,22 @@
       <p style="margin:10px 0 0"><button class="secondary">Save text</button></p>
     </form>
     <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
-    <form method="post" action="/ui/projects/{{p.id}}/publish" onsubmit="if(event.submitter && event.submitter.value==='upload'){return confirm('Upload this video to YouTube as ' + this.privacy.value + '?')}">
+    <form method="post" action="/ui/projects/{{p.id}}/publish" id="publish-form" data-next-slot="{{ next_slot.isoformat() if next_slot else '' }}">
+      <label>When</label>
+      <label class="check" style="margin:4px 0"><input type="radio" name="release" value="now" checked> Now</label>
+      <label class="check" style="margin:4px 0"><input type="radio" name="release" value="schedule" {% if schedule_block %}disabled{% endif %}> Upload as private now, make public at a set time</label>
+      <div id="release-time"{% if schedule_block %} hidden{% endif %}>
+        <label for="publish_local">Public at <span class="muted">(your browser's time)</span></label>
+        <input type="datetime-local" id="publish_local" name="publish_local" value="{{ next_slot_local }}">
+        <input type="hidden" id="publish_at" name="publish_at">
+        <p class="hint">{% if next_slot %}Next free release time: {{ next_slot|release_label(settings) }}.{% elif settings.youtube.release_times %}No free release time in the next few months.{% else %}Set youtube.release_times to get a suggested time.{% endif %}</p>
+      </div>
+      {% if schedule_block %}<p class="hint">{{ schedule_block }}</p>{% endif %}
       <label for="privacy">Visibility</label>
       <select id="privacy" name="privacy">{% for pv in privacies %}<option value="{{pv}}">{{ pv|capitalize }}</option>{% endfor %}</select>
+      <label for="playlist_id">Playlist</label>
+      <select id="playlist_id" name="playlist_id"><option value="">None</option>{% for pl in playlists %}<option value="{{pl.id}}" {% if pl.id == settings.youtube.default_playlist_id %}selected{% endif %}>{{ pl.title }}</option>{% endfor %}</select>
+      {% if not playlists %}<p class="hint">To pick one, load your playlists on the <a href="/ui/youtube">YouTube page</a>.</p>{% endif %}
       {% if publish_block %}<p class="hint warn">{{ publish_block }}</p>{% endif %}
       <div class="row" style="margin-top:12px">
         <button name="mode" value="upload" {% if publish_block %}disabled{% endif %}>Upload to YouTube</button>
@@ -111,6 +125,34 @@
       </div>
       <p class="hint">Dry run checks everything and shows the exact request without uploading.</p>
     </form>
+    <script>
+    (function () {
+      var f = document.getElementById('publish-form');
+      var local = document.getElementById('publish_local'), utc = document.getElementById('publish_at');
+      var box = document.getElementById('release-time');
+      function pad(n) { return String(n).padStart(2, '0'); }
+      if (f.dataset.nextSlot) {  // show the suggested time in the browser's own zone
+        var d = new Date(f.dataset.nextSlot);
+        local.value = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+      }
+      function sync() {
+        var later = f.release.value === 'schedule';
+        box.hidden = !later; local.disabled = !later; local.required = later;
+        if (later) { f.privacy.value = 'private'; }
+        f.privacy.disabled = later;
+      }
+      Array.prototype.forEach.call(f.release, function (r) { r.addEventListener('change', sync); });
+      sync();
+      f.addEventListener('submit', function (e) {
+        var later = f.release.value === 'schedule';
+        utc.value = later && local.value ? new Date(local.value).toISOString() : '';
+        if (e.submitter && e.submitter.value === 'upload') {
+          var what = later ? 'private now, public on ' + new Date(local.value).toLocaleString() : f.privacy.value;
+          if (!confirm('Upload this video to YouTube (' + what + ')?')) { e.preventDefault(); }
+        }
+      });
+    })();
+    </script>
     {% else %}
     <dl class="kv"><dt>Title</dt><dd>{{ m.title }}</dd><dt>Tags</dt><dd>{{ m.tags|join(', ') }}</dd></dl>
     <pre style="margin-top:10px">{{ m.description }}</pre>
@@ -131,7 +173,7 @@
   </div>
 
   {% if d.publications %}<div class="card"><h2>Publish history</h2>
-    {% for pub in d.publications|reverse %}<div class="row" style="justify-content:space-between;padding:4px 0"><span>{{ 'Dry run' if pub.dry_run else 'Upload' }} · {{ pub.request.body.status.privacyStatus }}</span><span class="pill {{ 'ok' if pub.status in ['uploaded','prepared'] else ('bad' if pub.status=='failed' else 'info') }}">{{ pub.status }}</span></div>
+    {% for pub in d.publications|reverse %}<div class="row" style="justify-content:space-between;padding:4px 0"><span>{{ 'Dry run' if pub.dry_run else 'Upload' }} · {{ pub.request.body.status.privacyStatus }}{% if pub.request.body.status.publishAt %}, public {{ pub.request.body.status.publishAt|release_label(settings) }}{% endif %}{% if pub.request.then %} · playlist{% endif %}</span><span class="pill {{ 'ok' if pub.status in ['uploaded','prepared'] else ('bad' if pub.status=='failed' else 'info') }}">{{ pub.status }}</span></div>
     {% if pub.error %}<div class="hint bad">{{ pub.error.message }}</div>{% endif %}{% endfor %}
     <details><summary>Latest request</summary><pre>{{ d.publications[-1].request|pretty }}</pre></details>
   </div>{% endif %}

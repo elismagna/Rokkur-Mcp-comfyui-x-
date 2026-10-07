@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block title %}YouTube · Rökkur Studio{% endblock %}{% block body %}
 <h1>YouTube</h1>
-<p class="sub">Uploads only happen when you press Upload on a finished video. They are private unless you choose otherwise.</p>
+<p class="sub">Uploads only happen when you press Upload on a finished video{% if proposals %} or approve one on the <a href="/ui/approvals">Approvals</a> page ({{ proposals }} waiting){% endif %}. They are private unless you choose otherwise.</p>
 
 <div class="grid">
 <div class="card"><h2>Connection</h2>
@@ -16,7 +16,28 @@
 <div class="card"><h2>Today's quota</h2>
   <div class="row" style="justify-content:space-between"><span>{{ '%.0f'|format(quota) }} of 10,000 units</span><span class="muted">≈ {{ ((10000 - quota) / 1650)|int }} uploads left</span></div>
   <div class="meter" style="margin-top:8px"><i style="width:{{ [100, (quota / 100)|round|int]|min }}%"></i></div>
-  <p class="hint">An upload with thumbnail costs 1,650 units. Google resets the count at midnight Pacific time.</p>
+  <p class="hint">An upload with thumbnail costs 1,650 units, 1,700 with a playlist. Google resets the count at midnight Pacific time.</p>
+</div>
+</div>
+
+<div class="grid" style="margin-top:16px">
+<div class="card"><h2>Release times</h2>
+  {% set r = releases %}
+  <dl class="kv">
+    <dt>Daily slots</dt><dd>{{ r.release_times|join(', ') if r.release_times else 'none set' }} <span class="muted">{{ r.timezone }}</span></dd>
+    <dt>Next free</dt><dd>{{ r.next_slot_label or ('needs youtube.allow_public' if r.release_times and not r.allow_public else '—') }}</dd>
+  </dl>
+  {% if r.upcoming %}<h3>Scheduled</h3>
+  {% for u in r.upcoming %}<div class="row" style="justify-content:space-between;padding:3px 0"><a href="/ui/projects/{{u.project_id}}">{{ u.title }}</a><span class="muted">{{ u.label }}</span></div>{% endfor %}{% endif %}
+  <p class="hint">A scheduled video uploads as private and YouTube makes it public at that time, so scheduling needs <code>youtube.allow_public: true</code>. Set the slots with <code>youtube.release_times</code> (e.g. <code>["18:00"]</code>) and <code>youtube.timezone</code> in <code>config/studio.yaml</code>.</p>
+</div>
+<div class="card"><h2>Playlists</h2>
+  {% if playlists and playlists['items'] %}
+  {% for pl in playlists['items'] %}<div class="row" style="justify-content:space-between;padding:3px 0"><span>{{ pl.title }}{% if pl.id == yt.default_playlist_id %} <span class="pill ok">default</span>{% endif %}</span><span class="muted">{{ pl.videos if pl.videos is not none else '' }} {{ pl.privacy or '' }}</span></div>{% endfor %}
+  <p class="hint">Loaded {{ playlists.fetched_at|release_label(settings) }}. Set a default with <code>youtube.default_playlist_id</code>.</p>
+  {% else %}<p class="muted" style="margin:0">{{ 'No playlists loaded yet.' if not playlists else 'This channel has no playlists.' }}</p>{% endif %}
+  {% if yt.default_playlist_id and not default_playlist %}<p class="hint warn">The default playlist <code>{{ yt.default_playlist_id }}</code> is not in the loaded list.</p>{% endif %}
+  {% if signed_in %}<form method="post" action="/ui/youtube/playlists" style="margin-top:12px"><button class="secondary">{{ 'Reload' if playlists else 'Load' }} playlists</button></form>{% endif %}
 </div>
 </div>
 
@@ -27,7 +48,7 @@
 
 <h2 style="margin-top:24px">History</h2>
 <div class="table-wrap"><table><tr><th>When</th><th>Video</th><th>Type</th><th>Visibility</th><th>Result</th></tr>
-{% for pub, name in pubs %}<tr><td class="muted">{{ pub.created_at.strftime('%d %b %H:%M') }}</td><td><a href="/ui/projects/{{pub.project_id}}">{{name}}</a></td><td>{{ 'dry run' if pub.dry_run else 'upload' }}</td><td>{{ pub.request.body.status.privacyStatus }}</td>
+{% for pub, name in pubs %}<tr><td class="muted">{{ pub.created_at.strftime('%d %b %H:%M') }}</td><td><a href="/ui/projects/{{pub.project_id}}">{{name}}</a></td><td>{{ 'dry run' if pub.dry_run else 'upload' }}</td><td>{{ pub.request.body.status.privacyStatus }}{% if pub.request.body.status.publishAt %}<div class="hint">public {{ pub.request.body.status.publishAt|release_label(settings) }}</div>{% endif %}</td>
 <td>{% if pub.youtube_video_id %}<a href="{{ video_url(pub.youtube_video_id) }}" target="_blank" rel="noopener">watch</a>{% else %}<span class="pill {{ 'bad' if pub.status=='failed' else '' }}">{{ pub.status }}</span>{% endif %}{% if pub.error %} <span class="hint bad">{{ pub.error.message }}</span>{% endif %}</td></tr>
 {% else %}<tr><td colspan="5" class="empty">Nothing published yet.</td></tr>{% endfor %}</table></div>
 {% endblock %}

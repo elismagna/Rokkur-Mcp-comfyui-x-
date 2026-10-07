@@ -1,8 +1,9 @@
 """YouTube Data API v3 calls the studio makes, over plain ``httpx``.
 
 Only what publishing needs: who am I (``channels.list mine``), resumable ``videos.insert``,
-``thumbnails.set``. Quota costs follow the API's documented table so the ledger stays honest:
-videos.insert 1600 units, thumbnails.set 50, channels.list 1.
+``thumbnails.set``, the channel's playlists and adding a video to one. Quota costs follow the
+API's documented table so the ledger stays honest: videos.insert 1600 units, thumbnails.set 50,
+playlistItems.insert 50, channels.list and playlists.list 1 per page.
 """
 
 from __future__ import annotations
@@ -20,7 +21,9 @@ log = logging.getLogger(__name__)
 API = "https://www.googleapis.com/youtube/v3"
 UPLOAD = "https://www.googleapis.com/upload/youtube/v3"
 CHUNK = 8 * 1024 * 1024  # bytes per resumable PUT; a multiple of 256 KiB as Google requires
-QUOTA = {"channels.list": 1, "videos.insert": 1600, "thumbnails.set": 50}
+QUOTA = {"channels.list": 1, "videos.insert": 1600, "thumbnails.set": 50, "playlists.list": 1,
+         "playlistItems.insert": 50}
+PLAYLIST_PAGES = 10  # 500 playlists is plenty for one channel
 
 
 class YouTubeError(RuntimeError):
@@ -125,6 +128,35 @@ class YouTubeClient:
         self._spend("thumbnails.set")
         if r.status_code != 200:
             raise _error(r, "thumbnails.set")
+
+    def my_playlists(self) -> list[dict[str, Any]]:
+        """``[{"id", "title", "videos", "privacy"}]`` for the signed-in channel, A to Z."""
+        out: list[dict[str, Any]] = []
+        params = {"part": "snippet,contentDetails,status", "mine": "true", "maxResults": "50"}
+        for _ in range(PLAYLIST_PAGES):
+            r = self.http.get(f"{API}/playlists", params=params, headers=self._auth())
+            self._spend("playlists.list")
+            if r.status_code != 200:
+                raise _error(r, "playlists.list")
+            data = r.json()
+            for item in data.get("items") or []:
+                out.append({"id": item["id"],
+                            "title": item.get("snippet", {}).get("title", ""),
+                            "videos": item.get("contentDetails", {}).get("itemCount"),
+                            "privacy": item.get("status", {}).get("privacyStatus")})
+            if not data.get("nextPageToken"):
+                break
+            params = {**params, "pageToken": data["nextPageToken"]}
+        return sorted(out, key=lambda p: p["title"].lower())
+
+    def add_to_playlist(self, playlist_id: str, video_id: str) -> None:
+        r = self.http.post(f"{API}/playlistItems", params={"part": "snippet"},
+                           headers=self._auth(),
+                           json={"snippet": {"playlistId": playlist_id, "resourceId": {
+                               "kind": "youtube#video", "videoId": video_id}}})
+        self._spend("playlistItems.insert")
+        if r.status_code != 200:
+            raise _error(r, "playlistItems.insert")
 
     def close(self) -> None:
         self.http.close()

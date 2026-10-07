@@ -23,7 +23,7 @@ ComfyUI and Ollama keep running where they run; Studio talks to them over their 
 | `ffmpeg_preview` renderer (non-AI colour-grade stand-in) | Working, used by default |
 | QC (temporal/motion/structure/artifacts/detail) + shot-level repair loop with budget | Working; identity/prompt adherence reported as *not measured* |
 | Final Shorts encode, thumbnail, preview GIF, metadata draft | Working |
-| YouTube publish (OAuth, resumable upload, thumbnail, quota ledger; private by default) | Built and tested against a fake Google; waiting for the first real sign-in (`docs/youtube.md`) |
+| YouTube publish (OAuth, resumable upload, thumbnail, quota ledger; private by default; scheduled public release, playlists, upload approvals at autonomy level 3) | Built and tested against a fake Google; waiting for the first real sign-in (`docs/youtube.md`) |
 | Ollama agents (Creative Director, Channel Manager) | Working on the workstation's GPU (qwen3.5:9b, checked with `agent-check`) |
 | AI director: cinematography vocabulary, Director of Photography pass, per-shot prompts, character tracker, Batch Prompt Schedule export (`docs/director.md`) | Built and tested against a fake Ollama; not yet run on the workstation |
 | Rökkur Collective / Odysseus integration | Not built: their interfaces could not be inspected (see `docs/current-state.md`) |
@@ -45,10 +45,13 @@ Open http://127.0.0.1:8400/ui. The dashboard has:
   declare the rights, choose the quality, start.
 - **Project page**: pipeline progress, the final video, the model-written brief with each
   shot's frame, framing and prompt, the prompt schedule, QC scores, and an editable
-  title/description/tags with Dry run and Upload to YouTube buttons.
+  title/description/tags with Dry run and Upload to YouTube buttons: upload now, or private
+  now and public at a set time, optionally into a playlist.
 - **Director**: the global look, your characters, the allowed cinematography terms, and a
   form that shows how the prompt rules turn a description into a prompt.
-- **YouTube**, **Agents** (with a one-click model check), **Queue**, **Approvals**, **System**.
+- **YouTube**: sign-in, quota, release times and what is scheduled, your playlists.
+- **Approvals**: rights questions, and at autonomy level 3 every upload the studio proposes.
+- **Agents** (with a one-click model check), **Queue**, **System**.
 
 See `docs/setup-windows.md`.
 
@@ -67,6 +70,7 @@ in `docs/youtube.md`):
 
 ```powershell
 .\scripts\studio.ps1 publish <project id>
+.\scripts\studio.ps1 publish <project id> --at "2026-10-09 18:00" --playlist "Shorts"   # public at 18:00
 ```
 
 ## Quick start (no Docker)
@@ -97,7 +101,7 @@ curl -X POST localhost:8400/projects -H 'content-type: application/json' -d '{
 ## Commands
 
 `make up | down | logs | test | migrate | studio | worker | comfy-check | agent-check |
-render | youtube-auth | publish | prompt-schedule | smoke-test | audit | lint` — or the same
+render | youtube-auth | publish | youtube-playlists | prompt-schedule | smoke-test | audit | lint` — or the same
 names via `scripts\studio.ps1`.
 
 ## Documentation

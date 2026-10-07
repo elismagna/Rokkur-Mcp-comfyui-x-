@@ -6,6 +6,7 @@ from typing import Annotated, Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -21,7 +22,9 @@ from rokkur_studio.api.schemas import (
 from rokkur_studio.db.models import ApprovalRequest, Channel, GpuLease, Job, utcnow
 from rokkur_studio.jobs.queue import JobStatus
 from rokkur_studio.pipeline.context import StudioContext
-from rokkur_studio.services import commands
+from rokkur_studio.services import commands, publishing
+from rokkur_studio.youtube.client import YouTubeError
+from rokkur_studio.youtube.oauth import OAuthError
 
 router = APIRouter()
 Ctx = Annotated[StudioContext, Depends(get_ctx)]
@@ -95,10 +98,22 @@ def list_approvals(session: Db, status: str | None = "pending") -> list[Approval
 
 
 @router.post("/approvals/{approval_id}", response_model=ApprovalOut, tags=["approvals"])
-def decide(approval_id: str, body: ApprovalDecision, ctx: Ctx, session: Db) -> ApprovalRequest:
+def decide(approval_id: str, body: ApprovalDecision, ctx: Ctx,
+           session: Db) -> ApprovalRequest | Response:
     req = session.get(ApprovalRequest, approval_id, with_for_update=True)
     if req is None:
         raise HTTPException(404, "approval not found")
+    if req.kind == "publish" and body.approve:  # approving uploads the video as planned
+        try:
+            with publishing.youtube_client(ctx.settings, ctx.extras.get("youtube_client")) as yt:
+                publishing.approve_proposal(session, req, settings=ctx.settings, store=ctx.store,
+                                            client=yt, decided_by=body.decided_by,
+                                            note=body.note)
+        except (publishing.PublishGateError, OAuthError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except YouTubeError as exc:  # returned so the failed attempt's audit trail commits
+            return JSONResponse({"detail": str(exc)}, status_code=502)
+        return req
     try:
         return commands.decide_approval(session, req, ctx.settings, approve=body.approve,
                                         decided_by=body.decided_by, note=body.note)
