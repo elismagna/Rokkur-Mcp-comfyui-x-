@@ -190,12 +190,9 @@ def cmd_youtube_auth(args: argparse.Namespace) -> int:
 def cmd_smoke_test(args: argparse.Namespace) -> int:
     """End-to-end fixture: synthetic legal video → analysis → render → QC → encode → dry-run."""
     from rokkur_studio.api.schemas import CreativeIn, ProjectCreate, RightsIn, SourceIn
-    from rokkur_studio.db.models import Event
     from rokkur_studio.domain.rights import RightsCategory
-    from rokkur_studio.jobs.worker import Worker
     from rokkur_studio.pipeline.context import build_context
-    from rokkur_studio.services import commands, publishing
-    from rokkur_studio.services.projects import get_project, latest_document
+    from rokkur_studio.services import commands
 
     settings = _settings(args)
     if args.renderer:
@@ -218,8 +215,18 @@ def cmd_smoke_test(args: argparse.Namespace) -> int:
             creative=CreativeIn(**creative), render_profile=args.profile, autostart=True),
             settings, actor="smoke-test")
         pid = project.id
-    worker = Worker(ctx, worker_id="smoke-test")
-    deadline = time.monotonic() + args.timeout
+    return _drive(ctx, pid, args.timeout, actor="smoke-test")
+
+
+def _drive(ctx: Any, pid: str, timeout: float, *, actor: str) -> int:
+    """Run the pipeline for one project in-process, then print its trail and the dry-run upload."""
+    from rokkur_studio.db.models import Event
+    from rokkur_studio.jobs.worker import Worker
+    from rokkur_studio.services import publishing
+    from rokkur_studio.services.projects import get_project, latest_document
+
+    worker = Worker(ctx, worker_id=actor)
+    deadline = time.monotonic() + timeout
     done = {"READY_TO_PUBLISH", "FAILED", "RIGHTS_REJECTED", "CANCELLED", "RIGHTS_PENDING"}
     while time.monotonic() < deadline:
         worker.drain()
@@ -238,14 +245,43 @@ def cmd_smoke_test(args: argparse.Namespace) -> int:
             return 1
         qc = latest_document(s, pid, "qc_report")
         print(f"QC: {qc.data['decision']} overall={qc.data['overall']}" if qc else "QC: none")
-        pub = publishing.dry_run(s, project, actor="smoke-test")
+        pub = publishing.dry_run(s, project, actor=actor)
         print("dry-run upload request:")
         print(json.dumps(pub.request["body"], indent=2))
         print(f"final video: {ctx.store.path_for(f'{pid}/final/final.mp4')}")
+        print(f"  (on Windows: data\\projects\\{pid}\\final\\final.mp4 in the studio folder)")
     return 0
 
 
+def cmd_render(args: argparse.Namespace) -> int:
+    """Render a video you have rights to through the full pipeline (publishing stays a dry run)."""
+    from rokkur_studio.api.schemas import CreativeIn, ProjectCreate, RightsIn, SourceIn
+    from rokkur_studio.domain.rights import RightsCategory
+    from rokkur_studio.pipeline.context import build_context
+    from rokkur_studio.services import commands
+
+    settings = _settings(args)
+    settings.render.renderer = args.renderer
+    source = Path(args.path)
+    if not source.is_file():
+        print(f"no such file: {source} (inside Docker your media folder is /media)", file=sys.stderr)
+        return 2
+    ctx = build_context(settings)
+    with ctx.db.transaction() as s:
+        project = commands.create_project(s, ProjectCreate(
+            name=args.name or source.stem, target_format=args.format, render_profile=args.profile,
+            source=SourceIn(platform="local", local_path=str(source.resolve())),
+            rights=RightsIn(category=RightsCategory(args.rights), permission_evidence=args.evidence),
+            creative=CreativeIn(theme=args.theme, prompt=args.prompt), autostart=True),
+            settings, actor="cli")
+        pid = project.id
+    print(f"project {pid} created; rendering with {args.renderer} / {args.profile or 'default profile'}")
+    return _drive(ctx, pid, args.timeout, actor="cli-render")
+
+
 def main(argv: list[str] | None = None) -> int:
+    from rokkur_studio.domain.rights import RightsCategory
+
     parser = argparse.ArgumentParser(prog="rokkur-studio")
     parser.add_argument("--config", help="config directory (default: ./config)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -269,6 +305,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--inject-fault", action="store_true", help="exercise QC failure + repair")
     p.add_argument("--timeout", type=float, default=300)
     p.set_defaults(func=cmd_smoke_test)
+    p = sub.add_parser("render", help="render a video you have rights to")
+    p.add_argument("path", help="video file, e.g. /media/clip.mp4")
+    p.add_argument("--theme", required=True, help="look to apply, e.g. '1970s claymation'")
+    p.add_argument("--prompt", help="extra detail for the style prompt")
+    p.add_argument("--rights", required=True,
+                   choices=[c.value for c in RightsCategory if c.value not in ("UNKNOWN", "REJECTED")],
+                   help="why you may use this video; unknown rights are never rendered")
+    p.add_argument("--evidence", required=True, help="note backing the rights claim")
+    p.add_argument("--profile", help="render profile (default from config)")
+    p.add_argument("--renderer", choices=["ffmpeg_preview", "comfyui"], default="comfyui")
+    p.add_argument("--format", choices=["youtube_short", "youtube_video"], default="youtube_short")
+    p.add_argument("--name")
+    p.add_argument("--timeout", type=float, default=4 * 3600)
+    p.set_defaults(func=cmd_render)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

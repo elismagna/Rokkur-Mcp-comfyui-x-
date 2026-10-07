@@ -39,6 +39,15 @@ copy .env.example .env          # set POSTGRES_PASSWORD
 Open http://127.0.0.1:8400/ui. Put source videos in `./media` and refer to them as
 `/media/<file>` when creating projects. See `docs/setup-windows.md`.
 
+Or render straight from the command line (Windows):
+
+```powershell
+.\scripts\studio.ps1 render myclip.mp4 --theme "1970s claymation" --rights USER_OWNED --evidence "I filmed it"
+```
+
+This runs the whole pipeline (rights gate, ComfyUI render, QC, dry-run publish) and prints
+where the final video landed. Add `--profile PREVIEW` for a quick low-res pass.
+
 ## Quick start (no Docker)
 
 ```bash
