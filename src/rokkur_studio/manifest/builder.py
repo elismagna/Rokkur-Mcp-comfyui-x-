@@ -19,8 +19,12 @@ from rokkur_studio.manifest.schema import (
 )
 
 
-def fit_within(width: int, height: int, max_w: int, max_h: int, multiple: int = 8) -> tuple[int, int]:
-    """Scale (w, h) to fit (max_w, max_h) keeping aspect; round down to ``multiple``."""
+def fit_within(width: int, height: int, max_w: int, max_h: int, multiple: int = 16) -> tuple[int, int]:
+    """Scale (w, h) to fit (max_w, max_h) keeping aspect; round down to ``multiple``.
+
+    16 because video diffusion models (Wan, LTX, Hunyuan) patchify the 8x latent in 2x2 tiles:
+    a 568-pixel side gives mismatched token counts and the sampler fails.
+    """
     scale = min(1.0, max_w / width, max_h / height)
     w = max(multiple, int(width * scale) // multiple * multiple)
     h = max(multiple, int(height * scale) // multiple * multiple)

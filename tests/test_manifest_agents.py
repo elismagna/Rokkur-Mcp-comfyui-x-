@@ -42,7 +42,7 @@ def test_manifest_is_versioned_and_profile_aware():
     m = build_manifest(project_id="p", source_asset="p/s.mp4", analysis=ANALYSIS, brief=brief(),
                        profile=PROFILE, target_format="youtube_short")
     assert m.version == 1 and m.video.fps == 12
-    assert (m.video.width, m.video.height) == (360, 640)
+    assert (m.video.width, m.video.height) == (352, 640)  # rounded to multiples of 16
     assert m.shots[0].controls.pose is True
     again = ReconstructionManifest.model_validate(json.loads(m.model_dump_json()))
     assert again == m
@@ -124,3 +124,9 @@ def test_repair_planner_changes_only_failing_shots():
     assert [a.shot_id for a in plan.actions] == ["b"]
     ch = plan.actions[0].changes
     assert ch["seed"] != 10 and ch["style_strength"] == 0.55 and ch["pose"] is True
+
+
+def test_fit_within_gives_sizes_video_models_accept():
+    # 360x640 source into the PREVIEW box used to give 320x568, which Wan rejects.
+    w, h = fit_within(360, 640, 320, 576)
+    assert (w % 16, h % 16) == (0, 0) and h <= 576

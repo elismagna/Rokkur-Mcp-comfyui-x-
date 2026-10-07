@@ -11,7 +11,7 @@ profiles:
     steps: 8
     denoise: 0.55
     controls: {pose: false, depth: false, segmentation: false}
-    resource_class: GPU_MEDIUM
+    resource_class: GPU_HEAVY   # same Wan model as the quality profile
     location: local
     degrade: [clear_cache, reduce_frames, reduce_resolution]
 
