@@ -264,7 +264,7 @@ def test_missing_comfy_template_fails_fast_at_compile(ctx, sample_video):
     ctx.settings.render.renderer = "comfyui"
     with ctx.db.transaction() as s:
         p = commands.create_project(s, ProjectCreate(
-            name="q", render_profile="RTX3070_QUALITY", source=SourceIn(local_path=str(sample_video)),
+            name="q", render_profile="HYBRID_MAX", source=SourceIn(local_path=str(sample_video)),
             rights=RightsIn(category=RightsCategory.USER_OWNED), creative=CreativeIn(theme="x"),
             autostart=True), ctx.settings)
         pid = p.id

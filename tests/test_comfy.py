@@ -127,7 +127,7 @@ def test_template_loader_catches_bad_node_references(tmp_path):
 
 def test_missing_template_explains_how_to_install():
     with pytest.raises(TemplateError, match="API format"):
-        TemplateRegistry(WF).get("v2v_3070_quality")
+        TemplateRegistry(WF).get("hybrid_quality")
 
 
 def test_validate_against_object_info_reports_missing_nodes_and_options():
@@ -148,3 +148,14 @@ def test_validate_flags_loader_with_no_files_installed():
             for cls, node in ((n["class_type"], n) for n in t.workflow.values())}
     problems = validate_against_object_info(t, info)
     assert any("ckpt_name" in p and "none installed" in p for p in problems)
+
+
+def test_v2v_3070_quality_compiles_shot_params():
+    t = TemplateRegistry(WF).get("v2v_3070_quality")
+    compiled = compile_workflow(t, {"STYLE_PROMPT": "oil painting", "INPUT_VIDEO": "clip.mp4",
+                                    "WIDTH": 480, "HEIGHT": 832, "FRAME_COUNT": 81, "FPS": 16.0,
+                                    "STEPS": 20, "SEED": 7, "DENOISE": 0.6})
+    wf = compiled.workflow
+    assert wf["12"]["inputs"]["width"] == wf["14"]["inputs"]["width"] == 480
+    assert wf["14"]["inputs"]["length"] == 81 and wf["15"]["inputs"]["seed"] == 7
+    assert "DENOISE" in compiled.ignored

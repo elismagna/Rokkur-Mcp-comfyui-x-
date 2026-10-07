@@ -43,5 +43,5 @@ documented, public interfaces:
 
 ## Next audit step
 
-Rerun `scripts/studio.ps1 audit` (now lists model files) and `scripts/studio.ps1 comfy-check`, then add a
-`v2v_3070_quality` template built on the models actually installed.
+Elis chose Wan 2.1 VACE 1.3B (2026-10-07). `workflows/v2v_3070_quality` is built on it (core nodes, Canny control
+from the source clip). Download its three model files, then run `scripts/studio.ps1 comfy-check` and a real render.
