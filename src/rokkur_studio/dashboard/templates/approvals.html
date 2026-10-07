@@ -1,6 +1,9 @@
-{% extends "base.html" %}{% block body %}
+{% extends "base.html" %}{% block title %}Approvals · Rökkur Studio{% endblock %}{% block body %}
 <h1>Approvals</h1>
-<div class="table-wrap"><table><tr><th>Kind</th><th>Project</th><th>Summary</th><th>Status</th><th>Requested</th></tr>
-{% for a in items %}<tr><td>{{a.kind}}</td><td>{% if a.project_id %}<a href="/ui/projects/{{a.project_id}}">{{a.project_id[-8:]}}</a>{% endif %}</td><td>{{a.summary}}</td><td>{{a.status}}</td><td>{{a.requested_at.strftime('%m-%d %H:%M')}}</td></tr>{% else %}<tr><td colspan="5">Nothing waiting.</td></tr>{% endfor %}</table></div>
-<p><small>Decide via the project page or <code>POST /approvals/{id}</code>.</small></p>
+<p class="sub">Decisions the studio will not make on its own, such as rights it cannot confirm.</p>
+<div class="table-wrap"><table><tr><th>What</th><th>Project</th><th>Summary</th><th>Status</th><th>Asked</th><th></th></tr>
+{% for a in items %}<tr><td>{{a.kind|replace('_',' ')}}</td><td>{% if a.project_id %}<a href="/ui/projects/{{a.project_id}}">{{a.project_id[-8:]}}</a>{% endif %}</td><td>{{a.summary}}</td>
+<td><span class="pill {{ 'warn' if a.status=='pending' else ('ok' if a.status=='approved' else 'bad') }}">{{a.status}}</span></td><td class="muted">{{a.requested_at.strftime('%d %b %H:%M')}}</td>
+<td style="white-space:nowrap">{% if a.status=='pending' %}<form class="inline" method="post" action="/ui/approvals/{{a.id}}/approve"><button>Approve</button></form> <form class="inline" method="post" action="/ui/approvals/{{a.id}}/reject"><button class="secondary">Reject</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="6" class="empty">Nothing waiting for you.</td></tr>{% endfor %}</table></div>
 {% endblock %}

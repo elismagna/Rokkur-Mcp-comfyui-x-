@@ -1,0 +1,55 @@
+{% extends "base.html" %}{% from "_macros.html" import project_row, status_pill %}
+{% block head %}{% if active %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
+{% block body %}
+<h1>Overview</h1>
+<p class="sub">Renders with <b>{{ settings.render.renderer }}</b> · agents on <b>{{ settings.agents.provider }}</b>{% if settings.agents.provider == 'ollama' %} ({{ settings.ollama.model }}){% endif %} · default profile <b>{{ settings.render.default_profile }}</b></p>
+
+{% if settings.render.renderer != 'comfyui' %}
+<div class="note">Renders use the quick non-AI stand-in (<code>ffmpeg_preview</code>), so videos from this page won't get the Wan style. For real renders, put <code>STUDIO_RENDER__RENDERER=comfyui</code> in <code>.env</code> and run <code>.\scripts\studio.ps1 up</code>.</div>
+{% endif %}
+
+<div class="tiles">
+  <a class="tile" href="/ui/projects?group=working"><b>{{tiles.working}}</b><span>In progress</span></a>
+  <a class="tile" href="/ui/projects?group=attention"><b class="{% if tiles.attention %}warn{% endif %}">{{tiles.attention}}</b><span>Need you</span></a>
+  <a class="tile" href="/ui/projects?group=ready"><b class="{% if tiles.ready %}ok{% endif %}">{{tiles.ready}}</b><span>Ready to publish</span></a>
+  <a class="tile" href="/ui/projects?group=published"><b>{{tiles.published}}</b><span>Published</span></a>
+  <a class="tile" href="/ui/approvals"><b class="{% if pending_approvals %}warn{% endif %}">{{pending_approvals}}</b><span>Approvals</span></a>
+  <a class="tile" href="/ui/projects"><b>{{tiles.all}}</b><span>All projects</span></a>
+</div>
+
+<div class="grid2">
+<div class="stack">
+  {% if attention %}
+  <div class="card"><h2>Needs you</h2>
+    <div class="stack">{% for p in attention %}{{ project_row(p) }}{% endfor %}</div>
+  </div>{% endif %}
+
+  <div class="card"><h2>In progress</h2>
+    {% if active %}<div class="stack">{% for p in active %}{{ project_row(p) }}{% endfor %}</div>
+    {% else %}<p class="empty">Nothing rendering right now. <a href="/ui/new">Start a new video</a>.</p>{% endif %}
+  </div>
+
+  <div class="card"><h2>Latest finished</h2>
+    {% if finished %}<div class="gallery">{% for p in finished %}
+      <a href="/ui/projects/{{p.id}}"><div class="thumb" {% if thumbs.get(p.id) %}style="background-image:url('{{thumbs[p.id]}}')"{% endif %}></div>
+      <div class="cap">{{p.name}}</div><div>{{ status_pill(p.status) }}</div></a>{% endfor %}</div>
+    {% else %}<p class="empty">Finished videos show up here.</p>{% endif %}
+  </div>
+</div>
+
+<div class="stack">
+  <div class="card"><h2>Services</h2>
+    <table>{% for s in services %}<tr><td><span class="dot {{ 'ok' if s.ok else ('bad' if s.needed else '') }}"></span>{{s.name}}</td><td class="muted">{{s.detail}}</td><td style="text-align:right">{% if s.ok %}<span class="ok">ready</span>{% elif s.needed %}<span class="bad">down</span>{% else %}<span class="muted">off</span>{% endif %}</td></tr>{% endfor %}</table>
+  </div>
+  <div class="card"><h2>Graphics card</h2>
+    <div class="row" style="justify-content:space-between"><span>{{ '%.0f'|format(gpu.in_use_gb) }} of {{ '%.0f'|format(gpu.vram_gb) }} GB reserved</span><span class="muted">{{ gpu.leases|length }} job{{ '' if gpu.leases|length == 1 else 's' }}</span></div>
+    <div class="meter" style="margin-top:8px"><i style="width:{{ (100 * gpu.in_use_gb / gpu.vram_gb)|round|int if gpu.vram_gb else 0 }}%"></i></div>
+    {% for l in gpu.leases %}<div class="hint">{{l['class']}} · {{l.holder}}</div>{% endfor %}
+  </div>
+  <div class="card"><h2>Workers</h2>
+    {% if workers.active %}{% for w in workers.active %}<div><span class="dot ok"></span>{{w.worker_id}} · {{w.running_jobs}} job{{ '' if w.running_jobs == 1 else 's' }}</div>{% endfor %}
+    {% else %}<p class="muted" style="margin:0">Idle. Jobs waiting: {{ workers.queue.get('QUEUED', 0) }}</p>{% endif %}
+  </div>
+</div>
+</div>
+{% endblock %}

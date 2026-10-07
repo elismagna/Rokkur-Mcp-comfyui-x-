@@ -1,4 +1,28 @@
-{% extends "base.html" %}{% block body %}
+{% extends "base.html" %}{% block title %}System · Rökkur Studio{% endblock %}{% block body %}
 <h1>System</h1>
-<pre>{{info|pretty}}</pre>
+<p class="sub">Rökkur Studio {{ info.version }} · autonomy level {{ info.autonomy_level }} · everything listens on 127.0.0.1 only</p>
+
+<div class="grid">
+<div class="card"><h2>Services</h2>
+  <table>{% for s in services %}<tr><td><span class="dot {{ 'ok' if s.ok else ('bad' if s.needed else '') }}"></span>{{s.name}}</td><td class="muted">{{s.detail}}</td></tr>{% endfor %}
+  <tr><td><span class="dot {{ 'ok' if info.database else 'bad' }}"></span>Database</td><td class="muted">Postgres</td></tr></table>
+</div>
+<div class="card"><h2>Pipeline settings</h2>
+  <dl class="kv"><dt>Renderer</dt><dd>{{ info.renderer }}</dd><dt>Agents</dt><dd>{{ info.agent_provider }}</dd>
+  <dt>Default profile</dt><dd>{{ info.default_profile }}</dd><dt>Workflows</dt><dd>{{ info.workflow_templates|join(', ') }}</dd>
+  <dt>Media folder</dt><dd><code>{{ settings.studio.media_dir }}</code></dd><dt>Repair rounds</dt><dd>up to {{ settings.render.max_retries }}</dd>
+  <dt>QC pass mark</dt><dd>{{ settings.quality.pass_threshold }} / 10</dd></dl>
+</div>
+<div class="card"><h2>GPU</h2>
+  <div class="row" style="justify-content:space-between"><span>{{ '%.0f'|format(gpu.in_use_gb) }} of {{ '%.0f'|format(gpu.vram_gb) }} GB reserved</span></div>
+  <div class="meter" style="margin-top:8px"><i style="width:{{ (100 * gpu.in_use_gb / gpu.vram_gb)|round|int if gpu.vram_gb else 0 }}%"></i></div>
+  <dl class="kv" style="margin-top:12px">{% for k, v in settings.gpu.class_vram_gb.items() %}<dt>{{ k|replace('GPU_','')|lower|capitalize }} job</dt><dd>{{ v }} GB</dd>{% endfor %}</dl>
+</div>
+</div>
+
+<h2 style="margin-top:24px">Render profiles</h2>
+<div class="table-wrap"><table><tr><th>Profile</th><th>Workflow</th><th>Max size</th><th>FPS</th><th>Max length</th><th>Steps</th><th>GPU class</th></tr>
+{% for name, pr in profiles.items() %}<tr><td><b>{{name}}</b>{% if name == settings.render.default_profile %} <span class="pill info">default</span>{% endif %}</td><td>{{pr.workflow}}</td><td>{{pr.max_width}}×{{pr.max_height}}</td><td>{{pr.fps}}</td><td>{{ '%.1f'|format(pr.max_frames / pr.fps) }} s ({{pr.max_frames}} frames)</td><td>{{pr.steps}}</td><td>{{pr.resource_class|replace('GPU_','')|lower}}</td></tr>{% endfor %}</table></div>
+
+<details style="margin-top:20px"><summary>Raw system report</summary><pre>{{ info|pretty }}</pre></details>
 {% endblock %}

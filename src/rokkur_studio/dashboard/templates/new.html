@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}New video · Rökkur Studio{% endblock %}
+{% block body %}
+<h1>New video</h1>
+<p class="sub">Pick a clip you have the rights to, describe the look, and the studio does the rest: brief, Wan render, quality check, title and tags.</p>
+
+<form method="post" action="/ui/projects" enctype="multipart/form-data">
+<div class="grid2">
+<div class="stack">
+  <div class="card"><h2>1 · Source video</h2>
+    {% if media %}
+    <label for="media_file">From your media folder</label>
+    <select id="media_file" name="media_file"><option value="">Choose a file…</option>
+      {% for m in media %}<option value="{{m.path}}">{{m.name}} ({{m.mb}} MB)</option>{% endfor %}</select>
+    {% else %}
+    <p class="hint">Your media folder (<code>{{ settings.studio.media_dir }}</code>) has no videos yet. Copy clips into the <code>media</code> folder inside the studio folder and reload this page, or upload one below.</p>
+    {% endif %}
+    <label for="source_file">Or upload a file</label>
+    <input id="source_file" type="file" name="source_file" accept="video/*">
+    <p class="hint">Uploads are copied into the studio's data folder. Large files are quicker through the media folder.</p>
+  </div>
+
+  <div class="card"><h2>2 · The look</h2>
+    <label for="theme">Theme / style</label>
+    <input id="theme" name="theme" required placeholder="1970s stop-motion claymation, warm film grain">
+    <label for="prompt">Extra detail (optional)</label>
+    <textarea id="prompt" name="prompt" placeholder="What should the agents emphasise? Characters, palette, mood…"></textarea>
+    <label for="name">Project name (optional)</label>
+    <input id="name" name="name" placeholder="Defaults to the file name">
+    <details><summary>Character reference image</summary>
+      <label for="character_reference_path">Path to an image the worker can read, e.g. /media/hero.png</label>
+      <input id="character_reference_path" name="character_reference_path">
+    </details>
+  </div>
+</div>
+
+<div class="stack">
+  <div class="card"><h2>3 · Rights</h2>
+    <label for="rights_category">Why may you use this video?</label>
+    <select id="rights_category" name="rights_category">{% for c in categories %}<option value="{{c}}" {% if c=='USER_OWNED' %}selected{% endif %}>{{ c|replace('_',' ')|lower|capitalize }}</option>{% endfor %}</select>
+    <label for="permission_evidence">Evidence</label>
+    <input id="permission_evidence" name="permission_evidence" placeholder="I filmed it myself / licence link / creator's written OK">
+    <p class="hint">Creator-provided and licensed clips need evidence or they wait for your approval. Unknown rights are never rendered.</p>
+  </div>
+
+  <div class="card"><h2>4 · Output</h2>
+    <label for="render_profile">Quality</label>
+    <select id="render_profile" name="render_profile">{% for name, pr in profiles.items() %}<option value="{{name}}" {% if name==default_profile %}selected{% endif %}>{{name}} · up to {{pr.max_width}}×{{pr.max_height}}, {{pr.fps}} fps, {{ '%.1f'|format(pr.max_frames / pr.fps) }} s</option>{% endfor %}</select>
+    <label for="target_format">Format</label>
+    <select id="target_format" name="target_format"><option value="youtube_short">YouTube Short (9:16)</option><option value="youtube_video">YouTube video (16:9)</option></select>
+    <label class="check" style="margin-top:14px"><input type="checkbox" name="autostart" value="true" checked> Start right away</label>
+    {% if settings.render.renderer != 'comfyui' %}<p class="hint warn">Renderer is set to the non-AI stand-in; see the note on the Overview page.</p>{% endif %}
+    <p style="margin:16px 0 0"><button>Create video</button></p>
+  </div>
+</div>
+</div>
+</form>
+{% endblock %}

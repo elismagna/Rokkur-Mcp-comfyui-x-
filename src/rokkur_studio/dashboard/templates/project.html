@@ -1,39 +1,132 @@
-{% extends "base.html" %}
-{% block title %}{{d.project.name}} · Rökkur Studio{% endblock %}
-{% block head %}{% if d.project.status in working %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
-{% block body %}{% set p = d.project %}
-<h1>{{p.name}} <span class="pill">{{p.status}}</span></h1>
-<p><small>{{p.id}} · profile {{p.render_profile}} · {{p.target_format}} · repair rounds {{p.repair_rounds}}{% if d.next_job %} · next stage: {{d.next_job}}{% endif %}</small></p>
-<p>
-{% if p.status in ['DISCOVERED','SCORED'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/start"><button>Start</button></form>{% endif %}
-{% if p.status == 'RIGHTS_PENDING' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/approve-rights"><button>Approve rights</button></form>
-<form class="inline" method="post" action="/ui/projects/{{p.id}}/reject-rights"><button class="secondary">Reject rights</button></form>{% endif %}
-{% if p.status == 'FAILED' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/resume"><button>Resume</button></form>{% endif %}
-{% if p.status not in ['ARCHIVED','CANCELLED','RIGHTS_REJECTED'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/cancel"><button class="secondary">Cancel</button></form>{% endif %}
-</p>
-<div class="grid">
-<div class="card"><h2>Source</h2><pre>{{d.source|pretty}}</pre></div>
-<div class="card"><h2>Rights</h2>{% if d.rights %}<p><span class="pill {% if d.rights.status=='approved' %}ok{% elif d.rights.status=='rejected' %}bad{% else %}warn{% endif %}">{{d.rights.category}} · {{d.rights.status}}</span></p><p>{{d.rights.reason}}</p>{% endif %}</div>
-{% for a in d.assets if a.kind=='final' %}<div class="card"><h2>Final output</h2><video controls src="/projects/{{p.id}}/assets/{{a.id}}/file"></video></div>{% endfor %}
-{% for a in d.assets if a.kind=='thumbnail' %}<div class="card"><h2>Thumbnail</h2><img src="/projects/{{p.id}}/assets/{{a.id}}/file" alt="thumbnail"></div>{% endfor %}
+{% extends "base.html" %}{% from "_macros.html" import status_pill, pipeline %}
+{% block title %}{{p.name}} · Rökkur Studio{% endblock %}
+{% block head %}{% if p.status in working %}<meta http-equiv="refresh" content="6">{% endif %}{% endblock %}
+{% block body %}
+{% set docs = d.documents %}
+{% set finals = d.assets|selectattr('kind','equalto','final')|list %}
+{% set thumbs = d.assets|selectattr('kind','equalto','thumbnail')|list %}
+{% set uploaded = d.publications|selectattr('dry_run','equalto',false)|selectattr('youtube_video_id')|list %}
+
+<p class="hint" style="margin:0 0 6px"><a href="/ui/projects">← Projects</a></p>
+<div class="row" style="justify-content:space-between;align-items:flex-start">
+  <div style="min-width:0">
+    <h1>{{p.name}} {{ status_pill(p.status) }}</h1>
+    <p class="sub">{{ p.creative_input.get('theme','') }} · {{p.render_profile}} · {{p.target_format|replace('youtube_','')}}{% if p.repair_rounds %} · {{p.repair_rounds}} repair round{{'' if p.repair_rounds==1 else 's'}}{% endif %}</p>
+  </div>
+  <div class="row">
+    {% if p.status in ['DISCOVERED','SCORED'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/start"><button>Start</button></form>{% endif %}
+    {% if p.status == 'RIGHTS_PENDING' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/approve-rights"><button>Approve rights</button></form>
+    <form class="inline" method="post" action="/ui/projects/{{p.id}}/reject-rights"><button class="secondary">Reject</button></form>{% endif %}
+    {% if p.status == 'FAILED' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/resume"><button>Resume</button></form>{% endif %}
+    {% if p.status not in ['ARCHIVED','CANCELLED','RIGHTS_REJECTED','PUBLISHED','MONITORING'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/cancel" onsubmit="return confirm('Cancel this project? Running jobs stop.')"><button class="secondary">Cancel</button></form>{% endif %}
+  </div>
 </div>
-{% if d.documents.qc_report %}{% set q = d.documents.qc_report.data %}
-<h2>Quality control (v{{d.documents.qc_report.version}}) <span class="pill {% if q.decision=='PASS' %}ok{% else %}bad{% endif %}">{{q.decision}}</span></h2>
-<div class="table-wrap"><table><tr><th>Shot</th><th>Decision</th><th>Overall</th><th>Temporal</th><th>Motion</th><th>Structure</th><th>Artifacts</th><th>Issues</th><th>Recommendations</th></tr>
-{% for s in q.shots %}<tr><td>{{s.shot_id}} (#{{s.attempt}})</td><td class="{% if s.decision=='PASS' %}ok{% else %}bad{% endif %}">{{s.decision}}</td><td>{{s.overall}}</td><td>{{s.temporal_consistency}}</td><td>{{s.motion}}</td><td>{{s.structure}}</td><td>{{s.artifact_score}}</td><td>{{s.issues|join('; ')}}</td><td>{{s.recommendations|join(', ')}}</td></tr>{% endfor %}</table></div>
-<p><small>Not measured yet: {% for k, v in q.not_measured.items() %}{{k}} ({{v}}){% if not loop.last %}, {% endif %}{% endfor %}</small></p>{% endif %}
-<h2>Renders</h2>
-<div class="table-wrap"><table><tr><th>Shot</th><th>Attempt</th><th>Renderer</th><th>Profile</th><th>Status</th><th>Seconds</th><th>Error</th></tr>
-{% for r in d.renders %}<tr><td>{{r.shot_id}}</td><td>{{r.attempt}}</td><td>{{r.renderer}}{% if r.workflow %} / {{r.workflow}}{% endif %}</td><td>{{r.profile}}</td><td>{{r.status}}</td><td>{{'%.1f'|format(r.duration_s) if r.duration_s else ''}}</td><td>{{r.error.message if r.error else ''}}</td></tr>{% else %}<tr><td colspan="7">No renders yet.</td></tr>{% endfor %}</table></div>
-<div class="grid">
-{% for kind in ['creative_brief','manifest','metadata','analysis','repair_plan'] %}{% if d.documents[kind] %}
-<div class="card"><h2>{{kind|replace('_',' ')|title}} (v{{d.documents[kind].version}}, {{d.documents[kind].created_by}})</h2><pre>{{d.documents[kind].data|pretty}}</pre></div>{% endif %}{% endfor %}
-{% if d.publications %}<div class="card"><h2>Publication</h2>{% for pub in d.publications %}<p>{{'Dry run' if pub.dry_run else 'Upload'}} · {{pub.status}}</p><pre>{{pub.request|pretty}}</pre>{% endfor %}</div>{% endif %}
+
+<div class="card" style="margin-bottom:16px">
+  {{ pipeline(steps) }}
+  {% if p.status in working %}<p class="hint" style="margin:8px 0 0">Working{% if d.next_job %}: next step is <b>{{ d.next_job|replace('_',' ') }}</b>{% endif %}. This page refreshes on its own.</p>{% endif %}
+  {% if p.status == 'FAILED' %}{% set lastfail = d.jobs|selectattr('error')|list|last %}<p class="bad" style="margin:8px 0 0">Stopped during {{ (p.failed_from_state or '')|replace('_',' ')|lower }}{% if lastfail %}: {{ lastfail.error.message }}{% endif %}. Fix the cause, then press Resume.</p>{% endif %}
+  {% if p.status == 'RIGHTS_PENDING' and d.rights %}<p class="warn" style="margin:8px 0 0">Waiting for your rights decision: {{ d.rights.reason }}</p>{% endif %}
 </div>
-<h2>Jobs</h2>
-<div class="table-wrap"><table><tr><th>Kind</th><th>Status</th><th>Retries</th><th>Duration</th><th>Error</th></tr>
-{% for j in d.jobs %}<tr><td>{{j.kind}}</td><td>{{j.status}}</td><td>{{j.retry_count}}/{{j.max_attempts}}</td><td>{{'%.1fs'|format(j.duration_s) if j.duration_s else ''}}</td><td>{{j.error.message if j.error else ''}}</td></tr>{% endfor %}</table></div>
-<h2>Audit trail</h2>
-<div class="table-wrap"><table><tr><th>Time</th><th>Event</th><th>Transition</th><th>Actor</th><th>Data</th></tr>
-{% for e in events %}<tr><td>{{e.created_at.strftime('%H:%M:%S')}}</td><td>{{e.type}}</td><td>{{e.from_state or ''}}{% if e.to_state %} → {{e.to_state}}{% endif %}</td><td>{{e.actor}}</td><td><small>{{e.data|tojson|truncate(160)}}</small></td></tr>{% endfor %}</table></div>
+
+<div class="grid2">
+<div class="stack">
+  {% if finals %}
+  <div class="card"><h2>Final video</h2>
+    <video controls preload="metadata" {% if thumbs %}poster="/projects/{{p.id}}/assets/{{thumbs[-1].id}}/file"{% endif %} src="/projects/{{p.id}}/assets/{{finals[-1].id}}/file"></video>
+    <div class="row" style="margin-top:10px"><a class="btn secondary" href="/projects/{{p.id}}/assets/{{finals[-1].id}}/file" download="{{p.name}}.mp4">Download</a>
+    <span class="hint">{{ '%.1f'|format(finals[-1].size_bytes / 1e6) if finals[-1].size_bytes else '' }} MB · data\{{ finals[-1].rel_path|replace('/','\\') }}</span></div>
+  </div>
+  {% endif %}
+
+  {% if docs.creative_brief %}{% set b = docs.creative_brief.data %}
+  <div class="card"><h2>Creative brief <span class="pill {{ 'info' if docs.creative_brief.created_by=='ollama' else '' }}">by {{ docs.creative_brief.created_by|replace('_',' ') }}</span></h2>
+    <dl class="kv"><dt>Style</dt><dd>{{ b.style }}</dd><dt>Prompt</dt><dd>{{ b.prompt }}</dd>
+    {% if b.character %}<dt>Character</dt><dd>{{ b.character }}</dd>{% endif %}
+    <dt>Look</dt><dd>{{ b.visual_identity }}</dd><dt>Avoid</dt><dd class="muted">{{ b.negative_prompt }}</dd>
+    <dt>Strength</dt><dd>style {{ b.style_strength }} · identity {{ b.identity_strength }} · motion {{ b.motion_preservation }}</dd></dl>
+    <h3>Shots</h3>
+    <ul class="shotlist">{% for s in b.shot_plan %}<li><b>{{ s.shot_id|replace('shot_','Shot ') }}</b> <span class="muted">{{ '%.1f'|format(s.start) }}–{{ '%.1f'|format(s.end) }} s · {{ s.motion_type }}</span>{% if s.intent %}<div>{{ s.intent }}</div>{% endif %}</li>{% endfor %}</ul>
+  </div>{% endif %}
+
+  {% if docs.qc_report %}{% set q = docs.qc_report.data %}
+  <div class="card"><h2>Quality check <span class="pill {{ 'ok' if q.decision=='PASS' else 'bad' }}">{{ q.decision|lower }}</span></h2>
+    <div class="table-wrap" style="border:0;box-shadow:none"><table><tr><th>Shot</th><th>Score</th><th>Temporal</th><th>Motion</th><th>Structure</th><th>Artifacts</th><th>Notes</th></tr>
+    {% for s in q.shots %}<tr><td>{{s.shot_id|replace('shot_','')}} <span class="muted">#{{s.attempt}}</span></td><td class="{{ 'ok' if s.decision=='PASS' else 'bad' }}"><b>{{s.overall}}</b></td><td>{{s.temporal_consistency}}</td><td>{{s.motion}}</td><td>{{s.structure}}</td><td>{{s.artifact_score}}</td><td class="muted">{{ (s.issues + s.recommendations)|join('; ') }}</td></tr>{% endfor %}</table></div>
+    {% if q.not_measured %}<p class="hint">Not measured yet: {% for k, v in q.not_measured.items() %}{{k}}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  </div>{% endif %}
+
+  <div class="card"><h2>Renders</h2>
+    <div class="table-wrap" style="border:0;box-shadow:none"><table><tr><th>Shot</th><th>Try</th><th>Renderer</th><th>Status</th><th>Time</th><th>Error</th></tr>
+    {% for r in d.renders %}<tr><td>{{r.shot_id|replace('shot_','')}}</td><td>{{r.attempt}}</td><td>{{r.renderer}}{% if r.workflow %} <span class="muted">{{r.workflow}}</span>{% endif %}</td><td><span class="pill {{ 'ok' if r.status=='succeeded' else ('bad' if r.status in ['failed','oom'] else 'info') }}">{{r.status}}</span></td><td>{{ '%.0f s'|format(r.duration_s) if r.duration_s else '' }}</td><td class="bad">{{ r.error.message if r.error else '' }}</td></tr>
+    {% else %}<tr><td colspan="6" class="empty">No renders yet.</td></tr>{% endfor %}</table></div>
+  </div>
+</div>
+
+<div class="stack">
+  {% if docs.metadata %}{% set m = docs.metadata.data %}
+  <div class="card"><h2>YouTube</h2>
+    {% for pub in uploaded %}<p class="flash ok" style="margin:0 0 12px">Uploaded ({{ pub.request.body.status.privacyStatus }}): <a href="{{ video_url(pub.youtube_video_id) }}" target="_blank" rel="noopener">{{ video_url(pub.youtube_video_id) }}</a></p>{% endfor %}
+    {% if m.warnings %}<div class="note">{{ m.warnings|join('; ') }}</div>{% endif %}
+    {% if p.status in ['READY_TO_PUBLISH','EDITING'] %}
+    <form method="post" action="/ui/projects/{{p.id}}/metadata">
+      <label for="title">Title <span class="muted">(by {{ docs.metadata.created_by|replace('channel_manager:','')|replace('_',' ') }})</span></label>
+      <input id="title" name="title" value="{{ m.title }}" maxlength="100" required>
+      <label for="description">Description</label>
+      <textarea id="description" name="description" rows="5">{{ m.description }}</textarea>
+      <label for="tags">Tags, comma separated</label>
+      <input id="tags" name="tags" value="{{ m.tags|join(', ') }}">
+      <p style="margin:10px 0 0"><button class="secondary">Save text</button></p>
+    </form>
+    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+    <form method="post" action="/ui/projects/{{p.id}}/publish" onsubmit="if(event.submitter && event.submitter.value==='upload'){return confirm('Upload this video to YouTube as ' + this.privacy.value + '?')}">
+      <label for="privacy">Visibility</label>
+      <select id="privacy" name="privacy">{% for pv in privacies %}<option value="{{pv}}">{{ pv|capitalize }}</option>{% endfor %}</select>
+      {% if publish_block %}<p class="hint warn">{{ publish_block }}</p>{% endif %}
+      <div class="row" style="margin-top:12px">
+        <button name="mode" value="upload" {% if publish_block %}disabled{% endif %}>Upload to YouTube</button>
+        <button name="mode" value="dry" class="secondary">Dry run</button>
+      </div>
+      <p class="hint">Dry run checks everything and shows the exact request without uploading.</p>
+    </form>
+    {% else %}
+    <dl class="kv"><dt>Title</dt><dd>{{ m.title }}</dd><dt>Tags</dt><dd>{{ m.tags|join(', ') }}</dd></dl>
+    <pre style="margin-top:10px">{{ m.description }}</pre>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if thumbs %}<div class="card"><h2>Thumbnail</h2><img class="shot" src="/projects/{{p.id}}/assets/{{thumbs[-1].id}}/file" alt="Thumbnail for {{p.name}}" style="max-height:320px;object-fit:contain"></div>{% endif %}
+
+  <div class="card"><h2>Source and rights</h2>
+    <dl class="kv">
+      <dt>File</dt><dd>{{ (d.source.local_path or d.source.url or '—') if d.source else '—' }}</dd>
+      {% if d.rights %}<dt>Rights</dt><dd><span class="pill {{ 'ok' if d.rights.status=='approved' else ('bad' if d.rights.status=='rejected' else 'warn') }}">{{ d.rights.category|replace('_',' ')|lower }} · {{ d.rights.status }}</span></dd>
+      {% if d.rights.permission_evidence %}<dt>Evidence</dt><dd>{{ d.rights.permission_evidence }}</dd>{% endif %}
+      <dt>Reason</dt><dd class="muted">{{ d.rights.reason }}</dd>{% endif %}
+      <dt>ID</dt><dd><code>{{ p.id }}</code></dd>
+    </dl>
+  </div>
+
+  {% if d.publications %}<div class="card"><h2>Publish history</h2>
+    {% for pub in d.publications|reverse %}<div class="row" style="justify-content:space-between;padding:4px 0"><span>{{ 'Dry run' if pub.dry_run else 'Upload' }} · {{ pub.request.body.status.privacyStatus }}</span><span class="pill {{ 'ok' if pub.status in ['uploaded','prepared'] else ('bad' if pub.status=='failed' else 'info') }}">{{ pub.status }}</span></div>
+    {% if pub.error %}<div class="hint bad">{{ pub.error.message }}</div>{% endif %}{% endfor %}
+    <details><summary>Latest request</summary><pre>{{ d.publications[-1].request|pretty }}</pre></details>
+  </div>{% endif %}
+</div>
+</div>
+
+<h2 style="margin-top:24px">Behind the scenes</h2>
+<div class="card">
+  {% for kind in ['analysis','manifest','repair_plan','creative_brief','metadata','qc_report'] %}{% if docs[kind] %}
+  <details><summary>{{ kind|replace('_',' ')|capitalize }} · v{{ docs[kind].version }} · {{ docs[kind].created_by }}</summary><pre>{{ docs[kind].data|pretty }}</pre></details>{% endif %}{% endfor %}
+  <details><summary>Jobs ({{ d.jobs|length }})</summary>
+    <div class="table-wrap" style="margin-top:8px"><table><tr><th>Kind</th><th>Status</th><th>Tries</th><th>Time</th><th>Error</th></tr>
+    {% for j in d.jobs %}<tr><td>{{j.kind}}</td><td>{{j.status|lower}}</td><td>{{j.retry_count}}/{{j.max_attempts}}</td><td>{{ '%.1f s'|format(j.duration_s) if j.duration_s else '' }}</td><td class="bad">{{ j.error.message if j.error else '' }}</td></tr>{% endfor %}</table></div>
+  </details>
+  <details><summary>Audit trail ({{ events|length }} events)</summary>
+    <div class="table-wrap" style="margin-top:8px"><table><tr><th>Time</th><th>Event</th><th>Change</th><th>By</th><th>Data</th></tr>
+    {% for e in events %}<tr><td class="muted">{{e.created_at.strftime('%H:%M:%S')}}</td><td>{{e.type|replace('_',' ')|lower}}</td><td>{{ (e.from_state or '')|lower }}{% if e.to_state %} → {{ e.to_state|lower }}{% endif %}</td><td>{{e.actor}}</td><td><small class="muted">{{e.data|tojson|truncate(140)}}</small></td></tr>{% endfor %}</table></div>
+  </details>
+</div>
 {% endblock %}

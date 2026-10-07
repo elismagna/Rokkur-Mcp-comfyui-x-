@@ -1,0 +1,18 @@
+{% macro status_pill(status) -%}
+<span class="pill {% if status in ['FAILED','RIGHTS_REJECTED','CANCELLED'] %}bad{% elif status in ['READY_TO_PUBLISH','PUBLISHED','MONITORING'] %}ok{% elif status=='RIGHTS_PENDING' %}warn{% elif status in working %}info{% endif %}">{{ status|replace('_',' ')|lower|capitalize }}</span>
+{%- endmacro %}
+
+{% macro pipeline(steps) -%}
+<div class="pipe" role="list">{% for s in steps %}<div class="st {{s.state}}" role="listitem" title="{{s.label}}: {{s.state}}"><div class="bar"></div><div class="lbl">{{s.label}}</div></div>{% endfor %}</div>
+{%- endmacro %}
+
+{% macro project_row(p, thumb=None) -%}
+<div class="row" style="flex-wrap:nowrap">
+  <div class="mini" {% if thumb %}style="background-image:url('{{thumb}}')"{% endif %}></div>
+  <div style="min-width:0;flex:1">
+    <a href="/ui/projects/{{p.id}}"><b>{{p.name}}</b></a> {{ status_pill(p.status) }}
+    <div class="progress" aria-hidden="true"><i style="width:{{ percent(p.status, p.failed_from_state) }}%"></i></div>
+    <div class="hint">{{p.render_profile}} · {{p.target_format|replace('youtube_','')}} · updated {{p.updated_at.strftime('%d %b %H:%M')}}</div>
+  </div>
+</div>
+{%- endmacro %}

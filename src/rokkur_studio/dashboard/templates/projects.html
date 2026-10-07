@@ -1,23 +1,20 @@
-{% extends "base.html" %}{% block body %}
-<h1>Projects</h1>
-<div class="table-wrap"><table><tr><th>Name</th><th>Status</th><th>Profile</th><th>Format</th><th>Created</th></tr>
-{% for p in projects %}<tr><td><a href="/ui/projects/{{p.id}}">{{p.name}}</a><br><small>{{p.id}}</small></td>
-<td><span class="pill {% if p.status in ['FAILED','RIGHTS_REJECTED'] %}bad{% elif p.status=='READY_TO_PUBLISH' %}ok{% elif p.status in working %}warn{% endif %}">{{p.status}}</span></td>
-<td>{{p.render_profile}}</td><td>{{p.target_format}}</td><td>{{p.created_at.strftime('%Y-%m-%d %H:%M')}}</td></tr>
-{% else %}<tr><td colspan="5">No projects yet.</td></tr>{% endfor %}</table></div>
-<h2>New project</h2>
-<form method="post" action="/ui/projects" class="card">
-<div class="grid"><div>
-<label>Name</label><input name="name" required>
-<label>Theme / style</label><input name="theme" required placeholder="1970s stop-motion sci-fi">
-<label>Prompt (optional)</label><input name="prompt">
-<label>Character reference image path (optional)</label><input name="character_reference_path">
-</div><div>
-<label>Source video path (readable by the worker)</label><input name="local_path" required>
-<label>Rights category</label><select name="rights_category">{% for c in categories %}<option {% if c=='USER_OWNED' %}selected{% endif %}>{{c}}</option>{% endfor %}</select>
-<label>Permission evidence (required for creator-provided / licensed)</label><input name="permission_evidence">
-<label>Render profile</label><select name="render_profile">{% for p in profiles %}<option {% if p==default_profile %}selected{% endif %}>{{p}}</option>{% endfor %}</select>
-<label>Format</label><select name="target_format"><option>youtube_short</option><option>youtube_video</option></select>
-<label><input type="checkbox" name="autostart" value="true" style="width:auto" checked> Start immediately</label>
-</div></div><p><button>Create project</button></p></form>
+{% extends "base.html" %}{% from "_macros.html" import status_pill %}
+{% block title %}Projects · Rökkur Studio{% endblock %}
+{% block body %}
+<div class="row" style="justify-content:space-between;margin-bottom:14px">
+  <div><h1>Projects</h1><p class="sub" style="margin:0">{{ projects|length }} shown</p></div>
+  <form method="get" class="row" style="flex-wrap:nowrap"><input type="hidden" name="group" value="{{group}}"><input name="q" value="{{q}}" placeholder="Search by name" aria-label="Search projects" style="width:220px"><button class="secondary">Search</button></form>
+</div>
+{% set labels = {'all':'All','working':'In progress','attention':'Needs you','ready':'Ready to publish','published':'Published','closed':'Closed'} %}
+<nav class="chips" aria-label="Filter">{% for g in groups %}<a class="{% if g==group %}on{% endif %}" href="/ui/projects?group={{g}}{% if q %}&q={{q|urlencode}}{% endif %}">{{ labels[g] }}</a>{% endfor %}</nav>
+<div class="table-wrap"><table>
+<tr><th></th><th>Name</th><th>Stage</th><th>Profile</th><th>Format</th><th>Created</th></tr>
+{% for p in projects %}<tr>
+<td style="width:52px"><div class="mini" {% if thumbs.get(p.id) %}style="background-image:url('{{thumbs[p.id]}}')"{% endif %}></div></td>
+<td><a href="/ui/projects/{{p.id}}"><b>{{p.name}}</b></a><div class="hint">{{p.creative_input.get('theme','')}}</div></td>
+<td style="min-width:150px">{{ status_pill(p.status) }}<div class="progress" aria-hidden="true"><i style="width:{{ percent(p.status, p.failed_from_state) }}%"></i></div></td>
+<td>{{p.render_profile}}</td><td>{{p.target_format|replace('youtube_','')}}</td>
+<td class="muted">{{p.created_at.strftime('%d %b %Y %H:%M')}}</td></tr>
+{% else %}<tr><td colspan="6" class="empty">No projects here. <a href="/ui/new">Make a new video</a>.</td></tr>{% endfor %}
+</table></div>
 {% endblock %}

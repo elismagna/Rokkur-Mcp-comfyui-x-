@@ -36,8 +36,17 @@ copy .env.example .env          # set POSTGRES_PASSWORD
 .\scripts\studio.ps1 smoke-test  # synthetic video → … → dry-run publish, with one forced repair
 ```
 
-Open http://127.0.0.1:8400/ui. Put source videos in `./media` and refer to them as
-`/media/<file>` when creating projects. See `docs/setup-windows.md`.
+Open http://127.0.0.1:8400/ui. The dashboard has:
+
+- **Overview**: what is rendering, what needs you, finished videos, and whether ComfyUI,
+  Ollama and YouTube are reachable.
+- **New video**: pick a clip from the `media` folder (or upload one), describe the look,
+  declare the rights, choose the quality, start.
+- **Project page**: pipeline progress, the final video, the model-written brief, QC scores,
+  and an editable title/description/tags with Dry run and Upload to YouTube buttons.
+- **YouTube**, **Agents** (with a one-click model check), **Queue**, **Approvals**, **System**.
+
+See `docs/setup-windows.md`.
 
 Or render straight from the command line (Windows):
 

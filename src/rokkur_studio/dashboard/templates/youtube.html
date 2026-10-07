@@ -1,0 +1,33 @@
+{% extends "base.html" %}{% block title %}YouTube · Rökkur Studio{% endblock %}{% block body %}
+<h1>YouTube</h1>
+<p class="sub">Uploads only happen when you press Upload on a finished video. They are private unless you choose otherwise.</p>
+
+<div class="grid">
+<div class="card"><h2>Connection</h2>
+  <table>
+    <tr><td><span class="dot {{ 'ok' if client_file else 'bad' }}"></span>Google OAuth client</td><td class="muted">{{ 'found' if client_file else 'missing: secrets\\youtube_client_secret.json' }}</td></tr>
+    <tr><td><span class="dot {{ 'ok' if signed_in else 'bad' }}"></span>Signed in</td><td class="muted">{{ 'yes' if signed_in else 'run .\\scripts\\studio.ps1 youtube-auth' }}</td></tr>
+    <tr><td><span class="dot {{ 'ok' if yt.enabled else '' }}"></span>Uploads</td><td class="muted">{{ 'on' if yt.enabled else 'off (STUDIO_YOUTUBE__ENABLED=true in .env)' }}</td></tr>
+    <tr><td><span class="dot"></span>Default visibility</td><td class="muted">{{ yt.default_privacy }}; public {{ 'allowed' if yt.allow_public else 'blocked' }}</td></tr>
+  </table>
+  {% if signed_in %}<form method="post" action="/ui/youtube/check" style="margin-top:12px"><button class="secondary">Check sign-in</button></form>{% endif %}
+  {% if not client_file %}<p class="hint">Setup takes about ten minutes; the steps are in <code>docs/youtube.md</code>.</p>{% endif %}
+</div>
+<div class="card"><h2>Today's quota</h2>
+  <div class="row" style="justify-content:space-between"><span>{{ '%.0f'|format(quota) }} of 10,000 units</span><span class="muted">≈ {{ ((10000 - quota) / 1650)|int }} uploads left</span></div>
+  <div class="meter" style="margin-top:8px"><i style="width:{{ [100, (quota / 100)|round|int]|min }}%"></i></div>
+  <p class="hint">An upload with thumbnail costs 1,650 units. Google resets the count at midnight Pacific time.</p>
+</div>
+</div>
+
+<h2 style="margin-top:24px">Ready to publish</h2>
+<div class="table-wrap"><table><tr><th>Video</th><th>Finished</th><th></th></tr>
+{% for p in ready %}<tr><td><a href="/ui/projects/{{p.id}}"><b>{{p.name}}</b></a></td><td class="muted">{{ p.updated_at.strftime('%d %b %H:%M') }}</td><td style="text-align:right"><a class="btn secondary" href="/ui/projects/{{p.id}}">Review and publish</a></td></tr>
+{% else %}<tr><td colspan="3" class="empty">No finished videos waiting.</td></tr>{% endfor %}</table></div>
+
+<h2 style="margin-top:24px">History</h2>
+<div class="table-wrap"><table><tr><th>When</th><th>Video</th><th>Type</th><th>Visibility</th><th>Result</th></tr>
+{% for pub, name in pubs %}<tr><td class="muted">{{ pub.created_at.strftime('%d %b %H:%M') }}</td><td><a href="/ui/projects/{{pub.project_id}}">{{name}}</a></td><td>{{ 'dry run' if pub.dry_run else 'upload' }}</td><td>{{ pub.request.body.status.privacyStatus }}</td>
+<td>{% if pub.youtube_video_id %}<a href="{{ video_url(pub.youtube_video_id) }}" target="_blank" rel="noopener">watch</a>{% else %}<span class="pill {{ 'bad' if pub.status=='failed' else '' }}">{{ pub.status }}</span>{% endif %}{% if pub.error %} <span class="hint bad">{{ pub.error.message }}</span>{% endif %}</td></tr>
+{% else %}<tr><td colspan="5" class="empty">Nothing published yet.</td></tr>{% endfor %}</table></div>
+{% endblock %}

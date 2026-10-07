@@ -16,6 +16,7 @@ ResourceClass = Literal["GPU_LIGHT", "GPU_MEDIUM", "GPU_HEAVY"]
 class StudioSection(BaseModel):
     autonomy_level: int = Field(2, ge=0, le=4)
     data_dir: Path = Path("data")
+    media_dir: Path = Path("media")  # source videos you own; /media inside Docker
     log_level: str = "INFO"
     log_json: bool = True
 

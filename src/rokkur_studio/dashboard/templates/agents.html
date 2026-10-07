@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% block title %}Agents · Rökkur Studio{% endblock %}{% block body %}
+<h1>Agents</h1>
+<p class="sub">Two agents use a language model: the Creative Director writes each video's brief and the Channel Manager writes its title, description and tags. If the model is unavailable they fall back to built-in rules, so a render never waits on it.</p>
+
+<div class="grid">
+<div class="card"><h2>Model</h2>
+  <dl class="kv">
+    <dt>Provider</dt><dd>{{ settings.agents.provider }}{% if settings.agents.provider != 'ollama' %} <span class="warn">(set STUDIO_AGENTS__PROVIDER=ollama in .env to use the model)</span>{% endif %}</dd>
+    <dt>Model</dt><dd>{{ settings.ollama.model }}</dd>
+    <dt>Ollama</dt><dd>{% if installed is none %}<span class="bad">not reachable at {{ settings.ollama.url }}</span>{% else %}<span class="ok">reachable</span>{% endif %}</dd>
+    {% if installed is not none %}<dt>Installed</dt><dd>{% for m in installed %}<span class="pill {{ 'info' if m == settings.ollama.model else '' }}">{{m}}</span> {% endfor %}</dd>
+    <dt>In memory</dt><dd>{% for m in loaded %}<span class="pill ok">{{m}}</span> {% else %}<span class="muted">none (loads on the first request)</span>{% endfor %}</dd>{% endif %}
+    <dt>VRAM</dt><dd class="muted">ComfyUI is asked to free the GPU before each agent call{{ '' if settings.gpu.free_comfyui_before_agents else ' (off)' }}; Ollama is unloaded before each render.</dd>
+  </dl>
+</div>
+<div class="card"><h2>Test the agents</h2>
+  <form method="post" action="/ui/agents/check">
+    <label for="theme">Theme to try</label>
+    <input id="theme" name="theme" placeholder="1970s stop-motion claymation, warm film grain">
+    <p style="margin:12px 0 0"><button>Run check</button> <span class="hint">takes about 10–30 seconds</span></p>
+  </form>
+  {% if check_output %}<pre style="margin-top:12px">{{ check_output }}</pre>{% endif %}
+</div>
+</div>
+
+<h2 style="margin-top:24px">Recent briefs</h2>
+<div class="table-wrap"><table><tr><th>When</th><th>Video</th><th>Written by</th></tr>
+{% for pid, actor, at, name in briefs %}<tr><td class="muted">{{ at.strftime('%d %b %H:%M') }}</td><td><a href="/ui/projects/{{pid}}">{{name}}</a></td><td><span class="pill {{ 'info' if actor=='ollama' else '' }}">{{ actor|replace('_',' ') }}</span></td></tr>
+{% else %}<tr><td colspan="3" class="empty">No briefs yet.</td></tr>{% endfor %}</table></div>
+{% endblock %}

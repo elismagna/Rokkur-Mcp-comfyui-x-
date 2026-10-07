@@ -12,6 +12,7 @@ x-studio: &studio
   environment:
     DATABASE_URL: postgresql+psycopg://rokkur:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/rokkur
     STUDIO_STUDIO__DATA_DIR: /app/data
+    STUDIO_STUDIO__MEDIA_DIR: /media
   volumes:
     - ./data:/app/data
     - ${STUDIO_MEDIA_DIR:-./media}:/media:ro
