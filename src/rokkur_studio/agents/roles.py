@@ -32,7 +32,8 @@ class CreativeDirector:
     instructions = (
         "Turn the creative input and the source analysis into a production brief. Keep the "
         "shot boundaries from the analysis; describe style, theme, prompt strategy, identity "
-        "and background requirements."
+        "and background requirements. Give every shot in shot_plan a one-sentence intent "
+        "describing what that shot should look like in the new style."
     )
 
     def __init__(self, provider: AgentProvider) -> None:

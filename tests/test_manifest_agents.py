@@ -234,3 +234,27 @@ def test_before_generate_failure_does_not_block_the_agent():
     provider = OllamaProvider("http://o", "m", transport=ollama_transport([good]),
                               before_generate=boom)
     assert isinstance(provider.generate("r", "x", {}, CreativeBrief), CreativeBrief)
+
+
+def test_ollama_format_has_no_length_caps_but_output_is_still_validated():
+    from rokkur_studio.agents.providers import grammar_schema
+    from rokkur_studio.agents.schemas import MetadataDraft
+
+    sent = json.dumps(grammar_schema(MetadataDraft.model_json_schema()))
+    assert "maxLength" not in sent and "minLength" not in sent and "maxItems" not in sent
+    too_long = json.dumps({"title": "t" * 150, "description": "d", "tags": []})
+    ok = json.dumps({"title": "Fine", "description": "d", "tags": []})
+    calls = []
+    provider = OllamaProvider("http://o", "m", transport=ollama_transport([too_long, ok], calls))
+    assert provider.generate("r", "x", {}, MetadataDraft).title == "Fine" and len(calls) == 2
+
+
+def test_ollama_http_error_includes_body():
+    import httpx
+
+    def handle(request):
+        return httpx.Response(400, json={"error": "bad grammar"})
+
+    provider = OllamaProvider("http://o", "m", transport=httpx.MockTransport(handle))
+    with pytest.raises(AgentUnavailable, match="bad grammar"):
+        provider.generate("r", "x", {}, CreativeBrief)

@@ -49,6 +49,20 @@ class RuleBasedProvider:
         raise AgentUnavailable("rule_based provider has no generative model")
 
 
+# Ollama compiles ``format`` into a llama.cpp grammar. String length bounds expand into one
+# grammar rule per character (a 2000-char maxLength is rejected with HTTP 400), so length and
+# item-count caps are left out of the grammar and enforced by pydantic validation instead.
+_GRAMMAR_UNSAFE = {"minLength", "maxLength", "maxItems"}
+
+
+def grammar_schema(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        return {k: grammar_schema(v) for k, v in schema.items() if k not in _GRAMMAR_UNSAFE}
+    if isinstance(schema, list):
+        return [grammar_schema(v) for v in schema]
+    return schema
+
+
 class OllamaProvider:
     name = "ollama"
 
@@ -81,11 +95,14 @@ class OllamaProvider:
                 # thinking before a 200-token JSON answer; older Ollama ignores the key.
                 r = self.http.post("/api/chat", json={
                     "model": self.model, "messages": messages, "stream": False, "think": False,
-                    "format": schema.model_json_schema(), "options": {"temperature": 0.2},
+                    "format": grammar_schema(schema.model_json_schema()),
+                    "options": {"temperature": 0.2},
                 })
-                r.raise_for_status()
             except httpx.HTTPError as exc:
                 raise AgentUnavailable(f"Ollama request failed: {exc}") from exc
+            if r.status_code != 200:
+                raise AgentUnavailable(
+                    f"Ollama returned {r.status_code} for {role}: {r.text[:300]}")
             last_raw = (r.json().get("message") or {}).get("content", "")
             try:
                 return schema.model_validate_json(last_raw)
