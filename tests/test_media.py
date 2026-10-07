@@ -76,3 +76,12 @@ def test_qc_summary_reports_unmeasured_metrics_as_null():
                        "motion": 9, "temporal_consistency": 9, "structure": 9, "detail": 9,
                        "artifact_score": 0}], 6.5)
     assert s["decision"] == "PASS" and s["identity"] is None and "identity" in s["not_measured"]
+
+
+def test_qc_structure_ignores_relighting_but_catches_a_different_layout(ffmpeg, sample_video):
+    frames = ffmpeg.read_gray_frames(sample_video, 64, 64, fps=12)
+    relit = 255 - frames  # same edges, every tone changed: what a strong restyle can do
+    assert qc.score_shot(frames, relit, threshold=6.5, shot_id="s")["structure"] > 9
+    moved = frames.transpose(0, 2, 1)  # bars turned sideways: the layout no longer matches
+    r = qc.score_shot(frames, moved, threshold=6.5, shot_id="s")
+    assert r["structure"] < 5 and any("layout drift" in i for i in r["issues"])

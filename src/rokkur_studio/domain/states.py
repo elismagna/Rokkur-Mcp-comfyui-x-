@@ -55,7 +55,9 @@ _EDGES: dict[ProjectStatus, set[ProjectStatus]] = {
     S.RENDER_QUEUED: {S.RENDERING},
     S.RENDERING: {S.QUALITY_CHECK, S.RENDER_QUEUED},
     S.QUALITY_CHECK: {S.QUALITY_PASSED, S.QUALITY_FAILED},
-    S.QUALITY_FAILED: {S.REPAIRING},
+    # QUALITY_PASSED from QUALITY_FAILED is a human keeping renders QC rejected (gated on a
+    # PASS report that records the override).
+    S.QUALITY_FAILED: {S.REPAIRING, S.QUALITY_PASSED},
     S.REPAIRING: {S.RENDER_QUEUED, S.QUALITY_CHECK},
     S.QUALITY_PASSED: {S.EDITING},
     S.EDITING: {S.READY_TO_PUBLISH},

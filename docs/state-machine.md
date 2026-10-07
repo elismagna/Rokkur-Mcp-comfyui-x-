@@ -22,7 +22,22 @@ any non-terminal ─► FAILED (resumable) | CANCELLED (terminal)
 |---|---|
 | `RIGHTS_OK` | an approved rights decision on record |
 | `DOWNLOADED_OR_INGESTED` | approved rights |
+| `QUALITY_PASSED` | latest QC report `PASS` |
 | `PUBLISHING` | approved rights and latest QC report `PASS` (and the project at `READY_TO_PUBLISH`) |
+
+## Repair limit
+
+`repair` fails the project once `render.max_retries` rounds have not fixed QC, and opens a
+`repair_budget` approval. Plain Resume is refused there, because it would stop again at once.
+A human picks the way out (project page, Approvals, or the API):
+
+- **More repair rounds** (`POST /projects/{id}/repair-more`, or approving the request): records
+  `REPAIR_BUDGET_EXTENDED` with the rounds granted and resumes at `QUALITY_FAILED`.
+- **Check quality again** (`POST /projects/{id}/recheck-quality`): resumes at
+  `QUALITY_CHECK` and scores the current renders without rendering, for when QC itself changed.
+- **Keep the renders** (`POST /projects/{id}/keep-renders`): saves a new QC report version
+  marked `PASS` with an `override` block (who, when, which shots QC failed), records
+  `QC_OVERRIDDEN` and moves `QUALITY_FAILED → QUALITY_PASSED`, the only edge that skips QC.
 
 ## Stage jobs
 

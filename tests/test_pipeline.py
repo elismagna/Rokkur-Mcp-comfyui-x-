@@ -6,16 +6,23 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from rokkur_studio.api.schemas import CreativeIn, ProjectCreate, RightsIn, SourceIn
 from rokkur_studio.comfyui.client import ComfyClient
 from rokkur_studio.db.models import ApprovalRequest, Event, GpuLease, Job, Render
 from rokkur_studio.domain.rights import RightsCategory
+from rokkur_studio.domain.states import InvalidTransition, ProjectStatus
 from rokkur_studio.jobs.worker import Worker
 from rokkur_studio.pipeline.renderers import FFmpegPreviewRenderer, RenderOOM, RenderUnavailable
 from rokkur_studio.services import commands, publishing
-from rokkur_studio.services.projects import get_project, latest_document
+from rokkur_studio.services.projects import (
+    at_repair_limit,
+    failure_reason,
+    get_project,
+    latest_document,
+    transition,
+)
 from tests.fakes import FakeComfyUI
 
 
@@ -102,6 +109,65 @@ def test_repair_budget_stops_infinite_loops(ctx, sample_video):
     with ctx.db.session() as s:
         assert s.scalar(select(ApprovalRequest.kind).where(ApprovalRequest.project_id == pid)) \
             == "repair_budget"
+
+
+def test_repair_limit_is_extended_by_approval_or_overridden_by_keeping(ctx, sample_video):
+    ctx.settings.render.max_retries = 1
+    pid = create(ctx, sample_video,
+                 test_faults={"shot_002": {"kind": "black", "attempts": [1, 2, 3]}})
+    run(ctx)
+    assert status(ctx, pid) == "FAILED"
+    with ctx.db.transaction() as s:
+        project = get_project(s, pid, for_update=True)
+        assert at_repair_limit(project)
+        assert failure_reason(s, project) == "repair budget exhausted"
+        with pytest.raises(InvalidTransition, match="repair limit"):
+            commands.resume_project(s, project, ctx.settings)
+        with pytest.raises(ValueError, match="between 1 and 10"):
+            commands.repair_more(s, project, ctx.settings, actor="elis", rounds=11)
+        commands.recheck_quality(s, project, ctx.settings, actor="elis")
+        assert project.status == "QUALITY_CHECK"
+    run(ctx)  # QC scores the same renders again: still black, so it stops at the limit again
+    assert status(ctx, pid) == "FAILED"
+    with ctx.db.transaction() as s:
+        project = get_project(s, pid, for_update=True)
+        assert s.scalar(select(func.count(Render.id)).where(Render.project_id == pid,
+                                                            Render.shot_id == "shot_002")) == 2
+        req = s.scalars(select(ApprovalRequest).where(ApprovalRequest.project_id == pid,
+                                                      ApprovalRequest.status == "pending")).one()
+        commands.decide_approval(s, req, ctx.settings, approve=True, decided_by="elis",
+                                 note=None)
+        assert req.status == "approved" and req.note == "1 more repair rounds"
+        assert project.status == "QUALITY_FAILED"
+    run(ctx)  # round 2 renders attempt 3, which is black again
+    assert status(ctx, pid) == "FAILED"
+    with ctx.db.transaction() as s:
+        project = get_project(s, pid, for_update=True)
+        assert project.repair_rounds == 2 and at_repair_limit(project)
+        commands.keep_renders(s, project, ctx.settings, actor="elis", note="looks fine")
+        assert project.status == "QUALITY_PASSED"
+        qc = latest_document(s, pid, "qc_report").data
+        assert qc["decision"] == "PASS"
+        assert qc["override"]["by"] == "elis" and qc["override"]["failed_shots"] == ["shot_002"]
+        assert all(r.status == "approved" for r in s.scalars(
+            select(ApprovalRequest).where(ApprovalRequest.project_id == pid)))
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+    ev = events(ctx, pid)
+    assert ev.count("REPAIR_BUDGET_EXHAUSTED") == 3
+    assert "REPAIR_BUDGET_EXTENDED" in ev and "QC_OVERRIDDEN" in ev
+    with ctx.db.transaction() as s, pytest.raises(InvalidTransition, match="repair limit"):
+        commands.keep_renders(s, get_project(s, pid, for_update=True), ctx.settings,
+                              actor="elis")
+
+
+def test_failure_message_comes_from_the_failed_transition(ctx, sample_video):
+    pid = create(ctx, sample_video, autostart=False)
+    with ctx.db.transaction() as s:
+        project = get_project(s, pid, for_update=True)
+        transition(s, project, ProjectStatus.FAILED, actor="t", reason="the real cause")
+        assert failure_reason(s, project) == "the real cause"
+        assert not at_repair_limit(project)
 
 
 def test_unknown_rights_block_until_a_human_approves(ctx, sample_video):

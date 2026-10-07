@@ -34,6 +34,27 @@ def _ncc(a: np.ndarray, b: np.ndarray) -> float:
     return float((a * b).sum() / denom) if denom > 1e-6 else 0.0
 
 
+def _edge_maps(frames: np.ndarray) -> np.ndarray:
+    """Gradient magnitude per frame, box-blurred 3x3 so a one-pixel shift still overlaps.
+
+    Tone-blind: a restyle that relights or recolours the scene keeps its edges, and the Wan
+    VACE workflow is driven by the source's Canny edges.
+    """
+    f = frames.astype(np.float32)
+    gx = np.zeros_like(f)
+    gy = np.zeros_like(f)
+    gx[:, :, 1:-1] = f[:, :, 2:] - f[:, :, :-2]
+    gy[:, 1:-1, :] = f[:, 2:, :] - f[:, :-2, :]
+    mag = np.hypot(gx, gy)
+    pad = np.pad(mag, ((0, 0), (1, 1), (1, 1)), mode="edge")
+    h, w = mag.shape[1:]
+    blurred = np.zeros_like(mag)
+    for i in range(3):
+        for j in range(3):
+            blurred += pad[:, i:i + h, j:j + w]
+    return blurred / 9.0
+
+
 def _sharpness(frames: np.ndarray) -> float:
     f = frames.astype(np.float32)
     lap = (f[:, 1:-1, 1:-1] * 4 - f[:, :-2, 1:-1] - f[:, 2:, 1:-1] - f[:, 1:-1, :-2]
@@ -68,8 +89,10 @@ def score_shot(source: np.ndarray, render: np.ndarray, *, threshold: float,
     still = float(dr.mean() if len(dr) else 0) < 3
     motion = (10.0 if still else 6.0) if c is None else 10.0 * max(0.0, c)
 
-    # Structure preservation: per-frame correlation with the source layout.
-    structure = 10.0 * max(0.0, float(np.mean([_ncc(a, b) for a, b in zip(src, out, strict=True)])))
+    # Structure preservation: per-frame correlation of edge maps with the source. Brightness
+    # is not compared: a restyle may relight the scene and keep the layout exactly.
+    structure = 10.0 * max(0.0, float(np.mean([
+        _ncc(a, b) for a, b in zip(_edge_maps(src), _edge_maps(out), strict=True)])))
 
     black = [int(i + frame_offset) for i, f in enumerate(out) if f.mean() < 8]
     failed = sorted(set(failed) | set(black))

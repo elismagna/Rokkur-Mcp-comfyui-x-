@@ -17,7 +17,7 @@
     {% if p.status in ['DISCOVERED','SCORED'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/start"><button>Start</button></form>{% endif %}
     {% if p.status == 'RIGHTS_PENDING' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/approve-rights"><button>Approve rights</button></form>
     <form class="inline" method="post" action="/ui/projects/{{p.id}}/reject-rights"><button class="secondary">Reject</button></form>{% endif %}
-    {% if p.status == 'FAILED' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/resume"><button>Resume</button></form>{% endif %}
+    {% if p.status == 'FAILED' and not repair_limit %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/resume"><button>Resume</button></form>{% endif %}
     {% if p.status not in ['ARCHIVED','CANCELLED','RIGHTS_REJECTED','PUBLISHED','MONITORING'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/cancel" onsubmit="return confirm('Cancel this project? Running jobs stop.')"><button class="secondary">Cancel</button></form>{% endif %}
   </div>
 </div>
@@ -25,7 +25,14 @@
 <div class="card" style="margin-bottom:16px">
   {{ pipeline(steps) }}
   {% if p.status in working %}<p class="hint" style="margin:8px 0 0">Working{% if d.next_job %}: next step is <b>{{ d.next_job|replace('_',' ') }}</b>{% endif %}. This page refreshes on its own.</p>{% endif %}
-  {% if p.status == 'FAILED' %}{% set lastfail = d.jobs|selectattr('error')|list|last %}<p class="bad" style="margin:8px 0 0">Stopped during {{ (p.failed_from_state or '')|replace('_',' ')|lower }}{% if lastfail %}: {{ lastfail.error.message }}{% endif %}. Fix the cause, then press Resume.</p>{% endif %}
+  {% if repair_limit %}{% set q = docs.qc_report.data if docs.qc_report else {} %}
+  <p class="bad" style="margin:8px 0 0">Stopped after {{ p.repair_rounds }} repair round{{ '' if p.repair_rounds == 1 else 's' }}: the quality check still fails on {{ (q.failed_shots or [])|map('replace','shot_','')|join(', ') or 'some shots' }}. Look at the renders below, then repair again or keep them as they are.</p>
+  <div class="row" style="margin-top:8px">
+    <form class="inline" method="post" action="/ui/projects/{{p.id}}/repair-more"><button>Try {{ settings.render.max_retries }} more repairs</button></form>
+    <form class="inline" method="post" action="/ui/projects/{{p.id}}/recheck-quality"><button class="secondary" title="Scores the current renders again without rendering. Useful after the quality check itself changed.">Check quality again</button></form>
+    <form class="inline" method="post" action="/ui/projects/{{p.id}}/keep-renders" onsubmit="return confirm('Keep these renders and finish the video from them? The quality check result is recorded as overridden by you.')"><button class="secondary">Keep these renders</button></form>
+  </div>
+  {% elif p.status == 'FAILED' %}<p class="bad" style="margin:8px 0 0">Stopped during {{ (p.failed_from_state or '')|replace('_',' ')|lower }}{% if failure %}: {{ failure }}{% endif %}. Fix the cause, then press Resume.</p>{% endif %}
   {% if p.status == 'RIGHTS_PENDING' and d.rights %}<p class="warn" style="margin:8px 0 0">Waiting for your rights decision: {{ d.rights.reason }}</p>{% endif %}
 </div>
 
@@ -72,7 +79,8 @@
   </div>{% endif %}
 
   {% if docs.qc_report %}{% set q = docs.qc_report.data %}
-  <div class="card"><h2>Quality check <span class="pill {{ 'ok' if q.decision=='PASS' else 'bad' }}">{{ q.decision|lower }}</span></h2>
+  <div class="card"><h2>Quality check <span class="pill {{ 'ok' if q.decision=='PASS' else 'bad' }}">{{ q.decision|lower }}</span>{% if q.override %} <span class="pill warn">kept by {{ q.override.by }}</span>{% endif %}</h2>
+    {% if q.override %}<p class="hint" style="margin-top:0">The check failed on {{ q.override.failed_shots|map('replace','shot_','')|join(', ') }}; these renders were kept anyway.</p>{% endif %}
     <div class="table-wrap" style="border:0;box-shadow:none"><table><tr><th>Shot</th><th>Score</th><th>Temporal</th><th>Motion</th><th>Structure</th><th>Artifacts</th><th>Notes</th></tr>
     {% for s in q.shots %}<tr><td>{{s.shot_id|replace('shot_','')}} <span class="muted">#{{s.attempt}}</span></td><td class="{{ 'ok' if s.decision=='PASS' else 'bad' }}"><b>{{s.overall}}</b></td><td>{{s.temporal_consistency}}</td><td>{{s.motion}}</td><td>{{s.structure}}</td><td>{{s.artifact_score}}</td><td class="muted">{{ (s.issues + s.recommendations)|join('; ') }}</td></tr>{% endfor %}</table></div>
     {% if q.not_measured %}<p class="hint">Not measured yet: {% for k, v in q.not_measured.items() %}{{k}}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}

@@ -141,3 +141,25 @@ def test_new_video_with_a_tracker_character(ctx, settings, sample_video):
     run(ctx)
     page = c.get(f"/ui/projects/{pid}").text
     assert "<b>NEO</b>" in page and "tattered black hooded jacket" in page
+
+
+def test_repair_limit_page_offers_more_repairs_or_keeping_the_renders(ctx, sample_video):
+    ctx.settings.render.max_retries = 1
+    c = client_for(ctx)
+    pid = create(ctx, sample_video,
+                 test_faults={"shot_002": {"kind": "black", "attempts": [1, 2, 3]}})
+    run(ctx)
+    assert status(ctx, pid) == "FAILED"
+    page = c.get(f"/ui/projects/{pid}").text
+    assert "Stopped after 1 repair round" in page and "fails on 002" in page
+    assert "Keep these renders" in page and "Try 1 more repairs" in page
+    assert "Check quality again" in page
+    assert ">Resume<" not in page
+    assert "Repair 1 more times" in c.get("/ui/approvals").text
+    r = c.post(f"/ui/projects/{pid}/resume", follow_redirects=False)
+    assert "repair+limit" in r.headers["location"] or "repair%20limit" in r.headers["location"]
+    c.post(f"/ui/projects/{pid}/keep-renders")
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+    page = c.get(f"/ui/projects/{pid}").text
+    assert "kept by dashboard" in page and "these renders were kept anyway" in page

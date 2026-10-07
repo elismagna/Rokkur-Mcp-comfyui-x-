@@ -139,6 +139,39 @@ def resume_project(project_id: str, ctx: Ctx, session: Db) -> Project:
     return project
 
 
+@router.post("/{project_id}/repair-more", response_model=ProjectOut,
+             summary="Allow more repair rounds for a project stopped at the repair limit")
+def repair_more(project_id: str, ctx: Ctx, session: Db, rounds: int | None = None) -> Project:
+    project = _project(session, project_id, for_update=True)
+    try:
+        commands.repair_more(session, project, ctx.settings, actor="api", rounds=rounds)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return project
+
+
+@router.post("/{project_id}/recheck-quality", response_model=ProjectOut,
+             summary="Run the quality check again on the current renders, rendering nothing")
+def recheck_quality(project_id: str, ctx: Ctx, session: Db) -> Project:
+    project = _project(session, project_id, for_update=True)
+    try:
+        commands.recheck_quality(session, project, ctx.settings, actor="api")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return project
+
+
+@router.post("/{project_id}/keep-renders", response_model=ProjectOut,
+             summary="Keep the renders QC rejected and finish the video from them")
+def keep_renders(project_id: str, ctx: Ctx, session: Db, note: str | None = None) -> Project:
+    project = _project(session, project_id, for_update=True)
+    try:
+        commands.keep_renders(session, project, ctx.settings, actor="api", note=note)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return project
+
+
 @router.post("/{project_id}/rights", response_model=ProjectOut,
              summary="Record a human rights decision for a project awaiting one")
 def decide_rights(project_id: str, body: RightsDecisionIn, ctx: Ctx, session: Db) -> Project:

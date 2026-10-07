@@ -65,7 +65,10 @@ duration, status, error, retry_count`; every log line inside a job carries the s
 - `repair` asks the Repair Planner for parameter changes for the **failing shots only**,
   writes a new manifest version, supersedes those renders and sends the project back to
   `RENDER_QUEUED`. `render.max_retries` bounds the rounds; exhausting it fails the project
-  and opens an approval request.
+  and opens an approval request. A human then grants more rounds or keeps the renders
+  (see `docs/state-machine.md`, Repair limit).
+- QC structure compares edge maps, not brightness: a restyle may relight the whole scene and
+  still keep the source layout, which is what the Canny-driven Wan workflow preserves.
 - CUDA OOM never retries identical work: each OOM applies the next step of the profile's
   `degrade` ladder (clear cache → fewer frames → lower resolution → offload → lighter profile)
   and escalates when the ladder is exhausted.

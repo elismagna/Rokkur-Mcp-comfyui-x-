@@ -15,11 +15,14 @@ from rokkur_studio.jobs.queue import cancel_project_jobs
 from rokkur_studio.pipeline.driver import advance
 from rokkur_studio.services.events import EventType, record_event
 from rokkur_studio.services.projects import (
+    at_repair_limit,
     create_source,
     get_project,
+    latest_document,
     latest_rights,
     record_rights,
     resume,
+    save_document,
     transition,
 )
 
@@ -72,7 +75,75 @@ def cancel(session: Session, project: Project, actor: str = "api") -> int:
 
 def resume_project(session: Session, project: Project, settings: Settings,
                    actor: str = "api") -> Job | None:
+    if at_repair_limit(project):
+        # Resuming would re-enter repair and stop again at once: a human picks the way out.
+        raise InvalidTransition(S.FAILED, S.QUALITY_FAILED,
+                                "stopped at the repair limit: allow more repair rounds or keep "
+                                "the current renders")
     resume(session, project, actor=actor)
+    return advance(session, project, settings, manual=True)
+
+
+def _close_repair_requests(session: Session, project: Project, *, decided_by: str,
+                           note: str) -> None:
+    for req in session.query(ApprovalRequest).filter_by(project_id=project.id,
+                                                        kind="repair_budget", status="pending"):
+        req.status = "approved"
+        req.decided_by, req.decided_at, req.note = decided_by, utcnow(), note
+
+
+def repair_more(session: Session, project: Project, settings: Settings, *, actor: str,
+                rounds: int | None = None) -> Job | None:
+    """Grant more repair rounds to a project stopped at the repair limit, and resume it."""
+    if not at_repair_limit(project):
+        raise InvalidTransition(S(project.status), S.QUALITY_FAILED,
+                                "project is not stopped at the repair limit")
+    rounds = rounds or settings.render.max_retries
+    if not 1 <= rounds <= 10:
+        raise ValueError("grant between 1 and 10 repair rounds")
+    record_event(session, EventType.REPAIR_BUDGET_EXTENDED, project_id=project.id, actor=actor,
+                 data={"rounds": rounds, "after": project.repair_rounds})
+    _close_repair_requests(session, project, decided_by=actor,
+                           note=f"{rounds} more repair rounds")
+    resume(session, project, actor=actor)
+    return advance(session, project, settings, manual=True)
+
+
+def recheck_quality(session: Session, project: Project, settings: Settings, *,
+                    actor: str) -> Job | None:
+    """Score the current renders again without rendering, e.g. after QC itself changed."""
+    if not at_repair_limit(project):
+        raise InvalidTransition(S(project.status), S.QUALITY_CHECK,
+                                "project is not stopped at the repair limit")
+    _close_repair_requests(session, project, decided_by=actor, note="quality check run again")
+    resume(session, project, actor=actor, at=S.QUALITY_CHECK)
+    return advance(session, project, settings, manual=True)
+
+
+def keep_renders(session: Session, project: Project, settings: Settings, *, actor: str,
+                 note: str | None = None) -> Job | None:
+    """A human keeps the renders QC rejected: the video is edited from them as they are.
+
+    The override is a new QC report version marked PASS that names who decided and what QC
+    measured, so the QUALITY_PASSED and publish gates see a recorded human decision.
+    """
+    if not at_repair_limit(project):
+        raise InvalidTransition(S(project.status), S.QUALITY_PASSED,
+                                "only a project stopped at the repair limit can keep its renders")
+    qc = latest_document(session, project.id, "qc_report")
+    if qc is None:
+        raise InvalidTransition(S.FAILED, S.QUALITY_PASSED, "no QC report to override")
+    override = {"by": actor, "at": utcnow().isoformat(), "note": note,
+                "qc_decision": qc.data.get("decision"),
+                "failed_shots": qc.data.get("failed_shots", []), "qc_version": qc.version}
+    save_document(session, project.id, "qc_report",
+                  {**qc.data, "decision": "PASS", "override": override}, created_by=actor)
+    record_event(session, EventType.QC_OVERRIDDEN, project_id=project.id, actor=actor,
+                 data=override)
+    _close_repair_requests(session, project, decided_by=actor, note="kept the current renders")
+    resume(session, project, actor=actor)
+    transition(session, project, S.QUALITY_PASSED, actor=actor,
+               reason="renders kept by a human despite QC")
     return advance(session, project, settings, manual=True)
 
 
@@ -109,6 +180,15 @@ def decide_approval(session: Session, request: ApprovalRequest, settings: Settin
     if request.kind == "publish" and approve:
         # Approving uploads the video; that needs the YouTube client (publishing.approve_proposal).
         raise ValueError("a publish request is approved through publishing.approve_proposal")
+    if request.kind == "repair_budget" and approve and request.project_id:
+        project = get_project(session, request.project_id, for_update=True)
+        if not at_repair_limit(project):
+            raise ValueError("the project is no longer stopped at the repair limit; reject this "
+                             "request to clear it")
+        repair_more(session, project, settings, actor=decided_by)
+        record_event(session, EventType.APPROVAL_DECIDED, project_id=request.project_id,
+                     actor=decided_by, data={"kind": request.kind, "approve": True, "note": note})
+        return request
     if request.kind == "rights_ambiguity" and request.project_id:
         project = get_project(session, request.project_id, for_update=True)
         decide_rights(session, project, settings, approve=approve, decided_by=decided_by,

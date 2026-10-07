@@ -55,6 +55,7 @@ from rokkur_studio.services.projects import (
     get_project,
     latest_document,
     latest_rights,
+    repair_budget,
     save_document,
     transition,
 )
@@ -607,7 +608,8 @@ def repair(ctx: StudioContext, job: Job) -> dict[str, Any]:
         qc_doc = latest_document(s, pid, "qc_report")
         assert qc_doc is not None
         report = qc_doc.data
-    if project.repair_rounds >= ctx.settings.render.max_retries:
+        budget = repair_budget(s, pid, ctx.settings.render.max_retries)
+    if project.repair_rounds >= budget:
         with ctx.db.transaction() as s:
             p = get_project(s, pid, for_update=True)
             record_event(s, EventType.REPAIR_BUDGET_EXHAUSTED, project_id=pid, actor="repair",

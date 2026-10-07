@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from rokkur_studio.db.models import Document, Project, RightsDecision, Source
+from rokkur_studio.db.models import Document, Event, Project, RightsDecision, Source
 from rokkur_studio.domain.rights import RightsStatus
 from rokkur_studio.domain.states import (
     RESUMABLE,
@@ -102,7 +102,7 @@ def _check_gates(session: Session, project: Project, target: ProjectStatus) -> N
         session, project.id
     ):
         raise GateViolation(S(project.status), target, "rights are not approved")
-    if target is S.PUBLISHING:
+    if target in (S.QUALITY_PASSED, S.PUBLISHING):
         qc = latest_document(session, project.id, "qc_report")
         if qc is None or qc.data.get("decision") != "PASS":
             raise GateViolation(S(project.status), target, "latest QC report did not pass")
@@ -147,15 +147,45 @@ def transition(
     return project
 
 
-def resume(session: Session, project: Project, *, actor: str) -> Project:
-    """Return a FAILED project to the state it failed in, so its stage job can run again."""
+def failure_reason(session: Session, project: Project) -> str | None:
+    """Why the project last went to FAILED, from the audit log (not the latest job error)."""
+    event = session.scalars(
+        select(Event)
+        .where(Event.project_id == project.id, Event.type == EventType.STATE_CHANGED,
+               Event.to_state == S.FAILED.value)
+        .order_by(Event.id.desc())
+        .limit(1)
+    ).one_or_none()
+    return event.data.get("reason") if event is not None else None
+
+
+def repair_budget(session: Session, project_id: str, base: int) -> int:
+    """Repair rounds allowed: the configured budget plus rounds a human granted since."""
+    extra = session.scalars(
+        select(Event.data).where(Event.project_id == project_id,
+                                 Event.type == EventType.REPAIR_BUDGET_EXTENDED)
+    ).all()
+    return base + sum(int(d.get("rounds", 0)) for d in extra)
+
+
+def at_repair_limit(project: Project) -> bool:
+    """FAILED because QC kept failing after the last allowed repair round."""
+    return project.status == S.FAILED and project.failed_from_state == S.REPAIRING.value
+
+
+def resume(session: Session, project: Project, *, actor: str,
+           at: ProjectStatus | None = None) -> Project:
+    """Return a FAILED project to the state it failed in, so its stage job can run again.
+
+    ``at`` restarts at another state instead (re-running QC on the current renders).
+    """
     if project.status != S.FAILED:
         raise InvalidTransition(S(project.status), S(project.status), "only FAILED projects resume")
     previous = S(project.failed_from_state) if project.failed_from_state else None
     if previous is None or previous not in RESUMABLE:
         raise InvalidTransition(S.FAILED, previous or S.FAILED, "no resumable state recorded")
     # In-progress states are re-entered at the state that schedules their job.
-    restart = _RESTART_FROM.get(previous, previous)
+    restart = at or _RESTART_FROM.get(previous, previous)
     project.status = restart.value
     project.failed_from_state = None
     record_event(

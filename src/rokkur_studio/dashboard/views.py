@@ -55,7 +55,13 @@ from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.domain.states import ProjectStatus as S
 from rokkur_studio.pipeline.context import StudioContext
 from rokkur_studio.services import commands, publishing
-from rokkur_studio.services.projects import get_project, latest_document, save_document
+from rokkur_studio.services.projects import (
+    at_repair_limit,
+    failure_reason,
+    get_project,
+    latest_document,
+    save_document,
+)
 from rokkur_studio.youtube.client import YouTubeError, video_url
 from rokkur_studio.youtube.oauth import OAuthError
 
@@ -333,8 +339,11 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
     next_slot = (publishing.next_release_slot(session, ctx.settings, for_project=project_id)
                  if project.status == S.READY_TO_PUBLISH else None)
     proposals = publishing.pending_proposals(session, project_id)
+    failed = project.status == S.FAILED
     return _page(request, "project.html", ctx, d=detail, p=project, events=events,
                  keyframes=keyframes,
+                 failure=failure_reason(session, project) if failed else None,
+                 repair_limit=at_repair_limit(project),
                  steps=stage_progress(project.status, project.failed_from_state),
                  publish_block=publish_block,
                  schedule_block=None if yt.allow_public else (
@@ -426,6 +435,12 @@ def project_action(project_id: str, action: str, ctx: Ctx, session: Db) -> Redir
             commands.cancel(session, project, actor="dashboard")
         elif action == "resume":
             commands.resume_project(session, project, ctx.settings, actor="dashboard")
+        elif action == "repair-more":
+            commands.repair_more(session, project, ctx.settings, actor="dashboard")
+        elif action == "recheck-quality":
+            commands.recheck_quality(session, project, ctx.settings, actor="dashboard")
+        elif action == "keep-renders":
+            commands.keep_renders(session, project, ctx.settings, actor="dashboard")
         elif action in ("approve-rights", "reject-rights"):
             commands.decide_rights(session, project, ctx.settings,
                                    approve=action == "approve-rights", decided_by="dashboard",
@@ -435,6 +450,9 @@ def project_action(project_id: str, action: str, ctx: Ctx, session: Db) -> Redir
     except ValueError as exc:
         return _back(url, err=str(exc))
     return _back(url, msg={"start": "Started", "cancel": "Cancelled", "resume": "Resumed",
+                           "repair-more": "Repairing again",
+                           "recheck-quality": "Checking quality again",
+                           "keep-renders": "Kept the renders; the video is being edited",
                            "approve-rights": "Rights approved",
                            "reject-rights": "Rights rejected"}[action])
 
@@ -482,6 +500,8 @@ def decide_approval(approval_id: str, decision: str, ctx: Ctx, session: Db) -> R
                                  decided_by="dashboard", note="decided in dashboard")
     except ValueError as exc:
         return _back("/ui/approvals", err=str(exc))
+    if req.kind == "repair_budget" and decision == "approve":
+        return _back("/ui/approvals", msg="Repairing again")
     return _back("/ui/approvals", msg=f"{'Approved' if decision == 'approve' else 'Rejected'}")
 
 
