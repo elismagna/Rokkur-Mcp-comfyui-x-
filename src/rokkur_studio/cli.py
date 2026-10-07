@@ -1,4 +1,5 @@
-"""``rokkur-studio`` command line: migrate, api, worker, comfy-check, audit, smoke-test."""
+"""``rokkur-studio`` command line: migrate, api, worker, comfy-check, agent-check, audit,
+smoke-test, render."""
 
 from __future__ import annotations
 
@@ -143,6 +144,69 @@ def _try(fn: Any) -> Any:
         return fn()
     except Exception as exc:  # audit reports every failure instead of stopping
         return {"error": str(exc)}
+
+
+# A tiny two-shot analysis so agent-check exercises the real schemas without a video.
+_SAMPLE_ANALYSIS: dict[str, Any] = {
+    "duration": 4.0, "fps": 24.0, "width": 576, "height": 1024, "source_asset": "sample.mp4",
+    "shots": [{"shot_id": "shot_001", "start": 0.0, "end": 2.0, "motion_type": "moderate",
+               "camera": "handheld"},
+              {"shot_id": "shot_002", "start": 2.0, "end": 4.0, "motion_type": "gentle",
+               "camera": "static"}],
+}
+
+
+def run_agent_check(settings: Settings, *, theme: str,
+                    transport: httpx.BaseTransport | None = None) -> int:
+    """Prove the configured Ollama model answers the agent roles with valid JSON."""
+    from rokkur_studio.agents.providers import AgentOutputError, OllamaProvider
+    from rokkur_studio.agents.roles import ChannelManager, CreativeDirector
+
+    provider = OllamaProvider(settings.ollama.url, settings.ollama.model,
+                              max_retries=settings.agents.max_output_retries, transport=transport)
+    problem = provider.check()
+    if problem:
+        print(f"[FAIL] {problem}")
+        return 1
+    print(f"Ollama reachable at {settings.ollama.url}; model {settings.ollama.model} installed")
+    if settings.agents.provider != "ollama":
+        print(f"note: agents.provider is '{settings.agents.provider}'; the pipeline will not use "
+              "Ollama until config/studio.yaml says agents.provider: ollama")
+    ok = True
+    creative_input = {"theme": theme, "prompt": theme}
+    t0 = time.monotonic()
+    try:
+        brief, by = CreativeDirector(provider).run(creative_input, _SAMPLE_ANALYSIS,
+                                                   "youtube_short")
+    except AgentOutputError as exc:
+        print(f"[FAIL] creative_director: {exc}")
+        return 1
+    dt = time.monotonic() - t0
+    if by != "ollama":
+        print(f"[FAIL] creative_director fell back to rules after {dt:.1f}s (see log)")
+        ok = False
+    else:
+        print(f"[ok] creative_director answered in {dt:.1f}s")
+        print(f"     style: {brief.style}")
+        print(f"     prompt: {brief.prompt[:160]}")
+        for shot in brief.shot_plan:
+            print(f"     {shot.shot_id} {shot.start:.1f}-{shot.end:.1f}s: {shot.intent[:90]}")
+    t0 = time.monotonic()
+    draft, by = ChannelManager(provider).run(creative_input, brief.model_dump(), "youtube_short",
+                                             _SAMPLE_ANALYSIS["duration"])
+    dt = time.monotonic() - t0
+    if draft is None:
+        print(f"[FAIL] channel_manager fell back to rules after {dt:.1f}s (see log)")
+        ok = False
+    else:
+        print(f"[ok] channel_manager answered in {dt:.1f}s")
+        print(f"     title: {draft.title}")
+        print(f"     tags: {', '.join(draft.tags)}")
+    return 0 if ok else 1
+
+
+def cmd_agent_check(args: argparse.Namespace) -> int:
+    return run_agent_check(_settings(args), theme=args.theme)
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
@@ -298,6 +362,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("comfy-check", help="validate ComfyUI + templates").set_defaults(
         func=cmd_comfy_check)
     sub.add_parser("audit", help="inspect the local environment").set_defaults(func=cmd_audit)
+    p = sub.add_parser("agent-check", help="ask the Ollama agents for a brief and metadata")
+    p.add_argument("--theme", default="1970s stop-motion claymation, warm film grain")
+    p.set_defaults(func=cmd_agent_check)
     sub.add_parser("youtube-auth", help="(Phase 6)").set_defaults(func=cmd_youtube_auth)
     p = sub.add_parser("smoke-test", help="run the end-to-end fixture")
     p.add_argument("--renderer", choices=["ffmpeg_preview", "comfyui"])

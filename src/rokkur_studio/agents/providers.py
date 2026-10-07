@@ -67,8 +67,10 @@ class OllamaProvider:
         last_raw: str | None = None
         for attempt in range(self.max_retries + 1):
             try:
+                # ``think: false`` keeps reasoning models (qwen3.x) from spending minutes
+                # thinking before a 200-token JSON answer; older Ollama ignores the key.
                 r = self.http.post("/api/chat", json={
-                    "model": self.model, "messages": messages, "stream": False,
+                    "model": self.model, "messages": messages, "stream": False, "think": False,
                     "format": schema.model_json_schema(), "options": {"temperature": 0.2},
                 })
                 r.raise_for_status()
@@ -85,6 +87,22 @@ class OllamaProvider:
                               f"{exc.errors()[:5]}. Return corrected JSON only."}]
         raise AgentOutputError(role, f"invalid output after {self.max_retries + 1} attempts",
                                last_raw)
+
+    def installed_models(self) -> list[str]:
+        r = self.http.get("/api/tags")
+        r.raise_for_status()
+        return [m["name"] for m in r.json().get("models", [])]
+
+    def check(self) -> str | None:
+        """None when Ollama answers and the model is installed, else the reason."""
+        try:
+            names = self.installed_models()
+        except httpx.HTTPError as exc:
+            return f"Ollama not reachable: {exc}"
+        if self.model not in names and f"{self.model}:latest" not in names:
+            return (f"model {self.model!r} is not installed (have: {', '.join(names) or 'none'});"
+                    f" run: ollama pull {self.model}")
+        return None
 
     def loaded_models(self) -> list[str]:
         r = self.http.get("/api/ps")

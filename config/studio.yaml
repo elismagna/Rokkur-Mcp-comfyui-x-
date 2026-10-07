@@ -35,7 +35,7 @@ youtube:
   default_privacy: private
 
 agents:
-  provider: rule_based       # rule_based | ollama | rokkur_collective
+  provider: ollama           # rule_based | ollama | rokkur_collective; falls back to rules if Ollama is down
   max_per_project: 8
   max_output_retries: 2
 

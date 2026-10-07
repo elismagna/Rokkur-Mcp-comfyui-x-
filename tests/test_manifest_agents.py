@@ -130,3 +130,64 @@ def test_fit_within_gives_sizes_video_models_accept():
     # 360x640 source into the PREVIEW box used to give 320x568, which Wan rejects.
     w, h = fit_within(360, 640, 320, 576)
     assert (w % 16, h % 16) == (0, 0) and h <= 576
+
+
+def test_creative_director_falls_back_to_rules_on_bad_model_output():
+    provider = OllamaProvider("http://o", "m", max_retries=0,
+                              transport=ollama_transport(["not json"]))
+    b, by = CreativeDirector(provider).run({"theme": "t"}, ANALYSIS, "youtube_short")
+    assert by == "rule_based" and len(b.shot_plan) == 2
+
+
+def test_channel_manager_drafts_metadata_and_rule_based_skips():
+    from rokkur_studio.agents.roles import ChannelManager
+
+    assert ChannelManager(RuleBasedProvider()).run({}, {}, "youtube_short", 4) == (None, "rule_based")
+    reply = json.dumps({"title": "Clay walk", "description": "A walk, in clay.",
+                        "tags": ["Clay", "walk"]})
+    calls = []
+    provider = OllamaProvider("http://o", "m", transport=ollama_transport([reply], calls))
+    draft, by = ChannelManager(provider).run({"theme": "clay"}, brief().model_dump(),
+                                             "youtube_short", 4.0)
+    assert by == "ollama" and draft is not None and draft.title == "Clay walk"
+    assert calls[0]["think"] is False and calls[0]["format"]["title"] == "MetadataDraft"
+
+
+def test_ollama_check_reports_missing_model():
+    import httpx
+
+    def handle(request):
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen3.5:9b"}]})
+        return httpx.Response(404)
+
+    assert OllamaProvider("http://o", "qwen3.5:9b", transport=httpx.MockTransport(handle)
+                          ).check() is None
+    assert "ollama pull other" in (OllamaProvider("http://o", "other",
+                                                  transport=httpx.MockTransport(handle)).check()
+                                   or "")
+    assert "not reachable" in (OllamaProvider("http://o", "x", transport=httpx.MockTransport(
+        lambda r: httpx.Response(500))).check() or "")
+
+
+def test_agent_check_runs_both_roles(capsys):
+    import httpx
+
+    from rokkur_studio.cli import run_agent_check
+    from rokkur_studio.config import load_settings
+
+    replies = [brief().model_dump_json(),
+               json.dumps({"title": "Test", "description": "D", "tags": ["a"]})]
+
+    def handle(request):
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen3.5:9b"}]})
+        if request.url.path == "/api/chat":
+            return httpx.Response(200, json={"message": {"content": replies.pop(0)}})
+        return httpx.Response(404)
+
+    settings = load_settings(None)
+    settings.ollama.model = "qwen3.5:9b"
+    assert run_agent_check(settings, theme="t", transport=httpx.MockTransport(handle)) == 0
+    out = capsys.readouterr().out
+    assert "[ok] creative_director" in out and "[ok] channel_manager" in out

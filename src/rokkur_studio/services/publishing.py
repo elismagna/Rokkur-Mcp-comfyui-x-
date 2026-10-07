@@ -60,6 +60,24 @@ def draft_metadata(project: Project, brief: dict[str, Any], rights: RightsDecisi
     }
 
 
+def apply_draft(meta: dict[str, Any], draft: dict[str, Any], *, target_format: str,
+                rights: RightsDecision | None) -> dict[str, Any]:
+    """Overlay a model-written draft on rule-based metadata, keeping the parts policy fixes."""
+    title = _clean(draft.get("title") or meta["title"])
+    if target_format == "youtube_short" and "#shorts" not in title.lower():
+        title = f"{title} #shorts"
+    lines = [_clean(line) for line in (draft.get("description") or "").splitlines()]
+    body = "\n".join(line for line in lines if line) or meta["description"].split("\n")[0]
+    lines = [body, "", "Made with AI-assisted video generation (Rökkur Studio)."]
+    if rights is not None and rights.attribution_required and rights.attribution_text:
+        lines += ["", f"Source: {rights.attribution_text}"]
+    tags = list(dict.fromkeys(_clean(t).lower() for t in draft.get("tags") or [] if _clean(t)))
+    out = {**meta, "title": title, "description": "\n".join(lines), "tags": tags or meta["tags"]}
+    if validate_metadata(out):
+        return meta  # a draft that breaks YouTube's limits is dropped, not trimmed blindly
+    return out
+
+
 def validate_metadata(meta: dict[str, Any]) -> list[str]:
     errors = []
     if not meta.get("title"):

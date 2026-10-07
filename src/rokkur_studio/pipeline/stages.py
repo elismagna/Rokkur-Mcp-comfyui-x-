@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from rokkur_studio.agents.roles import CreativeDirector, RepairPlanner
+from rokkur_studio.agents.roles import ChannelManager, CreativeDirector, RepairPlanner
 from rokkur_studio.agents.schemas import CreativeBrief
 from rokkur_studio.comfyui.compiler import TemplateError, compile_workflow
 from rokkur_studio.db.models import (
@@ -616,16 +616,23 @@ def edit(ctx: StudioContext, job: Job) -> dict[str, Any]:
                                          seconds=min(4.0, info.duration))
     except FFmpegError as exc:
         raise JobError("ffmpeg_failed", str(exc), exc.to_dict()) from exc
+    with ctx.db.session() as s:
+        brief = latest_document(s, pid, "creative_brief")
+        brief_data = brief.data if brief else {}
+    # Model call (can take a minute on a 9B model) stays outside the DB transaction.
+    draft, drafted_by = ChannelManager(ctx.provider).run(project.creative_input, brief_data,
+                                                         project.target_format, info.duration)
     with ctx.db.transaction() as s:
         p = get_project(s, pid, for_update=True)
         final_asset = register_asset(s, ctx.store, pid, "final", final, {"probe": info.to_dict()})
         thumb_asset = register_asset(s, ctx.store, pid, "thumbnail", thumb)
         register_asset(s, ctx.store, pid, "preview", preview)
-        brief = latest_document(s, pid, "creative_brief")
         rights = latest_rights(s, pid)
-        metadata = publishing.draft_metadata(p, brief.data if brief else {}, rights,
-                                             duration=info.duration)
-        save_document(s, pid, "metadata", metadata, created_by="channel_manager")
+        metadata = publishing.draft_metadata(p, brief_data, rights, duration=info.duration)
+        if draft is not None:
+            metadata = publishing.apply_draft(metadata, draft.model_dump(),
+                                              target_format=p.target_format, rights=rights)
+        save_document(s, pid, "metadata", metadata, created_by=f"channel_manager:{drafted_by}")
         record_event(s, EventType.FINAL_ENCODED, project_id=pid, actor="editor", job_id=job.id,
                      data={"final": final_asset.rel_path, "thumbnail": thumb_asset.rel_path,
                            "duration": info.duration, "warnings": metadata["warnings"]})

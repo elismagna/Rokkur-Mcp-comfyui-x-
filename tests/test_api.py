@@ -103,3 +103,18 @@ def test_metadata_validation_and_scheduling_rules():
     assert len(errors) == 3
     with pytest.raises(PublishGateError, match="private"):
         build_insert_request(meta, privacy="public", publish_at=datetime.now(UTC))
+
+
+def test_apply_draft_keeps_policy_parts():
+    from rokkur_studio.services import publishing
+
+    base = {"title": "x #shorts", "description": "x.\n\nMade with AI", "tags": ["x"],
+            "made_for_kids": False, "contains_synthetic_media": True}
+    out = publishing.apply_draft(base, {"title": "A <b> walk", "description": "Nice.\n\nhttp://x",
+                                        "tags": ["Clay ", "clay", ""]},
+                                 target_format="youtube_short", rights=None)
+    assert out["title"] == "A b walk #shorts" and out["tags"] == ["clay"]
+    assert "Rökkur Studio" in out["description"] and out["made_for_kids"] is False
+    too_long = publishing.apply_draft(base, {"title": "t" * 100}, target_format="youtube_short",
+                                      rights=None)
+    assert too_long == base  # a draft over YouTube's title limit is dropped

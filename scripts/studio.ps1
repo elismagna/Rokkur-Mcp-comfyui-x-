@@ -2,7 +2,7 @@
 .SYNOPSIS
   Windows equivalent of the Makefile. Usage: .\scripts\studio.ps1 <command>
   Commands: up, down, logs, test, migrate, studio, worker, comfy-check, youtube-auth,
-            smoke-test, audit, lint, build, install-models, comfy-render, render
+            smoke-test, audit, lint, build, install-models, comfy-render, render, agent-check
   render: .\scripts\studio.ps1 render myclip.mp4 --theme "1970s claymation" --rights USER_OWNED --evidence "I filmed it"
           (the file must be in the media folder; extra options are passed to rokkur-studio render)
 #>
@@ -26,6 +26,7 @@ switch ($Command) {
   "studio"       { Compose up -d api }
   "worker"       { Compose up -d worker }
   "comfy-check"  { InApi comfy-check }
+  "agent-check"  { InApi agent-check @Rest }
   "youtube-auth" { InApi youtube-auth }
   "smoke-test"   { InApi smoke-test --inject-fault }
   "comfy-render" { InApi smoke-test --renderer comfyui --profile PREVIEW --timeout 3600 }

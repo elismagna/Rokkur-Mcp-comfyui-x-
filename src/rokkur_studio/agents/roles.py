@@ -6,8 +6,19 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from rokkur_studio.agents.providers import AgentProvider, AgentUnavailable, RuleBasedProvider
-from rokkur_studio.agents.schemas import CreativeBrief, RepairAction, RepairPlan, ShotPlan
+from rokkur_studio.agents.providers import (
+    AgentOutputError,
+    AgentProvider,
+    AgentUnavailable,
+    RuleBasedProvider,
+)
+from rokkur_studio.agents.schemas import (
+    CreativeBrief,
+    MetadataDraft,
+    RepairAction,
+    RepairPlan,
+    ShotPlan,
+)
 
 log = logging.getLogger(__name__)
 
@@ -43,8 +54,10 @@ class CreativeDirector:
                                        strict=False)]
                 brief.target_duration = analysis["duration"]
                 return brief, self.provider.name
-            except AgentUnavailable:
-                log.warning("creative director provider unavailable; using rules")
+            except (AgentUnavailable, AgentOutputError) as exc:
+                # A model that is down or keeps returning bad JSON must not stall a render.
+                log.warning("creative director falling back to rules", extra={"data": {
+                    "reason": str(exc)}})
         return self._rules(creative_input, analysis, target_format, shots), "rule_based"
 
     @staticmethod
@@ -74,6 +87,43 @@ class CreativeDirector:
             shot_plan=shots,
             rationale="rule-based brief derived from user creative input and shot analysis",
         )
+
+
+class ChannelManager:
+    """Writes the YouTube title, description and tags for a finished video.
+
+    The LLM only drafts wording; ``services.publishing`` adds the fixed parts (``#shorts``,
+    AI disclosure, source attribution) and validates lengths, so a model cannot drop them.
+    """
+
+    role = "channel_manager"
+    instructions = (
+        "Write YouTube metadata for a short AI-stylised video made from the described source. "
+        "Title: under 70 characters, specific, no clickbait, no emoji, no hashtags. Description: "
+        "two or three plain sentences about what the viewer sees and the style, no links, no "
+        "hashtags, no mention of being made for kids. Tags: 5 to 12 short lowercase phrases."
+    )
+
+    def __init__(self, provider: AgentProvider) -> None:
+        self.provider = provider
+
+    def run(self, creative_input: dict[str, Any], brief: dict[str, Any],
+            target_format: str, duration: float) -> tuple[MetadataDraft | None, str]:
+        """None means: no model, use the rule-based metadata unchanged."""
+        if isinstance(self.provider, RuleBasedProvider):
+            return None, "rule_based"
+        try:
+            draft = self.provider.generate(self.role, self.instructions, {
+                "creative_input": creative_input,
+                "brief": {k: brief.get(k) for k in ("theme", "style", "prompt", "character",
+                                                    "visual_identity")},
+                "target_format": target_format, "duration_seconds": round(duration, 1),
+            }, MetadataDraft)
+        except (AgentUnavailable, AgentOutputError) as exc:
+            log.warning("channel manager falling back to rules", extra={"data": {
+                "reason": str(exc)}})
+            return None, "rule_based"
+        return draft, self.provider.name
 
 
 class RepairPlanner:

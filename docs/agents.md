@@ -8,8 +8,8 @@ a Pydantic schema (`agents/schemas.py`), and deterministic facts override model 
 
 | Provider | Status |
 |---|---|
-| `rule_based` (default) | Deterministic logic, no model, always available |
-| `ollama` | `/api/chat` with the output schema as `format`; invalid JSON is fed back and retried `agents.max_output_retries` times, then the job fails recoverably |
+| `rule_based` | Deterministic logic, no model, always available |
+| `ollama` (default in `config/studio.yaml`) | `/api/chat` with the output schema as `format` and `think: false`; invalid JSON is fed back and retried `agents.max_output_retries` times. If Ollama is down or still returns bad JSON, the role falls back to its rule-based logic and logs why, so a render never stalls on the model. `rokkur-studio agent-check` proves the configured model answers both roles. |
 | `rokkur_collective` | Refuses to run: the Collective's API has not been audited. Implement `RokkurCollectiveProvider.generate()` once its interface is known |
 
 ## Roles
@@ -23,6 +23,6 @@ a Pydantic schema (`agents/schemas.py`), and deterministic facts override model 
 | Repair Planner | Rule-based mapping from QC recommendations to minimal parameter changes |
 | Rights Agent | Deterministic gate; `RightsAssessment` schema ready for an advisory model |
 | Scout, Trend Analyst | Schemas only (`TrendScore`); Phase 5 |
-| Channel Manager | Drafts publication metadata; comments/analytics are Phases 7–8 |
+| Channel Manager | Rule-based or Ollama → `MetadataDraft` (title/description/tags). `services.publishing.apply_draft` re-adds `#shorts`, the AI disclosure and source attribution and drops any draft over YouTube's limits; comments/analytics are Phases 7–8 |
 
 `agents.max_per_project` is reserved for when roles run as concurrent agents.

@@ -40,6 +40,15 @@ class CreativeBrief(BaseModel):
     rationale: str = ""
 
 
+class MetadataDraft(BaseModel):
+    """Channel Manager output: YouTube title/description/tags for one video."""
+
+    title: str = Field(min_length=3, max_length=100)
+    description: str = Field(min_length=1, max_length=2000)
+    tags: list[str] = Field(default_factory=list, max_length=15)
+    rationale: str = ""
+
+
 class TrendScore(BaseModel):
     """Trend Analyst output for one candidate (0..1 each)."""
 
