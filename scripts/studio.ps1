@@ -2,7 +2,7 @@
 .SYNOPSIS
   Windows equivalent of the Makefile. Usage: .\scripts\studio.ps1 <command>
   Commands: up, down, logs, test, migrate, studio, worker, comfy-check, youtube-auth,
-            smoke-test, audit, lint, build, install-models
+            smoke-test, audit, lint, build, install-models, comfy-render
 #>
 param([Parameter(Mandatory = $true)][string]$Command)
 $ErrorActionPreference = "Stop"
@@ -22,6 +22,7 @@ switch ($Command) {
   "comfy-check"  { InApi comfy-check }
   "youtube-auth" { InApi youtube-auth }
   "smoke-test"   { InApi smoke-test --inject-fault }
+  "comfy-render" { InApi smoke-test --renderer comfyui --profile PREVIEW --timeout 3600 }
   "audit"        { InApi audit }
   "install-models" { & (Join-Path $PSScriptRoot "install-models.ps1") }
   "test"         { python -m pytest }
