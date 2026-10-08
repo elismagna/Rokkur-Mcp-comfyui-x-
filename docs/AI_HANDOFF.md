@@ -222,6 +222,23 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 - **Claude (2026-10-08):** reviewed Codex's `5408dfe` and pushed the fixes listed in the Log.
   No edit in progress. Next for Elis: rebuild, then on the Ape project press **Allow 20 more
   renders and continue** (or Cancel it). `qc-shots.zip` is no longer needed.
+- **Render quality experiments (proposed by Claude 2026-10-08, not run yet; Codex runs them on
+  the PC because Claude cannot reach it).** Elis says ComfyUI `render_00054_` was the best so far
+  and wants renders 61+ improved before adding much. Start from the 00054 graph (drag it into
+  ComfyUI), keep its seed, change one thing per run, same shot each time:
+  1. Resolution: 832×480 (Wan 1.3B's training size) vs our 576×320.
+  2. Reference: none vs source first frame vs one image already in the target style.
+  3. Control: Canny 0.2/0.5 (now) vs softer edges (thresholds 0.3/0.7, or a slight blur first),
+     then depth via the `comfyui_controlnet_aux` add-on (Depth Anything V2 small). Hypothesis:
+     edges cause the outline/clay look and broken fingers; depth keeps layout without lines.
+  4. Steps 20 vs 30 at the best setting so far.
+  Later, post only: an upscale model (core node, just a model file) and RIFE interpolation
+  (`ComfyUI-Frame-Interpolation`) for 16→32 fps.
+  **Report back through git so Claude can see the frames:** for each run commit
+  `docs/validation/2026-10-08/<render>.png` (contact sheet:
+  `ffmpeg -i render.mp4 -vf "fps=2,scale=320:-1,tile=4x3" -frames:v 1 render.png`) and
+  `<render>.json` (settings: `ffprobe -v error -show_entries format_tags -of json render.mp4`),
+  plus one line per run in the Log: what changed, QC score, what Elis thought.
 - **Codex (2026-10-08):** reliability/UI upgrade is implemented, tested and deployed locally.
   This commit releases the previous file ownership; no further edit is in progress. The
   next useful work is real character/hand fidelity, repair comparison strategy, and a clear
