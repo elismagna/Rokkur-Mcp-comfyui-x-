@@ -232,6 +232,11 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
      then depth via the `comfyui_controlnet_aux` add-on (Depth Anything V2 small). Hypothesis:
      edges cause the outline/clay look and broken fingers; depth keeps layout without lines.
   4. Steps 20 vs 30 at the best setting so far.
+  5. Elis (renders 62/63): the room looks great (new tiles, towels) but the ape looks bad.
+     Try keeping the real ape and restyling only the room: per-frame ape mask from SAM 2
+     (segmentation add-on) into WanVaceToVideo's `control_masks` (white = regenerate the
+     room, black = keep the source ape). Waiting on Elis's choice: keep the real ape, or
+     restyle it too (depth guide + styled ape reference + precise subject prompt).
   Later, post only: an upscale model (core node, just a model file) and RIFE interpolation
   (`ComfyUI-Frame-Interpolation`) for 16→32 fps.
   **Report back through git so Claude can see the frames:** for each run commit
