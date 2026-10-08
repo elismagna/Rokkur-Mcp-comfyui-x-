@@ -229,8 +229,10 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   1. Resolution: 832×480 (Wan 1.3B's training size) vs our 576×320.
   2. Reference: none vs source first frame vs one image already in the target style.
   3. Control: Canny 0.2/0.5 (now) vs softer edges (thresholds 0.3/0.7, or a slight blur first),
-     then depth via the `comfyui_controlnet_aux` add-on (Depth Anything V2 small). Hypothesis:
-     edges cause the outline/clay look and broken fingers; depth keeps layout without lines.
+     then depth: Elis installed `comfyui_controlnet_aux`, and profile `RTX3070_DEPTH`
+     (workflow `v2v_3070_depth`, Depth Anything V2 Small) now does this from the studio.
+     Hypothesis: edges cause the outline/clay look and broken fingers; depth keeps layout
+     without lines.
   4. Steps 20 vs 30 at the best setting so far.
   5. Elis (renders 62/63): the room looks great (new tiles, towels) but the ape looks bad.
      Try keeping the real ape and restyling only the room: per-frame ape mask from SAM 2
@@ -252,6 +254,9 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-08 Claude: `RTX3070_DEPTH` profile and `v2v_3070_depth` workflow (Depth Anything V2
+  Small via `comfyui_controlnet_aux` as the VACE guide instead of Canny). Tested here only by
+  compile/validation tests; not yet run on the PC. Run `comfy-check` first.
 - 2026-10-08 Claude: review of `5408dfe` (220 tests pass, ruff/mypy clean; dashboard script
   checked in Chromium). Added **Allow more renders** for projects stopped at the render budget
   (`BUDGET_EXTENDED`; Resume refused while still over). QC: frozen render of a low-motion source

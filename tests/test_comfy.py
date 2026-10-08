@@ -166,3 +166,35 @@ def test_validate_skips_inputs_filled_at_render_time():
     info = {cls: {"input": {"required": {k: [[]] if k == "file" else ["INT"] for k in node["inputs"]}}}
             for cls, node in ((n["class_type"], n) for n in t.workflow.values())}
     assert validate_against_object_info(t, info) == []
+
+
+def test_depth_workflow_matches_the_canny_one_except_the_control_node():
+    canny = TemplateRegistry(WF).get("v2v_3070_quality")
+    depth = TemplateRegistry(WF).get("v2v_3070_depth")
+    assert set(depth.spec.parameters) == set(canny.spec.parameters) | {"DEPTH_MODEL"}
+    assert {k: v for k, v in depth.workflow.items() if k != "13"} == \
+        {k: v for k, v in canny.workflow.items() if k != "13"}
+    node = depth.workflow["13"]
+    assert node["class_type"] == "DepthAnythingV2Preprocessor"
+    # Small is the only Depth Anything V2 size licensed for commercial use (Apache-2.0).
+    assert node["inputs"]["ckpt_name"] == "depth_anything_v2_vits.pth"
+    compiled = compile_workflow(depth, {"STYLE_PROMPT": "clay", "INPUT_VIDEO": "clip.mp4",
+                                        "WIDTH": 576, "HEIGHT": 320, "FRAME_COUNT": 41,
+                                        "FPS": 16.0, "STEPS": 20, "SEED": 7})
+    assert compiled.workflow["14"]["inputs"]["control_video"] == ["13", 0]
+    assert compiled.workflow["12"]["inputs"]["width"] == 576
+
+
+def test_depth_workflow_reports_a_missing_add_on():
+    t = TemplateRegistry(WF).get("v2v_3070_depth")
+    info = {n["class_type"]: {"input": {"required": {k: ["INT"] for k in n["inputs"]}}}
+            for n in t.workflow.values() if n["class_type"] != "DepthAnythingV2Preprocessor"}
+    assert validate_against_object_info(t, info) == [
+        "node 13: class DepthAnythingV2Preprocessor not installed"]
+    # As controlnet_aux declares it: image required, the rest optional.
+    info["DepthAnythingV2Preprocessor"] = {"input": {
+        "required": {"image": ["IMAGE"]},
+        "optional": {"ckpt_name": [["depth_anything_v2_vitg.pth", "depth_anything_v2_vitl.pth",
+                                    "depth_anything_v2_vitb.pth", "depth_anything_v2_vits.pth"]],
+                     "resolution": ["INT", {"default": 512}]}}}
+    assert validate_against_object_info(t, info) == []

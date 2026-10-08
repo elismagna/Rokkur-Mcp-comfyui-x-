@@ -41,16 +41,22 @@ CHECKPOINT, OUTPUT_PREFIX`.
   `comfy_extras/nodes_video.py`). Needs a 2025+ ComfyUI and an SD1.5 checkpoint
   (`CHECKPOINT`, default `v1-5-pruned-emaonly.safetensors`). It flickers by design; it proves
   the render path.
+- `v2v_3070_quality` (profiles `PREVIEW`, `RTX3070_QUALITY`, `FUTURE_24GB`): Wan 2.1 VACE 1.3B,
+  core nodes only. The source clip's Canny edges guide VACE; an optional reference image
+  (node 20) sets the look.
+- `v2v_3070_depth` (profile `RTX3070_DEPTH`): the same graph with a depth map from Depth
+  Anything V2 (`DepthAnythingV2Preprocessor`, `comfyui_controlnet_aux` add-on) as the guide
+  instead of edges. It defaults to the Small depth model, the only size under Apache-2.0
+  (Base/Large/Giant are non-commercial). Experiment for fur, hands and the outline look.
 
 ### To add from your installation
 
-`RTX3070_QUALITY` and `FUTURE_24GB` expect `v2v_3070_quality`; `HYBRID_MAX` expects
-`hybrid_quality`. These depend on your models and custom nodes, so Studio does not guess
-them. Export your best 8 GB video-to-video workflow in API format into
-`workflows/v2v_3070_quality/workflow.json`, write `params.yaml`, then run
+`HYBRID_MAX` expects `hybrid_quality`, which depends on your models and custom nodes, so
+Studio does not guess it. Export the workflow in API format into
+`workflows/hybrid_quality/workflow.json`, write `params.yaml`, then run
 `make comfy-check`, which validates every template against your live `/object_info`
-(installed node classes, input names and model filenames). Until then, projects using those
-profiles fail fast at `compile_workflow` with a clear message when `render.renderer=comfyui`.
+(installed node classes, input names and model filenames). Until then, that profile is
+refused when a project is created.
 
 ## Renderer selection
 

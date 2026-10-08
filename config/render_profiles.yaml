@@ -31,6 +31,21 @@ profiles:
     location: local
     degrade: [clear_cache, reduce_frames, reduce_resolution, switch_profile:PREVIEW]
 
+  RTX3070_DEPTH:
+    description: As RTX3070_QUALITY, but a depth map guides Wan instead of edges (needs the comfyui_controlnet_aux add-on)
+    workflow: v2v_3070_depth
+    max_width: 576
+    max_height: 1024
+    fps: 16
+    max_frames: 81
+    frame_multiple: 4
+    steps: 20
+    denoise: 0.65
+    controls: {pose: false, depth: false, segmentation: false}
+    resource_class: GPU_HEAVY
+    location: local
+    degrade: [clear_cache, reduce_frames, reduce_resolution, switch_profile:PREVIEW]
+
   HYBRID_MAX:
     description: Local preprocessing, remote heavy generation, local postprocessing
     workflow: hybrid_quality
