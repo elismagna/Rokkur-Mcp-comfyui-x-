@@ -18,6 +18,16 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 
+def _tag_seconds(tags: dict[str, Any]) -> float | None:
+    """Seconds from a Matroska ``DURATION`` tag such as ``00:00:03.000000000``."""
+    value = next((v for k, v in tags.items() if k.upper() == "DURATION"), None)
+    try:
+        h, m, s = str(value).split(":")
+        return int(h) * 3600 + int(m) * 60 + float(s)
+    except (TypeError, ValueError):
+        return None
+
+
 class FFmpegError(RuntimeError):
     def __init__(self, cmd: list[str], returncode: int, stderr: str) -> None:
         self.cmd, self.returncode = cmd, returncode
@@ -91,7 +101,10 @@ class FFmpeg:
             raise FFmpegError(cmd, 0, f"no video stream in {path}")
         rate = video.get("avg_frame_rate") or video.get("r_frame_rate") or "0/1"
         fps = float(Fraction(rate)) if rate not in ("0/0", "") else 0.0
-        duration = float(video.get("duration") or data.get("format", {}).get("duration") or 0)
+        # Matroska/WebM keep the stream's own length in a tag; the container duration can be
+        # the longer audio's, which would make the last shot run past the end of the video.
+        duration = float(video.get("duration") or _tag_seconds(video.get("tags", {}))
+                         or data.get("format", {}).get("duration") or 0)
         frames = video.get("nb_frames")
         return MediaInfo(
             path=str(path),

@@ -96,7 +96,8 @@ def compile_brief(brief: CreativeBrief, *, creative_input: dict[str, Any],
         out.character = clean_phrase(anchor)
     for shot in out.shot_plan:
         if not shot.subject.strip() and not anchor:
-            shot.subject = out.character or "the visible subject from the source video"
+            # No placeholder text: it would go into the diffusion prompt word for word.
+            shot.subject = out.character or ""
             notes.warnings.append(f"{shot.shot_id}: no observed subject; review the prompt before rendering.")
         shot.prompt = shot_prompt(shot, prefix=prefix, anchor=anchor, style_terms=style_terms,
                                   weights=weights)

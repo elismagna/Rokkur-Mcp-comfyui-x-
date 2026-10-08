@@ -100,17 +100,51 @@ def test_cancelled_comfy_render_is_a_cancelled_job(ffmpeg, sample_video, tmp_pat
                                      "FPS": 16, "FRAME_COUNT": 17, "_REFERENCE_MODE": "none"})
 
 
+def test_comfy_timeout_is_retried_not_rejected(ffmpeg, sample_video, tmp_path, monkeypatch):
+    from rokkur_studio.comfyui.client import ComfyTimeout
+    from rokkur_studio.pipeline.renderers import RenderUnavailable
+
+    client = ComfyClient("http://comfy", transport=FakeComfyUI().transport())
+
+    def timed_out(*args, **kwargs):
+        raise ComfyTimeout("timeout", "prompt exceeded 10s")
+
+    monkeypatch.setattr(client, "wait", timed_out)
+    renderer = ComfyUIRenderer(client, TemplateRegistry(ROOT / "workflows"), ffmpeg,
+                              timeout_s=10, poll_s=0)
+    with pytest.raises(RenderUnavailable):
+        renderer.render_shot(clip=sample_video, workflow="v2v_3070_quality", out=tmp_path / "x.mp4",
+                             params={"STYLE_PROMPT": "clay", "WIDTH": 320, "HEIGHT": 560,
+                                     "FPS": 16, "FRAME_COUNT": 17, "_REFERENCE_MODE": "none"})
+
+
 def test_wan_repairs_only_change_mapped_controls():
     report = {"shots": [{"shot_id": "a", "decision": "FAIL", "issues": ["layout drift"],
                          "recommendations": ["REDUCE_STYLE_STRENGTH", "ADD_DEPTH_CONTROL"]}]}
-    plan = RepairPlanner().plan(report, 1, {"a": {"seed": 12, "control_strength": 1}},
+    plan = RepairPlanner().plan(report, 1, {"a": {"seed": 12, "control_strength": 0.8}},
                                  supported={"SEED", "CONTROL_STRENGTH"})
     action = plan.actions[0]
     assert set(action.changes) == {"seed", "control_strength"}
-    assert action.changes["control_strength"] == 1.15
+    assert action.changes["control_strength"] == 0.95
     assert set(action.unsupported) == {"style_strength", "depth"}
     assert "ADJUST_CONTROL_STRENGTH" in action.recommendations
     assert not RepairPlanner().plan(report, 1, {}, supported=set()).actions
+
+
+@pytest.mark.parametrize(("recs", "old", "new"), [
+    (["ADD_DEPTH_CONTROL"], 0.95, 1.0),     # firmer, but never above the default
+    (["ADD_DEPTH_CONTROL"], 1.0, None),     # at the default: only the seed changes
+    (["ADD_DEPTH_CONTROL"], 1.5, None),     # a user's higher value is not pushed further
+    (["CHANGE_SEED"], 1.0, 0.9),            # flicker: gentler guidance
+    (["CHANGE_SEED"], 0.75, 0.7),
+    (["CHANGE_SEED"], 0.7, None),           # floor
+    (["CHANGE_SEED"], 0.5, None),           # a user's lower value is not pushed further
+])
+def test_automatic_control_strength_changes_stay_near_the_default(recs, old, new):
+    report = {"shots": [{"shot_id": "a", "decision": "FAIL", "recommendations": recs}]}
+    plan = RepairPlanner().plan(report, 1, {"a": {"seed": 1, "control_strength": old}},
+                                supported={"SEED", "CONTROL_STRENGTH"})
+    assert plan.actions[0].changes.get("control_strength") == new
 
 
 def test_story_is_merged_by_shot_id_and_reads_source_images():
@@ -126,6 +160,38 @@ def test_story_is_merged_by_shot_id_and_reads_source_images():
     assert [s.subject for s in result.shot_plan] == ["brown monkey", "green frog"]
     assert [s.start for s in result.shot_plan] == [0, 2]
     assert calls[0]["messages"][1]["images"]
+
+
+@pytest.mark.parametrize("ids", [["1", "2"], ["shot_1", "shot_2"], ["opening", "closing"]])
+def test_story_with_differently_written_shot_ids_is_not_dropped(ids):
+    planned = brief()
+    for shot, sid, subject in zip(planned.shot_plan, ids, ["brown monkey", "green frog"],
+                                  strict=True):
+        shot.shot_id, shot.subject = sid, subject
+    provider = OllamaProvider("http://o", "m", transport=ollama_transport([planned.model_dump_json()], []))
+    result, by = CreativeDirector(provider).run({}, ANALYSIS, "youtube_short")
+    assert by == "ollama"
+    assert [s.shot_id for s in result.shot_plan] == ["shot_001", "shot_002"]
+    assert [s.subject for s in result.shot_plan] == ["brown monkey", "green frog"]
+
+
+def test_vision_observation_does_not_replace_a_character_anchor_subject():
+    class VisualProvider:
+        name = "test_vision"
+
+        def generate(self, role, instructions, payload, schema, images=None):
+            return ShotFraming(shot_size="Medium Shot", camera_angle="Eye-level",
+                               camera_movement="Static", lighting="High-key overhead",
+                               observed_subject="orange tabby house cat",
+                               observed_background="kitchen floor")
+
+    original = brief()
+    original.character = "chrome robot astronaut"
+    original.shot_plan[0].subject = "crouched low, looking up"
+    result, _ = DirectorOfPhotography(VisualProvider(), vision=True).run(
+        original, keyframes={s.shot_id: b"frame" for s in original.shot_plan})
+    assert result.shot_plan[0].subject == "crouched low, looking up"
+    assert result.shot_plan[0].background == "kitchen floor"
 
 
 def test_vision_observation_is_not_primed_with_story_guesses():
@@ -191,6 +257,25 @@ def test_frozen_render_does_not_get_a_perfect_motion_score():
     assert score_shot(frames, frozen, threshold=6.5, shot_id="frozen")["motion"] == 0
 
 
+def test_frozen_render_of_a_small_movement_fails_but_grain_is_not_movement():
+    rng = np.random.default_rng(0)
+
+    def grain(a):
+        return np.clip(a.astype(int) + rng.integers(-1, 2, a.shape), 0, 255).astype(np.uint8)
+
+    source = np.full((30, 64, 64), 100, dtype=np.uint8)
+    for i, frame in enumerate(source):  # a small figure crossing a still scene
+        frame[28:36, 2 + i:10 + i] = 220
+    frozen = score_shot(grain(source), grain(np.repeat(source[:1], 30, axis=0)),
+                        threshold=6.5, shot_id="frozen")
+    assert frozen["motion_method"] == "low-motion difference"
+    assert frozen["motion"] == 0 and frozen["decision"] == "FAIL"
+    assert score_shot(grain(source), grain(source), threshold=6.5, shot_id="ok")["decision"] \
+        == "PASS"
+    still = np.repeat(source[:1], 30, axis=0)
+    assert score_shot(grain(still), still, threshold=6.5, shot_id="still")["motion"] == 10
+
+
 def test_custom_reference_reaches_the_workflow_through_the_full_pipeline(ctx, sample_video, tmp_path):
     ctx.settings.render.renderer = "comfyui"
     fake = FakeComfyUI()
@@ -235,3 +320,27 @@ def test_reference_upload_and_advanced_controls_survive_creation(ctx, sample_vid
     assert creative["steps"] == 22 and creative["cfg"] == 5.5
     assert creative["reference_mode"] == "none" and creative["negative_prompt"] == "wireframe"
     assert creative["character_reference_path"].endswith(".png")
+
+
+def test_failed_create_does_not_leave_uploaded_copies_behind(ctx, sample_video, ffmpeg, tmp_path):
+    c = client_for(ctx)
+    ref = ffmpeg.thumbnail(sample_video, tmp_path / "guide.png", at=0)
+    uploads = Path(ctx.settings.studio.data_dir) / "uploads"
+    before = set(uploads.iterdir()) if uploads.exists() else set()
+    response = c.post("/ui/projects", data={"theme": "   ", "rights_category": "USER_OWNED"},
+        files={"source_file": ("clip.mp4", sample_video.read_bytes(), "video/mp4"),
+               "reference_file": ("guide.png", ref.read_bytes(), "image/png")},
+        follow_redirects=False)
+    assert response.status_code == 303 and "err=" in response.headers["location"]
+    assert set(uploads.iterdir()) == before
+
+
+def test_a_broken_workflow_file_is_reported_instead_of_breaking_every_page(ctx, tmp_path):
+    import shutil
+    workflows = tmp_path / "workflows"
+    shutil.copytree(ROOT / "workflows", workflows)
+    (workflows / "v2v_3070_quality" / "params.yaml").write_text("parameters: [unclosed\n")
+    ctx.settings.render.renderer = "comfyui"
+    ctx.settings.workflows_dir = workflows
+    assert "could not be loaded" in (ctx.settings.profile_problem("RTX3070_QUALITY") or "")
+    assert client_for(ctx).get("/ui/new").status_code == 200

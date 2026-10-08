@@ -150,6 +150,18 @@ def repair_more(project_id: str, ctx: Ctx, session: Db, rounds: int | None = Non
     return project
 
 
+@router.post("/{project_id}/allow-more-renders", response_model=ProjectOut,
+             summary="Raise the render budget of a project stopped at it, and resume it")
+def allow_more_renders(project_id: str, ctx: Ctx, session: Db,
+                       renders: int | None = None) -> Project:
+    project = _project(session, project_id, for_update=True)
+    try:
+        commands.allow_more_renders(session, project, ctx.settings, actor="api", renders=renders)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return project
+
+
 @router.post("/{project_id}/recheck-quality", response_model=ProjectOut,
              summary="Run the quality check again on the current renders, rendering nothing")
 def recheck_quality(project_id: str, ctx: Ctx, session: Db) -> Project:

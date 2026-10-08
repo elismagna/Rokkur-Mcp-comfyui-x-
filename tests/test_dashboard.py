@@ -163,3 +163,17 @@ def test_repair_limit_page_offers_more_repairs_or_keeping_the_renders(ctx, sampl
     assert status(ctx, pid) == "READY_TO_PUBLISH"
     page = c.get(f"/ui/projects/{pid}").text
     assert "kept by dashboard" in page and "these renders were kept anyway" in page
+
+
+def test_render_budget_stop_offers_more_renders_instead_of_resume(ctx, sample_video):
+    ctx.settings.render.max_renders_per_project = 1
+    c = client_for(ctx)
+    pid = create(ctx, sample_video)
+    run(ctx)
+    page = c.get(f"/ui/projects/{pid}").text
+    assert "Stopped at this project's render budget: 1 of 1 renders" in page
+    assert "Allow 1 more renders and continue" in page and ">Resume<" not in page
+    r = c.post(f"/ui/projects/{pid}/allow-more-renders", follow_redirects=False)
+    assert "Allowed%20more%20renders" in r.headers["location"]
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"

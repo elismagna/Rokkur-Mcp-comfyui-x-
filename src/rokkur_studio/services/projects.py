@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from rokkur_studio.db.models import Document, Event, Project, RightsDecision, Source
+from rokkur_studio.db.models import (
+    CostEntry,
+    Document,
+    Event,
+    Project,
+    Render,
+    RightsDecision,
+    Source,
+)
 from rokkur_studio.domain.rights import RightsStatus
 from rokkur_studio.domain.states import (
     RESUMABLE,
@@ -16,6 +24,9 @@ from rokkur_studio.domain.states import (
     assert_transition,
 )
 from rokkur_studio.services.events import EventType, record_event
+
+if TYPE_CHECKING:
+    from rokkur_studio.config import Settings
 
 S = ProjectStatus
 
@@ -147,8 +158,7 @@ def transition(
     return project
 
 
-def failure_reason(session: Session, project: Project) -> str | None:
-    """Why the project last went to FAILED, from the audit log (not the latest job error)."""
+def _last_failure(session: Session, project: Project) -> dict[str, Any]:
     event = session.scalars(
         select(Event)
         .where(Event.project_id == project.id, Event.type == EventType.STATE_CHANGED,
@@ -156,7 +166,37 @@ def failure_reason(session: Session, project: Project) -> str | None:
         .order_by(Event.id.desc())
         .limit(1)
     ).one_or_none()
-    return event.data.get("reason") if event is not None else None
+    return event.data if event is not None else {}
+
+
+def failure_reason(session: Session, project: Project) -> str | None:
+    """Why the project last went to FAILED, from the audit log (not the latest job error)."""
+    return _last_failure(session, project).get("reason")
+
+
+def budget_usage(session: Session, project_id: str, settings: Settings) -> dict[str, Any]:
+    """Renders and GPU minutes used, against the configured budget plus what a human granted."""
+    extra = session.scalars(
+        select(Event.data).where(Event.project_id == project_id,
+                                 Event.type == EventType.BUDGET_EXTENDED)
+    ).all()
+    renders = session.scalar(select(func.count(Render.id))
+                             .where(Render.project_id == project_id)) or 0
+    gpu = session.scalar(select(func.coalesce(func.sum(CostEntry.amount), 0.0)).where(
+        CostEntry.project_id == project_id, CostEntry.kind == "gpu_minutes")) or 0.0
+    max_renders = settings.render.max_renders_per_project + sum(
+        int(d.get("renders", 0)) for d in extra)
+    max_gpu = settings.costs.max_gpu_minutes_per_project + sum(
+        float(d.get("gpu_minutes", 0)) for d in extra)
+    return {"renders": renders, "max_renders": max_renders, "gpu": float(gpu),
+            "max_gpu": max_gpu, "exhausted": renders >= max_renders or gpu >= max_gpu}
+
+
+def at_budget_limit(session: Session, project: Project, settings: Settings) -> bool:
+    """FAILED at the render or GPU-minute budget, and still over it (config may have grown)."""
+    return (project.status == S.FAILED
+            and _last_failure(session, project).get("error_code") == "budget_exceeded"
+            and budget_usage(session, project.id, settings)["exhausted"])
 
 
 def repair_budget(session: Session, project_id: str, base: int) -> int:

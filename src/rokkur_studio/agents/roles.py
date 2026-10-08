@@ -4,6 +4,7 @@ runnable without a model, and LLM output is constrained by deterministic facts."
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from rokkur_studio.agents.providers import (
@@ -37,6 +38,31 @@ from rokkur_studio.director.vocabulary import (
 log = logging.getLogger(__name__)
 
 _ASPECT = {"youtube_short": "9:16", "youtube_video": "16:9"}
+
+
+def _shot_number(shot_id: str) -> int | None:
+    m = re.search(r"(\d+)\D*$", shot_id)
+    return int(m.group(1)) if m else None
+
+
+def _match_story(shots: list[ShotPlan], plans: list[ShotStory],
+                 role: str) -> list[ShotStory | None]:
+    """The model's story for each analysed shot: by id, then by shot number ("1" for
+    shot_001), then, only if no id matched at all and the counts agree, by position."""
+    by_id = {p.shot_id: p for p in plans}
+    if len(by_id) != len(plans):
+        raise AgentOutputError(role, "duplicate shot ids")
+    by_number = {n: p for p in plans if (n := _shot_number(p.shot_id)) is not None}
+
+    def find(shot_id: str) -> ShotStory | None:
+        n = _shot_number(shot_id)
+        return by_id.get(shot_id) or (by_number.get(n) if n is not None else None)
+
+    matched = [find(s.shot_id) for s in shots]
+    if not any(matched) and len(plans) == len(shots):
+        log.warning("creative director: shot ids did not match; merged by position")
+        return list(plans)
+    return matched
 
 
 class CreativeDirector:
@@ -86,11 +112,9 @@ class CreativeDirector:
                     self.role, self.instructions + (self.anchor_note if character else ""),
                     payload, StoryBrief, images=[value for _, value in frames] or None)
                 # Facts win over the model: shot timing comes from the analysis.
-                by_id = {p.shot_id: p for p in story.shot_plan}
-                if len(by_id) != len(story.shot_plan):
-                    raise AgentOutputError(self.role, "duplicate shot ids")
-                planned = [by_id.get(s.shot_id, ShotStory(**s.model_dump(include=set(
-                    ShotStory.model_fields)))) for s in shots]
+                matched = _match_story(shots, story.shot_plan, self.role)
+                planned = [m or ShotStory(**s.model_dump(include=set(ShotStory.model_fields)))
+                           for s, m in zip(shots, matched, strict=True)]
                 merged = [s.model_copy(update={"intent": b.intent, "subject": b.subject,
                                                "background": b.background})
                           for s, b in zip(shots, planned, strict=False)]
@@ -222,7 +246,9 @@ class DirectorOfPhotography:
             shot.camera_movement, shot.lighting = framing.camera_movement, framing.lighting
             shot.framing_by = by
             if by.endswith("+vision"):
-                if framing.observed_subject.strip():
+                # With a character anchor the story's subject is only pose and expression; the
+                # observed appearance (the source's actor or animal) would fight the anchor.
+                if framing.observed_subject.strip() and not brief.character:
                     shot.subject = framing.observed_subject.strip()
                 if framing.observed_background.strip():
                     shot.background = framing.observed_background.strip()
@@ -301,9 +327,13 @@ class RepairPlanner:
                 if "CONTROL_STRENGTH" in supported:
                     old = float(cur.get("control_strength", 1.0))
                     # Layout/motion drift needs firmer guidance; temporal instability alone
-                    # gets a gentler constraint. These are bounded, recorded experiments.
+                    # gets a gentler constraint. These are bounded, recorded experiments that
+                    # stay inside 0.7-1.0 and never push a value the user chose further out:
+                    # on a real shot 1.15 raised QC's motion score but made anatomy worse,
+                    # which QC cannot see (docs/upgrade-2026-10-07.md).
                     drift = any(r in recs for r in ("ADD_POSE_CONTROL", "ADD_DEPTH_CONTROL"))
-                    new = round(min(2.0, old + 0.15) if drift else max(0.0, old - 0.1), 3)
+                    new = round(min(max(old, 1.0), old + 0.15) if drift
+                                else max(min(old, 0.7), old - 0.1), 3)
                     if new != old:
                         changes["control_strength"] = new
                 recs = (["ADJUST_CONTROL_STRENGTH"] if "control_strength" in changes else []) + (

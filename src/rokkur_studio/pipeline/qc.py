@@ -55,6 +55,13 @@ def _edge_maps(frames: np.ndarray) -> np.ndarray:
     return blurred / 9.0
 
 
+def _moving_share(frames: np.ndarray) -> float:
+    """Share of pixels that clearly change between frames: motion, not codec noise or grain."""
+    if len(frames) < 2:
+        return 0.0
+    return float((np.abs(np.diff(frames.astype(np.int16), axis=0)) > 12).mean())
+
+
 def _sharpness(frames: np.ndarray) -> float:
     f = frames.astype(np.float32)
     lap = (f[:, 1:-1, 1:-1] * 4 - f[:, :-2, 1:-1] - f[:, 2:, 1:-1] - f[:, 1:-1, :-2]
@@ -87,15 +94,19 @@ def score_shot(source: np.ndarray, render: np.ndarray, *, threshold: float,
 
     # Motion preservation: does output motion follow source motion over time?
     c = _corr(ds, dr)
+    source_motion = float(ds.mean()) if len(ds) else 0.0
+    output_motion = float(dr.mean()) if len(dr) else 0.0
     # Without motion variation to correlate, reward an output that is equally still.
-    low_motion = float(ds.mean() if len(ds) else 0) < 1.5
+    low_motion = source_motion < 1.5
     if low_motion:
         # Near-static source correlations are dominated by codec noise, not motion.
-        motion = 10.0 * float(np.exp(-max(0.0, float(dr.mean() if len(dr) else 0)
-                                          - float(ds.mean() if len(ds) else 0)) / 3.0))
+        motion = 10.0 * float(np.exp(-max(0.0, output_motion - source_motion) / 3.0))
+        # Small but real source motion (a figure crossing a still scene) that the render
+        # lost: it froze. Counted in clearly changing pixels, so grain is not motion.
+        src_moving, out_moving = _moving_share(src), _moving_share(out)
+        if src_moving > 0.002 and out_moving < 0.25 * src_moving:
+            motion = min(motion, 10.0 * out_moving / src_moving)
     else:
-        source_motion = float(ds.mean())
-        output_motion = float(dr.mean() if len(dr) else 0)
         ratio = min(source_motion, output_motion) / max(source_motion, output_motion, 1e-6)
         motion = 10.0 * ratio if c is None else 10.0 * max(0.0, c)
 

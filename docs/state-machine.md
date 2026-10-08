@@ -39,6 +39,18 @@ A human picks the way out (project page, Approvals, or the API):
   marked `PASS` with an `override` block (who, when, which shots QC failed), records
   `QC_OVERRIDDEN` and moves `QUALITY_FAILED → QUALITY_PASSED`, the only edge that skips QC.
 
+The same stop (and the same three ways out) applies when the repair planner has nothing it can
+change for the project's workflow.
+
+## Render budget
+
+Before each render the cost guard checks the project's renders and GPU minutes against
+`render.max_renders_per_project` and `costs.max_gpu_minutes_per_project`, plus any
+`BUDGET_EXTENDED` grants. Over either, the render job fails with `budget_exceeded` and the
+project goes to `FAILED`. Resume is refused while it is still over budget.
+**Allow more renders** (`POST /projects/{id}/allow-more-renders`, default half the configured
+render budget, GPU minutes in proportion) records `BUDGET_EXTENDED` and resumes rendering.
+
 ## Stage jobs
 
 | State | Job |

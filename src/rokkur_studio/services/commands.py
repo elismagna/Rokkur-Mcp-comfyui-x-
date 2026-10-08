@@ -15,6 +15,7 @@ from rokkur_studio.jobs.queue import cancel_project_jobs
 from rokkur_studio.pipeline.driver import advance
 from rokkur_studio.services.events import EventType, record_event
 from rokkur_studio.services.projects import (
+    at_budget_limit,
     at_repair_limit,
     create_source,
     get_project,
@@ -84,6 +85,35 @@ def resume_project(session: Session, project: Project, settings: Settings,
         raise InvalidTransition(S.FAILED, S.QUALITY_FAILED,
                                 "stopped at the repair limit: allow more repair rounds or keep "
                                 "the current renders")
+    if at_budget_limit(session, project, settings):
+        # The budget check would stop it again before the first render.
+        raise InvalidTransition(S.FAILED, S(project.failed_from_state or S.FAILED),
+                                "stopped at the render budget: allow more renders first")
+    resume(session, project, actor=actor)
+    return advance(session, project, settings, manual=True)
+
+
+def render_grant(settings: Settings) -> int:
+    """Renders one "allow more renders" adds by default: half the configured budget."""
+    return max(1, settings.render.max_renders_per_project // 2)
+
+
+def allow_more_renders(session: Session, project: Project, settings: Settings, *, actor: str,
+                       renders: int | None = None) -> Job | None:
+    """Raise the render budget of a project stopped at it, and resume it.
+
+    GPU minutes grow in proportion, so whichever of the two budgets stopped it is lifted.
+    """
+    if not at_budget_limit(session, project, settings):
+        raise InvalidTransition(S(project.status), S(project.status),
+                                "project is not stopped at the render budget")
+    base = settings.render.max_renders_per_project
+    renders = renders or render_grant(settings)
+    if not 1 <= renders <= base:
+        raise ValueError(f"allow between 1 and {base} more renders")
+    gpu_minutes = round(renders * settings.costs.max_gpu_minutes_per_project / base, 1)
+    record_event(session, EventType.BUDGET_EXTENDED, project_id=project.id, actor=actor,
+                 data={"renders": renders, "gpu_minutes": gpu_minutes})
     resume(session, project, actor=actor)
     return advance(session, project, settings, manual=True)
 

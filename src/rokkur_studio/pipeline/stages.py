@@ -52,6 +52,7 @@ from rokkur_studio.services import publishing
 from rokkur_studio.services.assets import import_file, register_asset
 from rokkur_studio.services.events import EventType, record_event
 from rokkur_studio.services.projects import (
+    budget_usage,
     get_project,
     latest_document,
     latest_rights,
@@ -375,15 +376,12 @@ def _latest_renders(ctx: StudioContext, project_id: str) -> dict[str, Render]:
 
 def _check_budget(ctx: StudioContext, project_id: str) -> None:
     with ctx.db.session() as s:
-        renders = s.scalar(select(func.count(Render.id)).where(Render.project_id == project_id))
-        gpu_min = s.scalar(select(func.coalesce(func.sum(CostEntry.amount), 0.0)).where(
-            CostEntry.project_id == project_id, CostEntry.kind == "gpu_minutes")) or 0.0
-    limits = ctx.settings
+        used = budget_usage(s, project_id, ctx.settings)
     reason = None
-    if (renders or 0) >= limits.render.max_renders_per_project:
-        reason = f"render budget exhausted ({renders}/{limits.render.max_renders_per_project})"
-    elif gpu_min >= limits.costs.max_gpu_minutes_per_project:
-        reason = f"GPU budget exhausted ({gpu_min:.1f} min)"
+    if used["renders"] >= used["max_renders"]:
+        reason = f"render budget exhausted ({used['renders']}/{used['max_renders']})"
+    elif used["exhausted"]:
+        reason = f"GPU budget exhausted ({used['gpu']:.1f}/{used['max_gpu']:g} min)"
     if reason:
         with ctx.db.transaction() as s:
             record_event(s, EventType.BUDGET_EXCEEDED, project_id=project_id, actor="cost_guard",
@@ -561,7 +559,7 @@ def _assemble(ctx: StudioContext, manifest: ReconstructionManifest) -> str:
             assert asset is not None
             clip = ctx.store.path_for(asset.rel_path)
             # Normalise every shot to the manifest grid so OOM-degraded shots still splice.
-            norm = clip.with_name(clip.stem + "_norm_v2.mp4")
+            norm = clip.with_name(clip.stem + "_norm_v3.mp4")
             if not norm.exists():
                 # Align cuts to the full timeline, avoiding cumulative one-frame rounding
                 # errors when shots used different frame rates after OOM recovery.
@@ -569,7 +567,7 @@ def _assemble(ctx: StudioContext, manifest: ReconstructionManifest) -> str:
                              - round(shot.start * manifest.video.fps))
                 ctx.ffmpeg.filter_video(clip, norm, f"fps={manifest.video.fps},scale="
                     f"{manifest.video.width}:{manifest.video.height},"
-                    f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={frames},setpts=PTS-STARTPTS",
+                    f"tpad=stop=-1:stop_mode=clone,trim=end_frame={frames},setpts=PTS-STARTPTS",
                     fps=manifest.video.fps)
             clips.append(norm)
     renders_dir = ctx.store.project_dir(pid, "renders")
@@ -616,6 +614,21 @@ def quality_check(ctx: StudioContext, job: Job) -> dict[str, Any]:
 
 
 # -- repair -------------------------------------------------------------------------------
+def _stop_at_repair_limit(ctx: StudioContext, job: Job, report: dict[str, Any],
+                          reason: str) -> dict[str, Any]:
+    with ctx.db.transaction() as s:
+        p = get_project(s, job.project_id or "", for_update=True)
+        record_event(s, EventType.REPAIR_BUDGET_EXHAUSTED, project_id=p.id, actor="repair",
+                     job_id=job.id, data={"rounds": p.repair_rounds,
+                                          "failed_shots": report["failed_shots"]})
+        s.add(ApprovalRequest(project_id=p.id, kind="repair_budget", requested_by="repair",
+                              summary=f"QC still failing after {p.repair_rounds} repair "
+                              "rounds", payload={"failed_shots": report["failed_shots"]}))
+        transition(s, p, S.REPAIRING, actor="repair", job_id=job.id)
+        transition(s, p, S.FAILED, actor="repair", job_id=job.id, reason=reason)
+    return {"repaired": False, "reason": reason}
+
+
 def repair(ctx: StudioContext, job: Job) -> dict[str, Any]:
     project = _enter(ctx, job, {S.QUALITY_FAILED}, None)
     pid = project.id
@@ -626,18 +639,7 @@ def repair(ctx: StudioContext, job: Job) -> dict[str, Any]:
         report = qc_doc.data
         budget = repair_budget(s, pid, ctx.settings.render.max_retries)
     if project.repair_rounds >= budget:
-        with ctx.db.transaction() as s:
-            p = get_project(s, pid, for_update=True)
-            record_event(s, EventType.REPAIR_BUDGET_EXHAUSTED, project_id=pid, actor="repair",
-                         job_id=job.id, data={"rounds": p.repair_rounds,
-                                              "failed_shots": report["failed_shots"]})
-            s.add(ApprovalRequest(project_id=pid, kind="repair_budget", requested_by="repair",
-                                  summary=f"QC still failing after {p.repair_rounds} repair "
-                                  "rounds", payload={"failed_shots": report["failed_shots"]}))
-            transition(s, p, S.REPAIRING, actor="repair", job_id=job.id)
-            transition(s, p, S.FAILED, actor="repair", job_id=job.id,
-                       reason="repair budget exhausted")
-        return {"repaired": False, "reason": "repair budget exhausted"}
+        return _stop_at_repair_limit(ctx, job, report, "repair budget exhausted")
 
     round_ = project.repair_rounds + 1
     current = {s.shot_id: {"seed": s.overrides.get("seed", s.seed),
@@ -653,9 +655,9 @@ def repair(ctx: StudioContext, job: Job) -> dict[str, Any]:
                         .spec.parameters)
     plan = RepairPlanner().plan(report, round_, current, supported=supported)
     if not plan.actions:
-        raise PermanentJobError("no_supported_repairs",
-                                "This workflow has no supported automatic repair controls. "
-                                "Review the rendered shots and choose whether to keep them.")
+        # Stop where a human can keep the renders or check again, as at the repair limit.
+        return _stop_at_repair_limit(ctx, job, report,
+                                     "this workflow has no automatic repair controls")
     for action in plan.actions:
         manifest.shot(action.shot_id).overrides.update(action.changes)
     failing = [a.shot_id for a in plan.actions]

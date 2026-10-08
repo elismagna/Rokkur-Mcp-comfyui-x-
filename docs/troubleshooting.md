@@ -7,7 +7,7 @@
 | `FAILED` with `template_error` | The profile's workflow template is not installed or does not match. See `docs/comfyui.md`, run `comfy-check`. |
 | `renderer_unavailable` retries | ComfyUI is not reachable at `comfyui.url`. From Docker it must be `http://host.docker.internal:8188`. |
 | `oom_unrecoverable` | The OOM ladder ran out. Use `PREVIEW`, shorten shots (lower `max_frames`), or free VRAM (close other GPU apps). |
-| `budget_exceeded` | `render.max_renders_per_project` or GPU minutes reached. Raise the limit in config, then `POST /projects/{id}/resume`. |
+| `budget_exceeded` (`Stopped at this project's render budget`) | `render.max_renders_per_project` or `costs.max_gpu_minutes_per_project` reached; repair rounds count too. Look at the renders, then press **Allow N more renders and continue** on the project page (`POST /projects/{id}/allow-more-renders`, half the configured budget by default, with GPU minutes in proportion). Resume is refused while the project is still over budget; raising the limit in config also lets Resume work. |
 | `Stopped after N repair rounds` (`repair budget exhausted`) | QC kept failing after `render.max_retries` rounds. Look at the QC table and the renders, then press **Try N more repairs**, **Check quality again** (after a QC change) or **Keep these renders** on the project page. Resume is refused here because it would stop again at once. |
 | Jobs not running | No worker: `docker compose ps`, `make logs`. `/workers` shows workers holding leases and queue depth. |
 | A crashed worker's job | Its lease expires (`jobs.lease_seconds`); another worker reclaims it automatically, counting one attempt. |

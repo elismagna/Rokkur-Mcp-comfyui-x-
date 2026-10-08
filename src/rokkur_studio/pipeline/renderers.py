@@ -109,7 +109,7 @@ class ComfyUIRenderer:
         prepared = clip
         if any(n["class_type"] == "WanVaceToVideo" for n in template.workflow.values()):
             prepared = self.ffmpeg.filter_video(clip, work / "control.mp4",
-                f"fps={params['FPS']},tpad=stop_mode=clone:stop_duration=1,"
+                f"fps={params['FPS']},tpad=stop=-1:stop_mode=clone,"
                 f"trim=end_frame={params['FRAME_COUNT']},setpts=PTS-STARTPTS", fps=params["FPS"])
         try:
             folder = f"rokkur/{self.client.client_id}/{out.stem}"
@@ -137,7 +137,7 @@ class ComfyUIRenderer:
         except ComfyError as exc:
             if exc.code == "cancelled":
                 raise JobCancelled() from exc
-            raise RenderRejected(str(exc)) from exc
+            raise RenderUnavailable(str(exc)) from exc  # a timeout or failed upload: retry
         videos = [o for o in result.outputs if Path(o.filename).suffix.lower()
                   in (".mp4", ".webm", ".mkv", ".mov", ".gif")]
         images = [o for o in result.outputs if Path(o.filename).suffix.lower()
@@ -154,7 +154,7 @@ class ComfyUIRenderer:
         wanted = int(params.get("_OUTPUT_FRAMES", params["FRAME_COUNT"]))
         self.ffmpeg.filter_video(raw, out, f"fps={params['FPS']},"
             f"scale={params['WIDTH']}:{params['HEIGHT']},"
-            f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={wanted},setpts=PTS-STARTPTS",
+            f"tpad=stop=-1:stop_mode=clone,trim=end_frame={wanted},setpts=PTS-STARTPTS",
             fps=params["FPS"])
         return RenderOutcome(out, time.monotonic() - started, result.prompt_id, {
             "renderer": self.name, "workflow": compiled.template,

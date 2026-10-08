@@ -13,6 +13,16 @@ def test_probe_and_scene_detection(ffmpeg, sample_video):
     assert ffmpeg.detect_scenes(sample_video) == [2.0]
 
 
+def test_probe_uses_the_video_length_when_matroska_audio_runs_longer(ffmpeg, tmp_path):
+    out = tmp_path / "long_audio.mkv"
+    ffmpeg._run(ffmpeg._ff("-f", "lavfi", "-i", "testsrc2=size=160x120:rate=24:duration=3",
+                           "-f", "lavfi", "-i", "sine=duration=3.6",
+                           "-c:v", "libx264", "-c:a", "aac", str(out)))
+    info = ffmpeg.probe(out)
+    assert abs(float(info.raw["format"]["duration"]) - 3.6) < 0.1  # the container's length
+    assert info.duration == 3.0 and info.frame_count == 72
+
+
 def test_cut_splice_attach_encode(ffmpeg, sample_video, tmp_path):
     a = ffmpeg.cut(sample_video, tmp_path / "a.mp4", start=0, end=2, fps=12, width=288, height=512)
     b = ffmpeg.cut(sample_video, tmp_path / "b.mp4", start=2, end=4, fps=12, width=288, height=512)

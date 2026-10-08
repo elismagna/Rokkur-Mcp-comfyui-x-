@@ -4,8 +4,9 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-08 by Codex. See the [local upgrade findings](upgrade-2026-10-07.md)
-for implementation details and real render observations; the latest Git commit is authoritative.
+Last updated: 2026-10-08 by Claude (review of Codex's `5408dfe`). See the [local upgrade
+findings](upgrade-2026-10-07.md) for implementation details and real render observations; the
+latest Git commit is authoritative.
 
 ## How we share the work
 
@@ -146,6 +147,8 @@ Tested directly by Codex on Elis's PC, 2026-10-07/08:
 - Existing Ape project `proj_01a116f8ebdc_921a5f36` remains stopped at the **40/40 render
   budget**, after 8 repair rounds. It was not resumed or rerendered during deployment.
   Its previous outputs are reviewable; plain Resume cannot fix an exhausted render budget.
+  Since Claude's review commit the project page offers **Allow 20 more renders and continue**
+  (tested in the suite, not yet on the PC).
 
 Tested on Elis's PC (Elis ran the commands and pasted the output):
 - `up`, `audit` and migrations work. ComfyUI and Ollama are reachable from Docker.
@@ -183,14 +186,22 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 2. **Repairs now change seed and CONTROL_STRENGTH.** Unsupported style/identity/pose/depth
    changes are filtered and disclosed. Increasing guidance from 0.85 to 1.15 worsened the
    tested frog shot despite a better motion subscore. Treat adjustments as experiments.
-   DENOISE and OFFLOAD remain unavailable in this Wan graph and are reported as ignored.
-3. One render job in the same project hit "ComfyUI unreachable … [Errno 101] Network is
+   Automatic changes now stay within 0.7–1.0 (drift raises toward 1.0, flicker lowers by 0.1)
+   and never push a value the user set further out, because QC rewards the higher strength
+   while the anatomy it cannot see gets worse. DENOISE and OFFLOAD remain unavailable in this
+   Wan graph and are reported as ignored.
+3. **The vision pass and character anchors.** With a character anchor the DP pass keeps the
+   story's subject (pose and expression) and takes only the observed background, so the
+   source animal or actor is not written next to the anchor. Without an anchor the observation
+   replaces the story subject, so a request like "turn the cat into a tiger" belongs in a
+   character anchor, not the free-text prompt. Not yet checked on the real model.
+4. One render job in the same project hit "ComfyUI unreachable … [Errno 101] Network is
    unreachable" before the run that got to QC. Not diagnosed; ComfyUI was probably not
    running at the time.
-4. Rökkur Collective and Odysseus interfaces are still unknown, so nothing calls them.
-5. `studio.ps1 test` on Windows has never been run. It runs `python -m pytest` on the host,
+5. Rökkur Collective and Odysseus interfaces are still unknown, so nothing calls them.
+6. `studio.ps1 test` on Windows has never been run. It runs `python -m pytest` on the host,
    which needs a venv with `.[dev]`, FFmpeg and a test Postgres.
-6. Phases 5 (discovery) and 7–10 (community, analytics, learning, autonomy) are not started.
+7. Phases 5 (discovery) and 7–10 (community, analytics, learning, autonomy) are not started.
 
 ## Approaches that failed (don't repeat)
 
@@ -208,9 +219,9 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
-- **Claude (last note 2026-10-07):** previously waiting for `qc-shots.zip`. Pull the latest
-  `main` before continuing: CONTROL_STRENGTH repairs and low-motion QC are now implemented
-  by Codex. Read the real local findings before changing their calibration.
+- **Claude (2026-10-08):** reviewed Codex's `5408dfe` and pushed the fixes listed in the Log.
+  No edit in progress. Next for Elis: rebuild, then on the Ape project press **Allow 20 more
+  renders and continue** (or Cancel it). `qc-shots.zip` is no longer needed.
 - **Codex (2026-10-08):** reliability/UI upgrade is implemented, tested and deployed locally.
   This commit releases the previous file ownership; no further edit is in progress. The
   next useful work is real character/hand fidelity, repair comparison strategy, and a clear
@@ -219,6 +230,20 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-08 Claude: review of `5408dfe` (220 tests pass, ruff/mypy clean; dashboard script
+  checked in Chromium). Added **Allow more renders** for projects stopped at the render budget
+  (`BUDGET_EXTENDED`; Resume refused while still over). QC: frozen render of a low-motion source
+  now fails (counts clearly moving pixels, so grain is not motion). Probe reads Matroska's
+  stream `DURATION` (MKV/WebM with longer audio no longer pad the last shot and fail QC forever).
+  Story merge also matches "1"/"shot_1" ids and falls back to position. Vision pass keeps the
+  subject when there is a character anchor. No placeholder subject text in prompts. Automatic
+  CONTROL_STRENGTH bounded to 0.7–1.0. ComfyUI timeouts and failed uploads are retried again
+  (they had become permanent rejections). Padding no longer capped at 1 s (old short renders
+  assemble at full length; normalized cache is now `_norm_v3`). An empty repair plan stops at
+  the repair limit (keep / check again) instead of a dead end. A broken workflow file shows on
+  the System page instead of a 500 on every page. Failed creates delete their uploads. Picking
+  a render attempt no longer stops auto-refresh; Back after creating no longer leaves a
+  disabled form; slider label restored with the draft.
 - 2026-10-08 Codex: **199 tests passed**, lint/types clean; deployed and browser-checked the
   upgrade on port 8400. No media, credentials or production data are included in this commit.
 - 2026-10-07 Codex: guided UI and attempt review; source-aware director passes; uploaded/source

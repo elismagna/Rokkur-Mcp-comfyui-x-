@@ -17,6 +17,7 @@ from rokkur_studio.jobs.worker import Worker
 from rokkur_studio.pipeline.renderers import FFmpegPreviewRenderer, RenderOOM, RenderUnavailable
 from rokkur_studio.services import commands, publishing
 from rokkur_studio.services.projects import (
+    at_budget_limit,
     at_repair_limit,
     failure_reason,
     get_project,
@@ -161,13 +162,81 @@ def test_repair_limit_is_extended_by_approval_or_overridden_by_keeping(ctx, samp
                               actor="elis")
 
 
+def test_render_budget_stop_is_lifted_only_by_allowing_more_renders(ctx, sample_video):
+    ctx.settings.render.max_renders_per_project = 1
+    pid = create(ctx, sample_video)
+    run(ctx)
+    assert status(ctx, pid) == "FAILED"
+    with ctx.db.transaction() as s:
+        project = get_project(s, pid, for_update=True)
+        assert at_budget_limit(s, project, ctx.settings) and not at_repair_limit(project)
+        assert failure_reason(s, project) == "render budget exhausted (1/1)"
+        with pytest.raises(InvalidTransition, match="render budget"):
+            commands.resume_project(s, project, ctx.settings)
+        with pytest.raises(ValueError, match="between 1 and 1"):
+            commands.allow_more_renders(s, project, ctx.settings, actor="elis", renders=2)
+        commands.allow_more_renders(s, project, ctx.settings, actor="elis")
+        assert project.status == "WORKFLOW_READY"
+    run(ctx)  # one more render covers the last shot
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+    with ctx.db.session() as s:
+        ext = s.scalars(select(Event).where(Event.project_id == pid,
+                                            Event.type == "BUDGET_EXTENDED")).one()
+        assert ext.data == {"renders": 1, "gpu_minutes": 120.0} and ext.actor == "elis"
+        assert s.scalar(select(func.count(Render.id)).where(Render.project_id == pid)) == 2
+    with ctx.db.transaction() as s, pytest.raises(InvalidTransition, match="not stopped"):
+        commands.allow_more_renders(s, get_project(s, pid, for_update=True), ctx.settings,
+                                    actor="elis")
+
+
+def test_render_budget_stop_resumes_after_the_configured_budget_grows(ctx, sample_video):
+    ctx.settings.render.max_renders_per_project = 1
+    pid = create(ctx, sample_video)
+    run(ctx)
+    ctx.settings.render.max_renders_per_project = 40
+    with ctx.db.transaction() as s:
+        project = get_project(s, pid, for_update=True)
+        assert project.status == "FAILED" and not at_budget_limit(s, project, ctx.settings)
+        commands.resume_project(s, project, ctx.settings)
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+
+
+def test_empty_repair_plan_stops_where_renders_can_be_kept(ctx, sample_video, monkeypatch):
+    from rokkur_studio.agents.roles import RepairPlanner
+    from rokkur_studio.agents.schemas import RepairPlan
+
+    monkeypatch.setattr(RepairPlanner, "plan", lambda self, report, round_, current, **kw:
+                        RepairPlan(round=round_, actions=[]))
+    pid = create(ctx, sample_video, test_faults={"shot_002": {"kind": "black"}})
+    run(ctx)
+    with ctx.db.transaction() as s:
+        project = get_project(s, pid, for_update=True)
+        assert at_repair_limit(project)
+        assert failure_reason(s, project) == "this workflow has no automatic repair controls"
+        commands.keep_renders(s, project, ctx.settings, actor="elis")
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+
+
+def test_workflow_missing_at_compile_time_fails_the_project(ctx, sample_video):
+    ctx.settings.render.renderer = "comfyui"
+    pid = create(ctx, sample_video)  # the workflow is there when the project is created
+    ctx.settings.profiles["PREVIEW"].workflow = "removed_after_creation"
+    run(ctx)
+    assert status(ctx, pid) == "FAILED"
+    with ctx.db.session() as s:
+        job = s.scalars(select(Job).where(Job.kind == "compile_workflow")).one()
+        assert job.error["code"] == "template_error"
+
+
 def test_failure_message_comes_from_the_failed_transition(ctx, sample_video):
     pid = create(ctx, sample_video, autostart=False)
     with ctx.db.transaction() as s:
         project = get_project(s, pid, for_update=True)
         transition(s, project, ProjectStatus.FAILED, actor="t", reason="the real cause")
         assert failure_reason(s, project) == "the real cause"
-        assert not at_repair_limit(project)
+        assert not at_repair_limit(project) and not at_budget_limit(s, project, ctx.settings)
 
 
 def test_unknown_rights_block_until_a_human_approves(ctx, sample_video):

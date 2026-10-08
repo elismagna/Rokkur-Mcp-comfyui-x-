@@ -56,7 +56,9 @@ from rokkur_studio.domain.states import ProjectStatus as S
 from rokkur_studio.pipeline.context import StudioContext
 from rokkur_studio.services import commands, publishing
 from rokkur_studio.services.projects import (
+    at_budget_limit,
     at_repair_limit,
+    budget_usage,
     failure_reason,
     get_project,
     latest_document,
@@ -299,38 +301,45 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
             return _back("/ui/new", err=problem)
     except KeyError as exc:
         return _back("/ui/new", err=str(exc))
+    written: list[Path] = []
+
+    def fail(message: str) -> RedirectResponse:
+        for upload in written:  # a retry uploads again; do not keep a copy per attempt
+            upload.unlink(missing_ok=True)
+        return _back("/ui/new", err=message)
+
+    def save_upload(upload: UploadFile, name: str) -> str:
+        uploads = Path(ctx.settings.studio.data_dir) / "uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        dest = uploads / f"{uuid.uuid4().hex[:12]}_{name}"
+        written.append(dest)
+        with dest.open("wb") as fh:
+            shutil.copyfileobj(upload.file, fh)
+        return str(dest)
+
+    has_reference = reference_file is not None and bool(reference_file.filename)
+    ref_suffix = Path(reference_file.filename or "").suffix.lower() if reference_file else ""
+    if has_reference and ref_suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
+        return fail("Use a PNG, JPG or WebP reference image.")
     if source_file is not None and source_file.filename:
         suffix = Path(source_file.filename).suffix.lower()
         if suffix not in VIDEO_EXTS:
-            return _back("/ui/new", err=f"{source_file.filename} is not a video file")
-        uploads = Path(ctx.settings.studio.data_dir) / "uploads"
-        uploads.mkdir(parents=True, exist_ok=True)
-        dest = uploads / f"{uuid.uuid4().hex[:12]}_{Path(source_file.filename).name}"
-        with dest.open("wb") as fh:
-            shutil.copyfileobj(source_file.file, fh)
-        path = str(dest)
+            return fail(f"{source_file.filename} is not a video file")
+        path = save_upload(source_file, Path(source_file.filename).name)
         name = name or Path(source_file.filename).stem
     elif media_file:
         allowed = {m["path"] for m in media_files(ctx)}
         if media_file not in allowed:
-            return _back("/ui/new", err="that file is not in the media folder")
+            return fail("that file is not in the media folder")
         path = media_file
     elif local_path:
         path = local_path
     if not path:
-        return _back("/ui/new", err="pick a video from the media folder or upload one")
+        return fail("pick a video from the media folder or upload one")
     if not Path(path).is_file():
-        return _back("/ui/new", err="The worker cannot read that source. Use Upload or the media folder.")
-    if reference_file is not None and reference_file.filename:
-        suffix = Path(reference_file.filename).suffix.lower()
-        if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
-            return _back("/ui/new", err="Use a PNG, JPG or WebP reference image.")
-        uploads = Path(ctx.settings.studio.data_dir) / "uploads"
-        uploads.mkdir(parents=True, exist_ok=True)
-        dest = uploads / f"{uuid.uuid4().hex[:12]}_reference{suffix}"
-        with dest.open("wb") as fh:
-            shutil.copyfileobj(reference_file.file, fh)
-        character_reference_path = str(dest)
+        return fail("The worker cannot read that source. Use Upload or the media folder.")
+    if has_reference and reference_file is not None:
+        character_reference_path = save_upload(reference_file, f"reference{ref_suffix}")
     try:
         body = ProjectCreate(
             name=name or Path(path).stem, target_format=target_format,  # type: ignore[arg-type]
@@ -351,9 +360,17 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
             autostart=autostart)
         project = commands.create_project(session, body, ctx.settings, actor="dashboard")
     except (ValueError, LookupError) as exc:
-        return _back("/ui/new", err=str(exc))
+        return fail(str(exc))
     return _back(f"/ui/projects/{project.id}", msg="Project created" + (
         "; the worker picks it up now" if autostart else ""))
+
+
+def _budget_stop(session: Session, ctx: StudioContext, project: Project) -> dict[str, Any] | None:
+    """What a project stopped at its render budget has used, for the page to explain."""
+    if not at_budget_limit(session, project, ctx.settings):
+        return None
+    return {**budget_usage(session, project.id, ctx.settings),
+            "grant": commands.render_grant(ctx.settings)}
 
 
 @router.get("/projects/{project_id}", response_class=HTMLResponse)
@@ -388,6 +405,7 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
                  keyframes=keyframes,
                  failure=failure_reason(session, project) if failed else None,
                  repair_limit=at_repair_limit(project),
+                 budget=_budget_stop(session, ctx, project),
                  steps=stage_progress(project.status, project.failed_from_state),
                  publish_block=publish_block,
                  schedule_block=None if yt.allow_public else (
@@ -481,6 +499,8 @@ def project_action(project_id: str, action: str, ctx: Ctx, session: Db) -> Redir
             commands.resume_project(session, project, ctx.settings, actor="dashboard")
         elif action == "repair-more":
             commands.repair_more(session, project, ctx.settings, actor="dashboard")
+        elif action == "allow-more-renders":
+            commands.allow_more_renders(session, project, ctx.settings, actor="dashboard")
         elif action == "recheck-quality":
             commands.recheck_quality(session, project, ctx.settings, actor="dashboard")
         elif action == "keep-renders":
@@ -495,6 +515,7 @@ def project_action(project_id: str, action: str, ctx: Ctx, session: Db) -> Redir
         return _back(url, err=str(exc))
     return _back(url, msg={"start": "Started", "cancel": "Cancelled", "resume": "Resumed",
                            "repair-more": "Repairing again",
+                           "allow-more-renders": "Allowed more renders; rendering continues",
                            "recheck-quality": "Checking quality again",
                            "keep-renders": "Kept the renders; the video is being edited",
                            "approve-rights": "Rights approved",

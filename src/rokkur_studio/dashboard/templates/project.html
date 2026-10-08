@@ -17,7 +17,7 @@
     {% if p.status in ['DISCOVERED','SCORED'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/start"><button>Start</button></form>{% endif %}
     {% if p.status == 'RIGHTS_PENDING' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/approve-rights"><button>Approve rights</button></form>
     <form class="inline" method="post" action="/ui/projects/{{p.id}}/reject-rights"><button class="secondary">Reject</button></form>{% endif %}
-    {% if p.status == 'FAILED' and not repair_limit %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/resume"><button>Resume</button></form>{% endif %}
+    {% if p.status == 'FAILED' and not repair_limit and not budget %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/resume"><button>Resume</button></form>{% endif %}
     {% if p.status not in ['ARCHIVED','CANCELLED','RIGHTS_REJECTED','PUBLISHED','MONITORING'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/cancel" onsubmit="return confirm('Cancel this project? Running jobs stop.')"><button class="secondary">Cancel</button></form>{% endif %}
   </div>
 </div>
@@ -31,6 +31,11 @@
     <form class="inline" method="post" action="/ui/projects/{{p.id}}/repair-more"><button>Try {{ settings.render.max_retries }} more repairs</button></form>
     <form class="inline" method="post" action="/ui/projects/{{p.id}}/recheck-quality"><button class="secondary" title="Scores the current renders again without rendering. Useful after the quality check itself changed.">Check quality again</button></form>
     <form class="inline" method="post" action="/ui/projects/{{p.id}}/keep-renders" onsubmit="return confirm('Keep these renders and finish the video from them? The quality check result is recorded as overridden by you.')"><button class="secondary">Keep these renders</button></form>
+  </div>
+  {% elif budget %}
+  <p class="bad" style="margin:8px 0 0">Stopped at this project's render budget: {{ budget.renders }} of {{ budget.max_renders }} renders and {{ '%.1f'|format(budget.gpu) }} of {{ '%g'|format(budget.max_gpu) }} GPU minutes used. Every repair round renders the failing shots again, so they count too. Look at the renders below before allowing more.</p>
+  <div class="row" style="margin-top:8px">
+    <form class="inline" method="post" action="/ui/projects/{{p.id}}/allow-more-renders"><button>Allow {{ budget.grant }} more renders and continue</button></form>
   </div>
   {% elif p.status == 'FAILED' %}<p class="bad" style="margin:8px 0 0">Stopped during {{ (p.failed_from_state or '')|replace('_',' ')|lower }}{% if failure %}: {{ failure }}{% endif %}. Fix the cause, then press Resume.</p>{% endif %}
   {% if p.status == 'RIGHTS_PENDING' and d.rights %}<p class="warn" style="margin:8px 0 0">Waiting for your rights decision: {{ d.rights.reason }}</p>{% endif %}

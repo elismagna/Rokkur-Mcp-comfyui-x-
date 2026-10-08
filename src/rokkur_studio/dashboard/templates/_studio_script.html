@@ -5,7 +5,8 @@
   try { applyTheme(localStorage.getItem('rokkur-theme') || 'dark'); } catch { applyTheme('dark'); }
   toggle.addEventListener('click', () => { const value = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'; applyTheme(value); try { localStorage.setItem('rokkur-theme', value); } catch {} });
   let dirty = false;
-  document.addEventListener('input', () => { dirty = true; });
+  // Typing into a form pauses refresh; the attempt picker and other viewers' controls do not.
+  document.addEventListener('input', e => { if (e.target.form) dirty = true; });
   const create = document.getElementById('create-form'), draftKey = 'rokkur-create-draft';
   if (create) {
     const fields = [...create.elements].filter(el => el.name && !['file','submit','hidden'].includes(el.type));
@@ -14,7 +15,7 @@
         const draft = JSON.parse(sessionStorage.getItem(draftKey) || '{}');
         fields.forEach(el => { if (!(el.name in draft)) return;
           if (el.type === 'checkbox') el.checked = draft[el.name]; else el.value = draft[el.name];
-          el.dispatchEvent(new Event('change'));
+          el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change'));
         });
         if (Object.keys(draft).length) document.getElementById('source-info').textContent = 'Your text and settings have been restored. Reselect any uploaded files.';
       }
@@ -31,7 +32,12 @@
     if (e.defaultPrevented || e.target.method.toLowerCase() !== 'post') return;
     if (e.target.dataset.submitting) { e.preventDefault(); return; }
     e.target.dataset.submitting = '1';
-    setTimeout(() => { if (e.submitter) { e.submitter.disabled = true; e.submitter.textContent = 'Working…'; } }, 0);
+    setTimeout(() => { if (e.submitter) { e.submitter.dataset.label = e.submitter.textContent; e.submitter.disabled = true; e.submitter.textContent = 'Working…'; } }, 0);
+  });
+  // Back/forward cache restores the page as it was mid-submit: make its forms usable again.
+  addEventListener('pageshow', e => { if (!e.persisted) return;
+    document.querySelectorAll('form[data-submitting]').forEach(form => delete form.dataset.submitting);
+    document.querySelectorAll('[data-label]').forEach(button => { button.disabled = false; button.textContent = button.dataset.label; delete button.dataset.label; });
   });
   document.querySelectorAll('[data-preview-target]').forEach(select => select.addEventListener('change', () => {
     const video = document.getElementById(select.dataset.previewTarget); video.pause(); video.src = select.value;

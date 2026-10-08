@@ -222,6 +222,8 @@ class Settings(BaseModel):
             TemplateRegistry(self.workflows_dir).get(profile.workflow)
         except (TemplateError, OSError, ValueError) as exc:
             return str(exc)
+        except Exception as exc:  # e.g. a YAML typo in params.yaml: report it, don't 500
+            return f"workflow {profile.workflow} could not be loaded: {exc}"
         return None
 
 
