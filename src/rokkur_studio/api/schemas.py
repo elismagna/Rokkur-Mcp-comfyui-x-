@@ -33,13 +33,19 @@ class RightsIn(BaseModel):
 class CreativeIn(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    theme: str
+    theme: str = Field(min_length=1, max_length=2000)
     style: str | None = None
     prompt: str | None = None
     character_description: str | None = None
     character_key: str | None = None      # a character from the director's asset tracker
     use_global_look: bool = True          # apply the tracker's prefix, modifiers, negatives
     character_reference_path: str | None = None
+    reference_mode: Literal["source", "none"] = "source"
+    control_strength: float = Field(1.0, ge=0, le=2)
+    seed: int | None = Field(None, ge=0, le=4294967295)
+    steps: int | None = Field(None, ge=8, le=40)
+    cfg: float = Field(6.0, ge=1, le=12)
+    negative_prompt: str | None = Field(None, max_length=2000)
     style_strength: float = Field(0.7, ge=0, le=1)
     identity_strength: float = Field(0.8, ge=0, le=1)
     title: str | None = None
@@ -130,6 +136,7 @@ class RenderOut(BaseModel):
     profile: str
     renderer: str
     workflow: str | None
+    params: dict[str, Any] = Field(default_factory=dict)
     status: str
     remote_id: str | None
     error: dict[str, Any] | None

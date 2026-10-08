@@ -55,7 +55,7 @@ def _project(session: Session, project_id: str, for_update: bool = False) -> Pro
 def create_project(body: ProjectCreate, ctx: Ctx, session: Db) -> Project:
     try:
         return commands.create_project(session, body, ctx.settings)
-    except (KeyError, LookupError) as exc:
+    except (KeyError, LookupError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
 
 

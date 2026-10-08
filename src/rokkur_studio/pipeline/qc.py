@@ -71,8 +71,10 @@ def score_shot(source: np.ndarray, render: np.ndarray, *, threshold: float,
         return {"shot_id": shot_id, "decision": "FAIL", "overall": 0.0,
                 "issues": ["render has no frames"], "recommendations": ["RERENDER_SHOT"],
                 "failed_frames": []}
-    if abs(len(source) - len(render)) > max(2, 0.1 * len(source)):
+    frame_mismatch = abs(len(source) - len(render)) > max(2, 0.1 * len(source))
+    if frame_mismatch:
         issues.append(f"frame count {len(render)} differs from source {len(source)}")
+        recs.append("RERENDER_SHOT")
     src, out = source[:n], render[:n]
     ds, dr = motion_series(src), motion_series(out)
 
@@ -86,8 +88,16 @@ def score_shot(source: np.ndarray, render: np.ndarray, *, threshold: float,
     # Motion preservation: does output motion follow source motion over time?
     c = _corr(ds, dr)
     # Without motion variation to correlate, reward an output that is equally still.
-    still = float(dr.mean() if len(dr) else 0) < 3
-    motion = (10.0 if still else 6.0) if c is None else 10.0 * max(0.0, c)
+    low_motion = float(ds.mean() if len(ds) else 0) < 1.5
+    if low_motion:
+        # Near-static source correlations are dominated by codec noise, not motion.
+        motion = 10.0 * float(np.exp(-max(0.0, float(dr.mean() if len(dr) else 0)
+                                          - float(ds.mean() if len(ds) else 0)) / 3.0))
+    else:
+        source_motion = float(ds.mean())
+        output_motion = float(dr.mean() if len(dr) else 0)
+        ratio = min(source_motion, output_motion) / max(source_motion, output_motion, 1e-6)
+        motion = 10.0 * ratio if c is None else 10.0 * max(0.0, c)
 
     # Structure preservation: per-frame correlation of edge maps with the source. Brightness
     # is not compared: a restyle may relight the scene and keep the layout exactly.
@@ -100,6 +110,14 @@ def score_shot(source: np.ndarray, render: np.ndarray, *, threshold: float,
 
     src_sharp, out_sharp = _sharpness(src), _sharpness(out)
     detail = 10.0 * min(1.0, out_sharp / src_sharp) if src_sharp > 1e-6 else 10.0
+    # A sudden loss of filled surfaces into bright contours is not extra detail.
+    src_dark = float((src < 16).mean())
+    out_dark = float((out < 16).mean())
+    edge_like = out_dark > 0.65 and out_dark - src_dark > 0.3 and out_sharp > src_sharp * 1.3
+    if edge_like:
+        issues.append("possible edge-map output: most filled surfaces became black; visual review needed")
+        recs.append("RERENDER_SHOT")
+        detail = min(detail, 3.0)
 
     overall = (0.3 * temporal + 0.3 * motion + 0.25 * structure + 0.15 * detail) - 0.3 * artifact
     overall = round(max(0.0, min(10.0, overall)), 2)
@@ -120,13 +138,15 @@ def score_shot(source: np.ndarray, render: np.ndarray, *, threshold: float,
         issues.append(f"{len(failed)} unstable frames")
         recs.append("REPAIR_FRAMES" if len(failed) <= 3 else "RERENDER_SHOT")
 
-    passed = overall >= threshold and not black and len(failed) <= 3
+    passed = overall >= threshold and not black and len(failed) <= 3 and not edge_like and not frame_mismatch
     return {
         "shot_id": shot_id,
         "decision": "PASS" if passed else "FAIL",
         "overall": overall,
         "temporal_consistency": round(temporal, 2),
         "motion": round(motion, 2),
+        "motion_method": "low-motion difference" if low_motion else "motion correlation",
+        "visual_review_required": edge_like,
         "structure": round(structure, 2),
         "detail": round(detail, 2),
         "artifact_score": artifact,

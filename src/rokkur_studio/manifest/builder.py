@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from typing import Any
 
 from rokkur_studio.agents.schemas import CreativeBrief
@@ -80,8 +81,14 @@ def shot_params(manifest: ReconstructionManifest, shot: ShotSpec,
     fps = float(o.get("fps", manifest.video.fps))
     width, height = fit_within(int(manifest.video.width * scale),
                                int(manifest.video.height * scale),
-                               manifest.video.width, manifest.video.height)
-    frames = min(profile.max_frames, max(1, round(shot.duration * fps)))
+                               min(manifest.video.width, profile.max_width),
+                               min(manifest.video.height, profile.max_height))
+    # A degraded profile must preserve the whole shot, not silently truncate its tail.
+    limit = (profile.max_frames - 1) // profile.frame_multiple * profile.frame_multiple + 1
+    fps = min(fps, float(profile.fps), limit / shot.duration)
+    output_frames = max(1, round(shot.duration * fps))
+    frames = min(limit, math.ceil((output_frames - 1) / profile.frame_multiple)
+                 * profile.frame_multiple + 1)
     params: dict[str, Any] = {
         "STYLE_PROMPT": shot.prompt or manifest.style.prompt,
         "NEGATIVE_PROMPT": manifest.style.negative_prompt,
@@ -90,7 +97,11 @@ def shot_params(manifest: ReconstructionManifest, shot: ShotSpec,
         "HEIGHT": height,
         "FPS": fps,
         "FRAME_COUNT": frames,
-        "STEPS": profile.steps,
+        "STEPS": int(o.get("steps", profile.steps)),
+        "CFG": float(o.get("cfg", 6.0)),
+        "CONTROL_STRENGTH": float(o.get("control_strength", 1.0)),
+        "_OUTPUT_FRAMES": output_frames,
+        "_REFERENCE_MODE": manifest.identity.reference_mode,
         "DENOISE": round(min(0.95, max(0.2, profile.denoise * style / 0.7)), 3),
         "STYLE_STRENGTH": style,
         "IDENTITY_STRENGTH": identity,

@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block title %}System · Rökkur Studio{% endblock %}{% block body %}
 <h1>System</h1>
-<p class="sub">Rökkur Studio {{ info.version }} · autonomy level {{ info.autonomy_level }} · everything listens on 127.0.0.1 only</p>
+<p class="sub">Rökkur Studio {{ info.version }} · autonomy level {{ info.autonomy_level }} · local services and render capabilities</p>
 
 <div class="grid">
 <div class="card"><h2>Services</h2>
@@ -24,5 +24,6 @@
 <div class="table-wrap"><table><tr><th>Profile</th><th>Workflow</th><th>Max size</th><th>FPS</th><th>Max length</th><th>Steps</th><th>GPU class</th></tr>
 {% for name, pr in profiles.items() %}<tr><td><b>{{name}}</b>{% if name == settings.render.default_profile %} <span class="pill info">default</span>{% endif %}</td><td>{{pr.workflow}}</td><td>{{pr.max_width}}×{{pr.max_height}}</td><td>{{pr.fps}}</td><td>{{ '%.1f'|format(pr.max_frames / pr.fps) }} s ({{pr.max_frames}} frames)</td><td>{{pr.steps}}</td><td>{{pr.resource_class|replace('GPU_','')|lower}}</td></tr>{% endfor %}</table></div>
 
+<div class="card" style="margin-top:20px"><h2>Ready to use</h2>{% for name, reason in profile_status.items() %}<p><b>{{name}}</b> <span class="pill {{'warn' if reason else 'ok'}}">{{'Unavailable' if reason else 'Configured'}}</span>{% if reason %}<br><span class="hint">{{reason}}</span>{% endif %}</p>{% endfor %}<p class="hint">GPU reservations coordinate studio jobs; they are not a measurement of total GPU memory usage. Model availability is checked by the workflow validation command.</p></div>
 <details style="margin-top:20px"><summary>Raw system report</summary><pre>{{ info|pretty }}</pre></details>
 {% endblock %}

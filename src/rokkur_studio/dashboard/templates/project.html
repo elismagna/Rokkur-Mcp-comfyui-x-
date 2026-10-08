@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% from "_macros.html" import status_pill, pipeline %}
 {% block title %}{{p.name}} · Rökkur Studio{% endblock %}
-{% block head %}{% if p.status in working %}<meta http-equiv="refresh" content="6">{% endif %}{% endblock %}
+{% block head %}{% if p.status in working %}<meta name="studio-refresh" content="8">{% endif %}{% endblock %}
 {% block body %}
 {% set docs = d.documents %}
 {% set finals = d.assets|selectattr('kind','equalto','final')|list %}
@@ -38,6 +38,18 @@
 
 <div class="grid2">
 <div class="stack">
+  {% set assembled = d.assets|selectattr('kind','equalto','assembled')|list %}
+  {% set sources = d.assets|selectattr('kind','equalto','source')|list %}
+  {% if assembled and not finals %}<section class="card review-player"><div class="eyebrow">REVIEW BEFORE YOU RETRY</div><h2>Source & latest render</h2>
+    <p class="hint">A rendered preview can be reviewed here even when the quality check stops the project.</p>
+    <div class="compare-grid">{% if sources %}<figure><figcaption>Original footage</figcaption><video controls preload="metadata" src="/projects/{{p.id}}/assets/{{sources[-1].id}}/file"></video></figure>{% endif %}
+    <figure><figcaption>Latest assembled render · not a final export</figcaption><video controls preload="metadata" src="/projects/{{p.id}}/assets/{{assembled[-1].id}}/file"></video></figure></div>
+  </section>{% endif %}
+  {% if shot_previews %}<section class="card"><h2>Review individual shots</h2><p class="hint">Compare attempts before deciding whether to repair or keep a shot. Automatic refresh pauses while a video plays.</p>
+    <div class="shot-grid">{% for sid, asset in shot_previews.items() %}<div class="shot-preview"><div class="row"><b>{{sid|replace('shot_','Shot ')}}</b><span class="pill">Latest #{{asset.meta.attempt}}</span></div>
+      <video id="video-{{sid}}" controls preload="none" {% if keyframes.get(sid) %}poster="{{keyframes[sid]}}"{% endif %} src="/projects/{{p.id}}/assets/{{asset.id}}/file"></video>
+      <label for="attempt-{{sid}}">Compare a render attempt</label><select id="attempt-{{sid}}" data-preview-target="video-{{sid}}">{% for item in d.assets if item.kind=='render' and item.meta.shot_id==sid %}<option value="/projects/{{p.id}}/assets/{{item.id}}/file" {% if item.id==asset.id %}selected{% endif %}>Attempt {{item.meta.attempt}}</option>{% endfor %}</select>
+    </div>{% endfor %}</div></section>{% endif %}
   {% if finals %}
   <div class="card"><h2>Final video</h2>
     <video controls preload="metadata" {% if thumbs %}poster="/projects/{{p.id}}/assets/{{thumbs[-1].id}}/file"{% endif %} src="/projects/{{p.id}}/assets/{{finals[-1].id}}/file"></video>
@@ -51,8 +63,8 @@
     <dl class="kv"><dt>Style</dt><dd>{{ b.style }}</dd>
     {% if b.character %}<dt>Character</dt><dd>{% if dn.character_key %}<b>{{ dn.character_key }}</b> · {% endif %}{{ b.character }}</dd>{% endif %}
     <dt>Look</dt><dd>{{ b.visual_identity }}</dd><dt>Avoid</dt><dd class="muted">{{ b.negative_prompt }}</dd>
-    <dt>Strength</dt><dd>style {{ b.style_strength }} · identity {{ b.identity_strength }} · motion {{ b.motion_preservation }}</dd>
-    {% if dn %}<dt>Framing</dt><dd>by {{ (dn.framing_by or 'rule_based')|replace('_',' ') }}{% if dn.vision %} <span class="pill info">saw each shot</span>{% endif %}{% if not dn.global_look %} · global look off{% endif %}</dd>{% endif %}
+    <dt>Requested guidance</dt><dd>{% if 'reference_mode' in p.creative_input %}source structure {{p.creative_input.get('control_strength',1.0)}} · {{'custom reference' if p.creative_input.get('character_reference_asset') else ('source-frame reference' if p.creative_input.get('reference_mode')=='source' else 'no appearance reference')}}{% else %}Created with earlier settings; see applied render settings below.{% endif %} · motion {{ b.motion_preservation }}</dd>
+    {% if dn %}<dt>Framing</dt><dd>by {{ (dn.framing_by or 'rule_based')|replace('_',' ') }}{% if dn.vision %} <span class="pill info">source images used</span>{% endif %}{% if not dn.global_look %} · global look off{% endif %}</dd>{% endif %}
     {% if not dn %}<dt>Prompt</dt><dd>{{ b.prompt }}</dd>{% endif %}</dl>
     {% if dn.warnings %}<div class="note" style="margin:10px 0 0">{{ dn.warnings|join('; ') }}</div>{% endif %}
     <h3>Shots</h3>
@@ -86,10 +98,22 @@
     {% if q.not_measured %}<p class="hint">Not measured yet: {% for k, v in q.not_measured.items() %}{{k}}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
   </div>{% endif %}
 
+  {% if docs.repair_plan %}<section class="card"><h2>What the last repair changed</h2>{% for action in docs.repair_plan.data.actions %}<p><b>{{action.shot_id|replace('shot_','Shot ')}}</b></p><dl class="kv">{% for key,value in action.changes.items() %}<dt>{{key|replace('_',' ')}}</dt><dd>{{value}}</dd>{% endfor %}</dl>{% if action.unsupported %}<p class="hint">Unavailable in this workflow: {{action.unsupported|join(', ')}}. These controls were not changed.</p>{% endif %}{% endfor %}</section>{% endif %}
   <div class="card"><h2>Renders</h2>
     <div class="table-wrap" style="border:0;box-shadow:none"><table><tr><th>Shot</th><th>Try</th><th>Renderer</th><th>Status</th><th>Time</th><th>Error</th></tr>
     {% for r in d.renders %}<tr><td>{{r.shot_id|replace('shot_','')}}</td><td>{{r.attempt}}</td><td>{{r.renderer}}{% if r.workflow %} <span class="muted">{{r.workflow}}</span>{% endif %}</td><td><span class="pill {{ 'ok' if r.status=='succeeded' else ('bad' if r.status in ['failed','oom'] else 'info') }}">{{r.status}}</span></td><td>{{ '%.0f s'|format(r.duration_s) if r.duration_s else '' }}</td><td class="bad">{{ r.error.message if r.error else '' }}</td></tr>
     {% else %}<tr><td colspan="6" class="empty">No renders yet.</td></tr>{% endfor %}</table></div>
+    <details><summary>Applied render settings</summary>
+      <p class="hint">These values come from each attempt. Controls listed as unavailable did not affect the model.</p>
+      {% for r in d.renders if r.params %}{% set used = r.params.get('_details',{}) %}{% set applied = used.get('applied',{}) %}
+      <h3>{{r.shot_id|replace('shot_','Shot ')}} · attempt {{r.attempt}}</h3>
+      <dl class="kv"><dt>Size</dt><dd>{{r.params.get('WIDTH')}} × {{r.params.get('HEIGHT')}} · {{'%.2f'|format(r.params.get('FPS',0))}} fps</dd>
+        <dt>Sampling</dt><dd>{{r.params.get('STEPS')}} steps · guidance {{r.params.get('CFG')}} · seed {{r.params.get('SEED')}}</dd>
+        {% if applied.get('CONTROL_STRENGTH') is not none %}<dt>Source structure</dt><dd>{{applied.CONTROL_STRENGTH}}</dd>{% endif %}
+        <dt>Appearance</dt><dd>{{used.get('reference','Not recorded by this renderer version')}}</dd>
+        {% if used.get('ignored_params') %}<dt>Unavailable</dt><dd>{{used.ignored_params|join(', ')}}</dd>{% endif %}
+      </dl>{% endfor %}
+    </details>
   </div>
 </div>
 

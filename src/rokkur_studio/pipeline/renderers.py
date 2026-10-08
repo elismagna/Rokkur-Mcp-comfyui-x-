@@ -12,11 +12,13 @@ from typing import Any, Protocol
 
 from rokkur_studio.comfyui.client import (
     ComfyClient,
+    ComfyError,
     ComfyExecutionError,
     ComfyUnavailable,
     ComfyValidationError,
 )
 from rokkur_studio.comfyui.compiler import TemplateRegistry, compile_workflow
+from rokkur_studio.jobs.errors import JobCancelled
 from rokkur_studio.media.ffmpeg import FFmpeg
 
 log = logging.getLogger(__name__)
@@ -73,7 +75,7 @@ class FFmpegPreviewRenderer:
             vf.append("drawbox=enable='between(n,3,8)':x=0:y=0:w=iw:h=ih:color=black:t=fill")
         elif fault == "flicker":
             vf.append("eq=enable='mod(n,2)':brightness=0.35")
-        self.ffmpeg.filter_video(clip, out, ",".join(vf))
+        self.ffmpeg.filter_video(clip, out, ",".join(vf), fps=params["FPS"])
         return RenderOutcome(out, time.monotonic() - started, None,
                              {"renderer": self.name, "fault": fault, "vf": vf})
 
@@ -92,10 +94,33 @@ class ComfyUIRenderer:
                     ) -> RenderOutcome:
         started = time.monotonic()
         template = self.registry.get(workflow)
+        work = out.parent / f"{out.stem}_comfy"
+        work.mkdir(parents=True, exist_ok=True)
+        values = {k: v for k, v in params.items() if not k.startswith("_")}
+        reference = values.get("REFERENCE_IMAGE")
+        reference_kind = "uploaded" if reference else "none"
+        if reference and "REFERENCE_IMAGE" not in template.spec.parameters:
+            raise RenderRejected("This workflow cannot use a character reference image")
+        if ("REFERENCE_IMAGE" in template.spec.parameters and not reference
+                and params.get("_REFERENCE_MODE", "source") == "source"):
+            reference = str(self.ffmpeg.thumbnail(clip, work / "reference.png", at=0,
+                                                  width=int(params["WIDTH"])))
+            reference_kind = "source first frame"
+        prepared = clip
+        if any(n["class_type"] == "WanVaceToVideo" for n in template.workflow.values()):
+            prepared = self.ffmpeg.filter_video(clip, work / "control.mp4",
+                f"fps={params['FPS']},tpad=stop_mode=clone:stop_duration=1,"
+                f"trim=end_frame={params['FRAME_COUNT']},setpts=PTS-STARTPTS", fps=params["FPS"])
         try:
-            uploaded = self.client.upload_input(clip)
+            folder = f"rokkur/{self.client.client_id}/{out.stem}"
+            uploaded = self.client.upload_input(prepared, subfolder=folder)
+            if reference:
+                ref_path = Path(reference)
+                if not ref_path.is_file():
+                    raise RenderRejected(f"Reference image is not readable by the worker: {reference}")
+                values["REFERENCE_IMAGE"] = self.client.upload_input(ref_path, subfolder=folder)
             compiled = compile_workflow(template, {
-                **{k: v for k, v in params.items() if not k.startswith("_")},
+                **values,
                 "INPUT_VIDEO": uploaded,
             })
             prompt_id = self.client.submit(compiled.workflow)
@@ -109,24 +134,32 @@ class ComfyUIRenderer:
             raise RenderRejected(f"{exc}: {exc.details}") from exc
         except ComfyUnavailable as exc:
             raise RenderUnavailable(str(exc)) from exc
-        work = out.parent / f"{out.stem}_comfy"
-        work.mkdir(parents=True, exist_ok=True)
+        except ComfyError as exc:
+            if exc.code == "cancelled":
+                raise JobCancelled() from exc
+            raise RenderRejected(str(exc)) from exc
         videos = [o for o in result.outputs if Path(o.filename).suffix.lower()
                   in (".mp4", ".webm", ".mkv", ".mov", ".gif")]
         images = [o for o in result.outputs if Path(o.filename).suffix.lower()
                   in (".png", ".jpg", ".jpeg", ".webp")]
         if videos:
             raw = self.client.download(videos[-1], work / Path(videos[-1].filename).name)
-            self.ffmpeg.filter_video(raw, out, f"fps={params['FPS']},"
-                                     f"scale={params['WIDTH']}:{params['HEIGHT']}")
         elif images:
             for i, img in enumerate(sorted(images, key=lambda o: o.filename), 1):
                 self.client.download(img, work / f"frame_{i:05d}.png")
-            self.ffmpeg.frames_to_video(str(work / "frame_%05d.png"), out, params["FPS"])
+            raw = self.ffmpeg.frames_to_video(str(work / "frame_%05d.png"),
+                                               work / "frames.mp4", params["FPS"])
         else:
             raise RenderRejected(f"prompt {result.prompt_id} produced no image/video output")
+        wanted = int(params.get("_OUTPUT_FRAMES", params["FRAME_COUNT"]))
+        self.ffmpeg.filter_video(raw, out, f"fps={params['FPS']},"
+            f"scale={params['WIDTH']}:{params['HEIGHT']},"
+            f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={wanted},setpts=PTS-STARTPTS",
+            fps=params["FPS"])
         return RenderOutcome(out, time.monotonic() - started, result.prompt_id, {
             "renderer": self.name, "workflow": compiled.template,
             "workflow_version": compiled.template_version, "applied": compiled.applied,
             "ignored_params": sorted(compiled.ignored),
+            "reference": reference_kind,
+            "output_frames": self.ffmpeg.probe(out).frame_count,
             "execution_seconds": result.execution_seconds})

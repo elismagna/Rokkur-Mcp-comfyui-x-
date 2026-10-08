@@ -6,8 +6,9 @@ profiles:
     workflow: v2v_3070_quality   # v2v_preview needs an SD 1.5 checkpoint the workstation does not have
     max_width: 320
     max_height: 576
-    fps: 12
+    fps: 16
     max_frames: 33
+    frame_multiple: 4
     steps: 8
     denoise: 0.55
     controls: {pose: false, depth: false, segmentation: false}
@@ -16,20 +17,19 @@ profiles:
     degrade: [clear_cache, reduce_frames, reduce_resolution]
 
   RTX3070_QUALITY:
-    description: Best reasonable quality inside 8 GB VRAM; quantization/offloading allowed
+    description: Wan VACE 1.3B with source/reference appearance and edge guidance for 8 GB
     workflow: v2v_3070_quality
     max_width: 576
     max_height: 1024
     fps: 16
     max_frames: 81
+    frame_multiple: 4
     steps: 20
     denoise: 0.65
-    controls: {pose: true, depth: true, segmentation: false}
-    offload: true
-    quantization: fp8
+    controls: {pose: false, depth: false, segmentation: false}
     resource_class: GPU_HEAVY
     location: local
-    degrade: [clear_cache, reduce_frames, reduce_resolution, enable_offload, switch_profile:PREVIEW, split_shot]
+    degrade: [clear_cache, reduce_frames, reduce_resolution, switch_profile:PREVIEW]
 
   HYBRID_MAX:
     description: Local preprocessing, remote heavy generation, local postprocessing
@@ -46,12 +46,14 @@ profiles:
     degrade: [reduce_frames, split_shot]
 
   FUTURE_24GB:
+    min_vram_gb: 24
     description: Higher resolution, larger models, less offloading, longer sequences
     workflow: v2v_3070_quality
     max_width: 1080
     max_height: 1920
     fps: 24
     max_frames: 161
+    frame_multiple: 4
     steps: 30
     denoise: 0.7
     controls: {pose: true, depth: true, segmentation: true}

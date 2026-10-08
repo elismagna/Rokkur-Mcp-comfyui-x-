@@ -25,7 +25,7 @@ ComfyUI and Ollama keep running where they run; Studio talks to them over their 
 | Final Shorts encode, thumbnail, preview GIF, metadata draft | Working |
 | YouTube publish (OAuth, resumable upload, thumbnail, quota ledger; private by default; scheduled public release, playlists, upload approvals at autonomy level 3) | Built and tested against a fake Google; waiting for the first real sign-in (`docs/youtube.md`) |
 | Ollama agents (Creative Director, Channel Manager) | Working on the workstation's GPU (qwen3.5:9b, checked with `agent-check`) |
-| AI director: cinematography vocabulary, Director of Photography pass, per-shot prompts, character tracker, Batch Prompt Schedule export (`docs/director.md`) | Built and tested against a fake Ollama; not yet run on the workstation |
+| AI director: source vision, cinematography, per-shot prompts, character tracker, Batch Prompt Schedule export (`docs/director.md`) | Both vision passes verified locally on qwen3.5:9b; observations still need review |
 | Rökkur Collective / Odysseus integration | Not built: their interfaces could not be inspected (see `docs/current-state.md`) |
 | Discovery, comments, analytics, learning, autonomy loop | Phases 5–10, not started |
 
@@ -38,6 +38,9 @@ copy .env.example .env          # set POSTGRES_PASSWORD
 ```
 
 Open http://127.0.0.1:8400/ui. The dashboard has:
+
+The [2026-10-07 upgrade guide](docs/upgrade-2026-10-07.md) covers appearance references,
+effective Wan controls, timing fixes, render comparisons and real RTX 3070 findings.
 
 - **Overview**: what is rendering, what needs you, finished videos, and whether ComfyUI,
   Ollama and YouTube are reachable.

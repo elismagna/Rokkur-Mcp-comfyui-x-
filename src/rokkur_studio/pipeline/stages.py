@@ -305,6 +305,11 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
         project_id=pid, source_asset=a["source_asset"], analysis=a, brief=brief,
         profile=profile, target_format=project.target_format,
         reference_image=project.creative_input.get("character_reference_asset"))
+    manifest.identity.reference_mode = project.creative_input.get("reference_mode", "source")
+    for shot in manifest.shots:
+        shot.overrides.update({k: project.creative_input[k]
+                               for k in ("control_strength", "steps", "cfg", "seed")
+                               if project.creative_input.get(k) is not None})
     compiled: dict[str, Any] = {}
     if ctx.settings.render.renderer == "comfyui":
         try:
@@ -446,6 +451,8 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
             profile = ctx.settings.profile(str(shot.overrides.get("profile",
                                                                    base_profile.name)))
             params = shot_params(manifest, shot, profile)
+            if params.get("REFERENCE_IMAGE"):
+                params["REFERENCE_IMAGE"] = str(ctx.store.path_for(params["REFERENCE_IMAGE"]))
             with ctx.db.session() as s:
                 attempt = (s.scalar(select(func.count(Render.id)).where(
                     Render.project_id == pid, Render.shot_id == shot.shot_id)) or 0) + 1
@@ -498,6 +505,9 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
             except GpuUnavailable as exc:
                 _render_failed(ctx, job, render_id, "gpu_busy", str(exc))
                 raise JobError("gpu_busy", str(exc)) from exc
+            except JobCancelled:
+                _render_failed(ctx, job, render_id, "cancelled", "Render cancelled by the user")
+                raise
             except FFmpegError as exc:
                 _render_failed(ctx, job, render_id, "ffmpeg", str(exc), exc.to_dict())
                 raise JobError("ffmpeg_failed", str(exc), exc.to_dict()) from exc
@@ -551,10 +561,16 @@ def _assemble(ctx: StudioContext, manifest: ReconstructionManifest) -> str:
             assert asset is not None
             clip = ctx.store.path_for(asset.rel_path)
             # Normalise every shot to the manifest grid so OOM-degraded shots still splice.
-            norm = clip.with_name(clip.stem + "_norm.mp4")
+            norm = clip.with_name(clip.stem + "_norm_v2.mp4")
             if not norm.exists():
+                # Align cuts to the full timeline, avoiding cumulative one-frame rounding
+                # errors when shots used different frame rates after OOM recovery.
+                frames = max(1, round(shot.end * manifest.video.fps)
+                             - round(shot.start * manifest.video.fps))
                 ctx.ffmpeg.filter_video(clip, norm, f"fps={manifest.video.fps},scale="
-                                        f"{manifest.video.width}:{manifest.video.height}")
+                    f"{manifest.video.width}:{manifest.video.height},"
+                    f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={frames},setpts=PTS-STARTPTS",
+                    fps=manifest.video.fps)
             clips.append(norm)
     renders_dir = ctx.store.project_dir(pid, "renders")
     n = len(list(renders_dir.glob("assembled_v*.mp4"))) + 1
@@ -625,12 +641,21 @@ def repair(ctx: StudioContext, job: Job) -> dict[str, Any]:
 
     round_ = project.repair_rounds + 1
     current = {s.shot_id: {"seed": s.overrides.get("seed", s.seed),
+                           "control_strength": s.overrides.get("control_strength", 1.0),
                            "style_strength": s.overrides.get("style_strength",
                                                              manifest.style.strength),
                            "identity_strength": s.overrides.get("identity_strength",
                                                                 manifest.identity.strength)}
                for s in manifest.shots}
-    plan = RepairPlanner().plan(report, round_, current)
+    supported = None
+    if ctx.settings.render.renderer == "comfyui":
+        supported = set(ctx.registry.get(ctx.settings.profile(manifest.render_profile).workflow)
+                        .spec.parameters)
+    plan = RepairPlanner().plan(report, round_, current, supported=supported)
+    if not plan.actions:
+        raise PermanentJobError("no_supported_repairs",
+                                "This workflow has no supported automatic repair controls. "
+                                "Review the rendered shots and choose whether to keep them.")
     for action in plan.actions:
         manifest.shot(action.shot_id).overrides.update(action.changes)
     failing = [a.shot_id for a in plan.actions]

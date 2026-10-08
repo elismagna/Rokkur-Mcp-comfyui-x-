@@ -15,6 +15,7 @@ from rokkur_studio.agents.providers import (
 from rokkur_studio.agents.schemas import (
     CreativeBrief,
     MetadataDraft,
+    ObservedShotFraming,
     RepairAction,
     RepairPlan,
     ShotFraming,
@@ -51,7 +52,11 @@ class CreativeDirector:
         "visible states with nouns first (pose, expression, wardrobe details), never actions "
         "or story: write 'in mid-stride, head turned sharply, focused expression', not 'is "
         "walking', 'suddenly runs' or 'thinking about home'; background, the setting as "
-        "nouns. Use commas between details, never full stops."
+        "nouns. Use commas between details, never full stops. Preserve the source subject, "
+        "setting and action unless the user requests a replacement. If source images are "
+        "attached, they correspond in order to image_shot_ids. Describe what is visible; "
+        "do not replace a concrete animal or person with a generic object. If an image is "
+        "unavailable do not claim to have seen it."
     )
     anchor_note = (
         " The main character is fixed by character_anchor and is added to every shot "
@@ -63,7 +68,8 @@ class CreativeDirector:
         self.provider = provider
 
     def run(self, creative_input: dict[str, Any], analysis: dict[str, Any],
-            target_format: str, *, character: str | None = None) -> tuple[CreativeBrief, str]:
+            target_format: str, *, character: str | None = None,
+            keyframes: dict[str, bytes] | None = None) -> tuple[CreativeBrief, str]:
         shots = [ShotPlan(shot_id=s["shot_id"], start=s["start"], end=s["end"],
                           motion_type=s.get("motion_type", "unknown"),
                           camera=s.get("camera", "unknown")) for s in analysis["shots"]]
@@ -73,12 +79,18 @@ class CreativeDirector:
                                            "analysis": analysis, "target_format": target_format}
                 if character:
                     payload["character_anchor"] = character
+                frames = list((keyframes or {}).items())[:4]
+                if frames:
+                    payload["image_shot_ids"] = [key for key, _ in frames]
                 story = self.provider.generate(
                     self.role, self.instructions + (self.anchor_note if character else ""),
-                    payload, StoryBrief)
+                    payload, StoryBrief, images=[value for _, value in frames] or None)
                 # Facts win over the model: shot timing comes from the analysis.
-                planned = story.shot_plan + [ShotStory(**s.model_dump(include=set(
-                    ShotStory.model_fields))) for s in shots[len(story.shot_plan):]]
+                by_id = {p.shot_id: p for p in story.shot_plan}
+                if len(by_id) != len(story.shot_plan):
+                    raise AgentOutputError(self.role, "duplicate shot ids")
+                planned = [by_id.get(s.shot_id, ShotStory(**s.model_dump(include=set(
+                    ShotStory.model_fields)))) for s in shots]
                 merged = [s.model_copy(update={"intent": b.intent, "subject": b.subject,
                                                "background": b.background})
                           for s, b in zip(shots, planned, strict=False)]
@@ -137,7 +149,13 @@ class DirectorOfPhotography:
         "shot in the source video, and the render keeps that composition: choose the shot "
         "size and angle you see in it. Base camera_movement on source_motion (a static source "
         "is Static). Keep lighting consistent with the previous shot unless the intent calls "
-        "for a change, and fit it to the theme."
+        "for a change, and fit it to the theme. When an image is attached, also return "
+        "observed_subject (specific visible subject, appearance, pose and expression) and "
+        "observed_background (visible surroundings), as short concrete noun phrases. "
+        "Do not describe edges or instructions as the subject. Do not invent unseen objects. "
+        "Keep overlapping objects separate: an occluding hand or prop is not the subject's "
+        "anatomy or clothing. Leave uncertain details out instead of copying a guess from "
+        "the story pass. If there is no image leave both observed fields empty."
     )
 
     def __init__(self, provider: AgentProvider, *, vision: bool = False,
@@ -167,7 +185,7 @@ class DirectorOfPhotography:
             by = "rule_based"
             if use_model and calls < self.max_calls:
                 image = (keyframes or {}).get(shot.shot_id) if self.vision else None
-                payload = {
+                payload: dict[str, Any] = {
                     "theme": brief.theme, "style": brief.style,
                     "visual_identity": brief.visual_identity,
                     "shot": {"shot_id": shot.shot_id, "number": f"{n} of {len(out.shot_plan)}",
@@ -177,10 +195,18 @@ class DirectorOfPhotography:
                     "image": "attached: middle frame of this shot" if image else "none",
                     "allowed": allowed,
                 }
+                if image:
+                    # An earlier model's guessed anatomy can bias the visual pass into
+                    # repeating it. Let the image supply subject/pose independently.
+                    payload["shot"].pop("subject")
+                    payload["shot"].pop("intent")
+                    if previous is not None:
+                        payload["previous_shot"] = previous.model_dump(
+                            exclude={"observed_subject", "observed_background"})
                 calls += 1
                 try:
                     framing = self.provider.generate(self.role, self.instructions, payload,
-                                                     ShotFraming,
+                                                     ObservedShotFraming if image else ShotFraming,
                                                      images=[image] if image else None)
                     by = self.provider.name + ("+vision" if image else "")
                 except AgentUnavailable as exc:
@@ -195,6 +221,11 @@ class DirectorOfPhotography:
             shot.shot_size, shot.camera_angle = framing.shot_size, framing.camera_angle
             shot.camera_movement, shot.lighting = framing.camera_movement, framing.lighting
             shot.framing_by = by
+            if by.endswith("+vision"):
+                if framing.observed_subject.strip():
+                    shot.subject = framing.observed_subject.strip()
+                if framing.observed_background.strip():
+                    shot.background = framing.observed_background.strip()
             previous = framing
         sources = {s.framing_by for s in out.shot_plan}
         return out, (sources.pop() if len(sources) == 1 else "mixed") or "rule_based"
@@ -241,7 +272,7 @@ class RepairPlanner:
     """Maps QC findings for failing shots to minimal parameter changes."""
 
     def plan(self, qc_report: dict[str, Any], round_: int,
-             current: dict[str, dict[str, Any]]) -> RepairPlan:
+             current: dict[str, dict[str, Any]], *, supported: set[str] | None = None) -> RepairPlan:
         actions = []
         for shot in qc_report.get("shots", []):
             if shot.get("decision") == "PASS":
@@ -260,6 +291,26 @@ class RepairPlanner:
                 changes["pose"] = True
             if "ADD_DEPTH_CONTROL" in recs:
                 changes["depth"] = True
+            unsupported = []
+            if supported is not None:
+                mappings = {"seed": "SEED", "style_strength": "STYLE_STRENGTH",
+                            "identity_strength": "IDENTITY_STRENGTH",
+                            "pose": "POSE_STRENGTH", "depth": "DEPTH_STRENGTH"}
+                unsupported = [k for k in changes if mappings[k] not in supported]
+                changes = {k: v for k, v in changes.items() if k not in unsupported}
+                if "CONTROL_STRENGTH" in supported:
+                    old = float(cur.get("control_strength", 1.0))
+                    # Layout/motion drift needs firmer guidance; temporal instability alone
+                    # gets a gentler constraint. These are bounded, recorded experiments.
+                    drift = any(r in recs for r in ("ADD_POSE_CONTROL", "ADD_DEPTH_CONTROL"))
+                    new = round(min(2.0, old + 0.15) if drift else max(0.0, old - 0.1), 3)
+                    if new != old:
+                        changes["control_strength"] = new
+                recs = (["ADJUST_CONTROL_STRENGTH"] if "control_strength" in changes else []) + (
+                    ["CHANGE_SEED"] if "seed" in changes else [])
+                if not changes:
+                    continue
             actions.append(RepairAction(shot_id=shot["shot_id"], recommendations=recs,
-                                        changes=changes, reason="; ".join(shot.get("issues", []))))
+                                        changes=changes, unsupported=unsupported,
+                                        reason="; ".join(shot.get("issues", []))))
         return RepairPlan(round=round_, actions=actions)

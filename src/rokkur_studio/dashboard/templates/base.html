@@ -117,7 +117,8 @@ video,img.shot{width:100%;max-height:520px;border-radius:10px;background:#000;di
   .cta{margin:0 0 0 auto;padding:6px 12px}
   main{padding:18px 16px 40px}.grid2,.grid{grid-template-columns:minmax(0,1fr)}
 }
-</style></head><body>
+</style>{% include '_studio_style.html' %}</head><body>
+<a class="skip-link" href="#main-content">Skip to content</a>
 {% macro icon(name) -%}
 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 {%- if name=='home' %}<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>
@@ -149,8 +150,9 @@ video,img.shot{width:100%;max-height:520px;border-radius:10px;background:#000;di
   <div class="soon">Comments <small>soon</small></div>
   <div class="soon">Analytics <small>soon</small></div>
 </aside>
-<main>
+<main id="main-content">
+<div class="workspace-bar"><span>Rökkur / Local production studio</span><button id="theme-toggle" type="button" class="secondary">Light appearance</button></div>
 {% if msg %}<div class="flash ok" role="status">{{msg}}</div>{% endif %}
 {% if err %}<div class="flash bad" role="alert">{{err}}</div>{% endif %}
 {% block body %}{% endblock %}
-</main></body></html>
+</main>{% include '_studio_script.html' %}</body></html>

@@ -4,7 +4,8 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-07 by Claude (commit `b69234d` is the latest code at time of writing).
+Last updated: 2026-10-08 by Codex. See the [local upgrade findings](upgrade-2026-10-07.md)
+for implementation details and real render observations; the latest Git commit is authoritative.
 
 ## How we share the work
 
@@ -132,6 +133,20 @@ ComfyUI, Ollama and Google servers (`tests/fakes*.py`).
 
 ## Verified results
 
+Tested directly by Codex on Elis's PC, 2026-10-07/08:
+- Final suite: **199 passed**, with `ruff check src tests` and `mypy src` clean. Real FFmpeg
+  and disposable Postgres; external APIs mocked in the suite. A `_test` database-name guard
+  now prevents accidentally pointing tests at production.
+- Real Qwen3.5:9b source-vision passes, plus two actual Wan renders on the RTX 3070. Exact
+  settings, timings, visual limitations and QC results are in the upgrade findings.
+- Deployed the rebuilt API and worker on 2026-10-08. Ten live dashboard pages returned 200;
+  existing project players, HTTP range seeking, 390-pixel layout and browser scripts passed.
+- `comfy-check`: installed Wan workflow v2 passes. The unused SD1.5 workflow lacks its
+  checkpoint; hybrid workflow is absent. Unavailable profiles are disabled in the UI.
+- Existing Ape project `proj_01a116f8ebdc_921a5f36` remains stopped at the **40/40 render
+  budget**, after 8 repair rounds. It was not resumed or rerendered during deployment.
+  Its previous outputs are reviewable; plain Resume cannot fix an exhausted render budget.
+
 Tested on Elis's PC (Elis ran the commands and pasted the output):
 - `up`, `audit` and migrations work. ComfyUI and Ollama are reachable from Docker.
 - `comfy-render` produced a real Wan VACE render (after the multiple-of-16 fix).
@@ -162,14 +177,13 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Known issues (open)
 
-1. **QC calibration on real Wan output is unverified.** Structure now uses edges, but it hasn't
-   been checked on real renders. The motion score looks unreliable on low-motion shots (002 and
-   003 scored about 0). Shot 001 really did flicker (temporal 2.8).
-2. **Repairs on Wan only change the seed.** The repair planner sets `STYLE_STRENGTH`, pose and
-   depth, but `workflows/v2v_3070_quality/params.yaml` has no mapping for them, so the compiler
-   ignores them (render details list `ignored_params`). `DENOISE` and `OFFLOAD` are ignored
-   too. `CONTROL_STRENGTH` (VACE strength) is mapped but never set. RTX3070_QUALITY declares
-   pose/depth controls, offload and fp8 that this workflow doesn't use.
+1. **Real Wan fidelity remains imperfect.** Local reference-guided renders have filled surfaces,
+   but can distort anatomy and motion. QC scored two real trials 5.29 and 5.19 (FAIL). Low-motion
+   scoring is fixed and tested, but identity/anatomy/prompt fidelity are still unmeasured.
+2. **Repairs now change seed and CONTROL_STRENGTH.** Unsupported style/identity/pose/depth
+   changes are filtered and disclosed. Increasing guidance from 0.85 to 1.15 worsened the
+   tested frog shot despite a better motion subscore. Treat adjustments as experiments.
+   DENOISE and OFFLOAD remain unavailable in this Wan graph and are reported as ignored.
 3. One render job in the same project hit "ComfyUI unreachable … [Errno 101] Network is
    unreachable" before the run that got to QC. Not diagnosed; ComfyUI was probably not
    running at the time.
@@ -194,14 +208,23 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
-- **Claude (2026-10-07):** waiting for `qc-shots.zip` from Elis (source clip and render for
-  shots 002 and 006) to calibrate QC on real frames. Planned next, not started: have Wan
-  repairs change `CONTROL_STRENGTH` and not just the seed; review the motion metric for
-  low-motion shots. Elis should pull `b69234d` and press **Check quality again** on the
-  stopped project.
-- **Codex:** (add yours here)
+- **Claude (last note 2026-10-07):** previously waiting for `qc-shots.zip`. Pull the latest
+  `main` before continuing: CONTROL_STRENGTH repairs and low-motion QC are now implemented
+  by Codex. Read the real local findings before changing their calibration.
+- **Codex (2026-10-08):** reliability/UI upgrade is implemented, tested and deployed locally.
+  This commit releases the previous file ownership; no further edit is in progress. The
+  next useful work is real character/hand fidelity, repair comparison strategy, and a clear
+  user flow for projects stopped at the total render budget. Do not promise that increasing
+  source strength improves quality: the real comparison showed the opposite.
 
 ## Log (newest first)
+
+- 2026-10-08 Codex: **199 tests passed**, lint/types clean; deployed and browser-checked the
+  upgrade on port 8400. No media, credentials or production data are included in this commit.
+- 2026-10-07 Codex: guided UI and attempt review; source-aware director passes; uploaded/source
+  references wired into Wan; effective sampling/structure controls and repairs; valid frame
+  lengths, CFR output and OOM timing; low-motion/frozen/edge-output QC; profile availability.
+  Real local tests and remaining limitations are in [the upgrade guide](upgrade-2026-10-07.md).
 
 - 2026-10-07 Claude `b69234d`: real stop reason on the project page; repair-limit actions
   (more rounds, check again, keep); edge-based QC structure.

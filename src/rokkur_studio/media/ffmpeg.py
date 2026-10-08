@@ -154,19 +154,25 @@ class FFmpeg:
         args = ["-ss", f"{start:.3f}", "-i", str(path), "-t", f"{max(0.04, end - start):.3f}"]
         if filters:
             args += ["-vf", ",".join(filters)]
+        if fps:
+            args += ["-r", str(fps)]
         args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p"]
         args += ["-c:a", "aac"] if keep_audio else ["-an"]
         self._run(self._ff(*args, str(out)))
         return out
 
-    def filter_video(self, path: Path, out: Path, vf: str) -> Path:
-        self._run(self._ff("-i", str(path), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
+    def filter_video(self, path: Path, out: Path, vf: str, *, fps: float | None = None) -> Path:
+        # Supply the encoder rate as well as the fps filter: otherwise a trimmed final
+        # frame can have zero duration in MP4 on newer FFmpeg versions.
+        rate = ["-r", str(fps)] if fps else []
+        self._run(self._ff("-i", str(path), "-vf", vf, *rate, "-c:v", "libx264", "-preset", "veryfast",
                            "-crf", "18", "-pix_fmt", "yuv420p", "-an", str(out)))
         return out
 
     def frames_to_video(self, frames_glob_pattern: str, out: Path, fps: float) -> Path:
         """Combine an image sequence (e.g. ``dir/frame_%05d.png``) into H.264."""
-        self._run(self._ff("-framerate", str(fps), "-i", frames_glob_pattern, "-c:v", "libx264",
+        self._run(self._ff("-framerate", str(fps), "-i", frames_glob_pattern, "-r", str(fps),
+                           "-c:v", "libx264",
                            "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", str(out)))
         return out
 
@@ -235,6 +241,8 @@ class FFmpeg:
         if with_audio:
             args = ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", *args,
                     "-map", "0:a", "-c:a", "aac"]
-        args += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-t", str(seconds)]
+        # The concat filter has a microsecond timebase. Explicit CFR prevents codec /
+        # FFmpeg-version-dependent rounding from changing the fixture's frame rate.
+        args += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps), "-t", str(seconds)]
         self._run(self._ff(*args, str(out)))
         return out

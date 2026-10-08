@@ -220,7 +220,8 @@ def test_dp_pass_sends_keyframes_to_a_vision_model():
         if request.url.path == "/api/show":
             return httpx.Response(200, json={"capabilities": ["completion", "vision"]})
         calls.append(json.loads(request.content))
-        return httpx.Response(200, json={"message": {"content": json.dumps(FRAMING)}})
+        return httpx.Response(200, json={"message": {"content": json.dumps({**FRAMING,
+            "observed_subject": "a figure in mid-stride", "observed_background": "forest"})}})
 
     provider = OllamaProvider("http://o", "m", transport=httpx.MockTransport(handle))
     assert provider.supports_images()
@@ -228,7 +229,8 @@ def test_dp_pass_sends_keyframes_to_a_vision_model():
                       "youtube_short", tracker=AssetTracker(), settings=DirectorSection(),
                       keyframes={"shot_001": b"jpeg-1", "shot_002": b"jpeg-2"})
     # story pass fell back (it got framing JSON), the DP saw one frame per shot
-    sent = [c["messages"][1].get("images") for c in calls if c["format"]["title"] == "ShotFraming"]
+    sent = [c["messages"][1].get("images") for c in calls
+            if c["format"]["title"] == "ObservedShotFraming"]
     assert sent == [[base64.b64encode(b"jpeg-1").decode()], [base64.b64encode(b"jpeg-2").decode()]]
     assert brief.director is not None and brief.director.vision
     assert all(s.framing_by == "ollama+vision" for s in brief.shot_plan)

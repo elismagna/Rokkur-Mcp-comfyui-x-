@@ -330,19 +330,15 @@ def test_comfyui_oom_triggers_free_and_degraded_resubmit(ctx, sample_video):
     assert fake.freed >= 1 and len(fake.prompts) == 3
 
 
-def test_missing_comfy_template_fails_fast_at_compile(ctx, sample_video):
+def test_unconfigured_remote_profile_is_refused_before_processing(ctx, sample_video):
     ctx.settings.render.renderer = "comfyui"
-    with ctx.db.transaction() as s:
-        p = commands.create_project(s, ProjectCreate(
+    with ctx.db.transaction() as s, pytest.raises(ValueError, match="Remote rendering"):
+        commands.create_project(s, ProjectCreate(
             name="q", render_profile="HYBRID_MAX", source=SourceIn(local_path=str(sample_video)),
             rights=RightsIn(category=RightsCategory.USER_OWNED), creative=CreativeIn(theme="x"),
             autostart=True), ctx.settings)
-        pid = p.id
-    run(ctx)
-    assert status(ctx, pid) == "FAILED"
     with ctx.db.session() as s:
-        job = s.scalars(select(Job).where(Job.kind == "compile_workflow")).one()
-        assert job.error["code"] == "template_error"
+        assert s.scalar(select(func.count(Job.id))) == 0
 
 
 @pytest.mark.parametrize("bad_path", ["/nonexistent/video.mp4"])

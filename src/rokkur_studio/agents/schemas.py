@@ -32,6 +32,15 @@ class ShotFraming(BaseModel):
     camera_angle: CameraAngle
     camera_movement: CameraMovement
     lighting: Lighting
+    observed_subject: str = ""
+    observed_background: str = ""
+
+
+class ObservedShotFraming(ShotFraming):
+    """Vision calls must supply observations rather than silently omitting optional fields."""
+
+    observed_subject: str = Field(min_length=1, max_length=1000)
+    observed_background: str = Field(max_length=1000)
 
 
 class ShotPlan(ShotStory):
@@ -126,7 +135,7 @@ class RightsAssessment(BaseModel):
 
 QcRecommendation = Literal[
     "PASS", "RERENDER_SHOT", "REDUCE_STYLE_STRENGTH", "INCREASE_IDENTITY", "CHANGE_SEED",
-    "ADD_POSE_CONTROL", "ADD_DEPTH_CONTROL", "REPAIR_FRAMES",
+    "ADD_POSE_CONTROL", "ADD_DEPTH_CONTROL", "REPAIR_FRAMES", "ADJUST_CONTROL_STRENGTH",
 ]
 
 
@@ -135,6 +144,7 @@ class RepairAction(BaseModel):
     recommendations: list[QcRecommendation]
     changes: dict[str, float | int | str | bool]
     reason: str
+    unsupported: list[str] = Field(default_factory=list)
 
 
 class RepairPlan(BaseModel):

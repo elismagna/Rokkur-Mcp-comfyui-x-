@@ -1,7 +1,8 @@
 {% extends "base.html" %}{% from "_macros.html" import project_row, status_pill %}
-{% block head %}{% if active %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
+{% block head %}{% if active %}<meta name="studio-refresh" content="10">{% endif %}{% endblock %}
 {% block body %}
-<h1>Overview</h1>
+<div class="eyebrow">YOUR PRODUCTION DESK</div>
+<h1>From footage to finished film.</h1>
 <p class="sub">Renders with <b>{{ settings.render.renderer }}</b> · agents on <b>{{ settings.agents.provider }}</b>{% if settings.agents.provider == 'ollama' %} ({{ settings.ollama.model }}){% endif %} · default profile <b>{{ settings.render.default_profile }}</b></p>
 
 {% if settings.render.renderer != 'comfyui' %}

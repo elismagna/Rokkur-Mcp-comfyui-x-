@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 
 from rokkur_studio.config import Settings, load_settings
 from rokkur_studio.db.models import Base
@@ -20,6 +21,9 @@ TEST_DB = os.environ.get("TEST_DATABASE_URL",
 
 @pytest.fixture(scope="session")
 def database() -> Iterator[Database]:
+    name = make_url(TEST_DB).database or ""
+    if not name.endswith("_test"):
+        pytest.exit("TEST_DATABASE_URL must use a separate database ending in _test", 2)
     db = Database(TEST_DB)
     try:
         with db.engine.connect() as c:

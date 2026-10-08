@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -142,6 +142,7 @@ templates.env.globals["percent"] = percent
 
 def _page(request: Request, name: str, ctx: StudioContext, **data: Any) -> HTMLResponse:
     return templates.TemplateResponse(request, name, {
+        "profile_status": {n: ctx.settings.profile_problem(n) for n in ctx.settings.profiles},
         "working": WORKING, "attention": ATTENTION, "settings": ctx.settings,
         "msg": request.query_params.get("msg"), "err": request.query_params.get("err"),
         "path": request.url.path, **data})
@@ -178,8 +179,7 @@ def media_files(ctx: StudioContext) -> list[dict[str, Any]]:
 
 def _probe(url: str) -> bool:
     try:
-        httpx.get(url, timeout=2)
-        return True
+        return httpx.get(url, timeout=2).is_success
     except httpx.HTTPError:
         return False
 
@@ -262,6 +262,13 @@ def new_page(request: Request, ctx: Ctx) -> HTMLResponse:
                              if c.value not in ("UNKNOWN", "REJECTED", "REFERENCE_ONLY")])
 
 
+@router.get("/media/preview")
+def media_preview(ctx: Ctx, path: str) -> FileResponse:
+    if path not in {m["path"] for m in media_files(ctx)}:
+        raise HTTPException(404, "Choose a file from the media folder")
+    return FileResponse(path)
+
+
 @router.post("/projects")
 def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                      rights_category: Annotated[str, Form()],
@@ -269,6 +276,13 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                      local_path: Annotated[str, Form()] = "",
                      media_file: Annotated[str, Form()] = "",
                      source_file: Annotated[UploadFile | None, File()] = None,
+                     reference_file: Annotated[UploadFile | None, File()] = None,
+                     reference_mode: Annotated[str, Form()] = "source",
+                     control_strength: Annotated[float, Form()] = 1.0,
+                     seed: Annotated[str, Form()] = "",
+                     steps: Annotated[str, Form()] = "",
+                     cfg: Annotated[float, Form()] = 6.0,
+                     negative_prompt: Annotated[str, Form()] = "",
                      prompt: Annotated[str, Form()] = "",
                      permission_evidence: Annotated[str, Form()] = "",
                      character_reference_path: Annotated[str, Form()] = "",
@@ -279,6 +293,12 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                      target_format: Annotated[str, Form()] = "youtube_short",
                      autostart: Annotated[bool, Form()] = False) -> RedirectResponse:
     path = ""
+    try:
+        selected = render_profile or ctx.settings.render.default_profile
+        if problem := ctx.settings.profile_problem(selected):
+            return _back("/ui/new", err=problem)
+    except KeyError as exc:
+        return _back("/ui/new", err=str(exc))
     if source_file is not None and source_file.filename:
         suffix = Path(source_file.filename).suffix.lower()
         if suffix not in VIDEO_EXTS:
@@ -299,6 +319,18 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
         path = local_path
     if not path:
         return _back("/ui/new", err="pick a video from the media folder or upload one")
+    if not Path(path).is_file():
+        return _back("/ui/new", err="The worker cannot read that source. Use Upload or the media folder.")
+    if reference_file is not None and reference_file.filename:
+        suffix = Path(reference_file.filename).suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
+            return _back("/ui/new", err="Use a PNG, JPG or WebP reference image.")
+        uploads = Path(ctx.settings.studio.data_dir) / "uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        dest = uploads / f"{uuid.uuid4().hex[:12]}_reference{suffix}"
+        with dest.open("wb") as fh:
+            shutil.copyfileobj(reference_file.file, fh)
+        character_reference_path = str(dest)
     try:
         body = ProjectCreate(
             name=name or Path(path).stem, target_format=target_format,  # type: ignore[arg-type]
@@ -306,7 +338,12 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
             source=SourceIn(platform="local", local_path=path),
             rights=RightsIn(category=RightsCategory(rights_category),
                             permission_evidence=permission_evidence or None),
-            creative=CreativeIn(theme=theme, prompt=prompt or None,
+            creative=CreativeIn(theme=theme.strip(), prompt=prompt or None,
+                                reference_mode=reference_mode,  # type: ignore[arg-type]
+                                control_strength=control_strength, cfg=cfg,
+                                seed=int(seed) if seed.strip() else None,
+                                steps=int(steps) if steps.strip() else None,
+                                negative_prompt=negative_prompt or None,
                                 character_key=character_key or None,
                                 character_description=character_description or None,
                                 use_global_look=use_global_look,
@@ -340,7 +377,14 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
                  if project.status == S.READY_TO_PUBLISH else None)
     proposals = publishing.pending_proposals(session, project_id)
     failed = project.status == S.FAILED
+    previews: dict[str, Any] = {}
+    for asset in detail.assets:
+        if asset.kind == "render" and asset.meta.get("shot_id"):
+            key = asset.meta["shot_id"]
+            if key not in previews or asset.meta.get("attempt", 0) > previews[key].meta.get("attempt", 0):
+                previews[key] = asset
     return _page(request, "project.html", ctx, d=detail, p=project, events=events,
+                 shot_previews=previews,
                  keyframes=keyframes,
                  failure=failure_reason(session, project) if failed else None,
                  repair_limit=at_repair_limit(project),

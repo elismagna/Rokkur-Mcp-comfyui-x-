@@ -95,6 +95,9 @@ def compile_brief(brief: CreativeBrief, *, creative_input: dict[str, Any],
     if anchor:
         out.character = clean_phrase(anchor)
     for shot in out.shot_plan:
+        if not shot.subject.strip() and not anchor:
+            shot.subject = out.character or "the visible subject from the source video"
+            notes.warnings.append(f"{shot.shot_id}: no observed subject; review the prompt before rendering.")
         shot.prompt = shot_prompt(shot, prefix=prefix, anchor=anchor, style_terms=style_terms,
                                   weights=weights)
         left = narrative_leftovers(shot.prompt)
@@ -103,7 +106,8 @@ def compile_brief(brief: CreativeBrief, *, creative_input: dict[str, Any],
                                   f"{', '.join(left)}")
     wanted = " ".join([brief.theme, brief.style, creative_input.get("prompt") or ""])
     out.negative_prompt, dropped = merge_negatives(
-        [tracker.negative_prompt if global_look else None, brief.negative_prompt], wanted=wanted)
+        [tracker.negative_prompt if global_look else None,
+         creative_input.get("negative_prompt") or brief.negative_prompt], wanted=wanted)
     if dropped:
         notes.warnings.append("left out of the negative prompt because the theme asks for it: "
                               + ", ".join(dropped))

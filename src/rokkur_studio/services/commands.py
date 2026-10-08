@@ -33,6 +33,8 @@ def create_project(session: Session, data: ProjectCreate, settings: Settings,
                    actor: str = "api") -> Project:
     profile = data.render_profile or settings.render.default_profile
     settings.profile(profile)  # validate early
+    if problem := settings.profile_problem(profile):
+        raise ValueError(problem)
     if data.channel_id and session.get(Channel, data.channel_id) is None:
         raise LookupError(f"channel {data.channel_id} not found")
     project = Project(name=data.name, status=S.DISCOVERED.value, target_format=data.target_format,
@@ -60,6 +62,8 @@ def create_project(session: Session, data: ProjectCreate, settings: Settings,
 
 
 def start(session: Session, project: Project, settings: Settings, actor: str = "api") -> Job | None:
+    if problem := settings.profile_problem(project.render_profile):
+        raise ValueError(problem)
     if project.status in (S.DISCOVERED, S.SCORED):
         transition(session, project, S.RIGHTS_PENDING, actor=actor)
     return advance(session, project, settings, manual=True)

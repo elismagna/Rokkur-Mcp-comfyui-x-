@@ -1,66 +1,91 @@
 {% extends "base.html" %}
 {% block title %}New video · Rökkur Studio{% endblock %}
 {% block body %}
-<h1>New video</h1>
-<p class="sub">Pick a clip you have the rights to, describe the look, and the studio does the rest: brief, Wan render, quality check, title and tags.</p>
-
-<form method="post" action="/ui/projects" enctype="multipart/form-data">
-<div class="grid2">
+<div class="eyebrow">CREATE / VIDEO RESTYLING</div>
+<h1>Give your footage a new world.</h1>
+<p class="sub">Keep the performance. Shape the character, atmosphere and finish.</p>
+<form method="post" action="/ui/projects" enctype="multipart/form-data" id="create-form">
+<div class="create-layout">
 <div class="stack">
-  <div class="card"><h2>1 · Source video</h2>
+  <section class="card"><div class="section-heading"><span class="step-number">01</span><div><h2>Your footage</h2><p class="hint">A short, clear shot is the best place to start.</p></div></div>
     {% if media %}
-    <label for="media_file">From your media folder</label>
-    <select id="media_file" name="media_file"><option value="">Choose a file…</option>
-      {% for m in media %}<option value="{{m.path}}">{{m.name}} ({{m.mb}} MB)</option>{% endfor %}</select>
-    {% else %}
-    <p class="hint">Your media folder (<code>{{ settings.studio.media_dir }}</code>) has no videos yet. Copy clips into the <code>media</code> folder inside the studio folder and reload this page, or upload one below.</p>
+    <label for="media_file">Choose from your media folder</label>
+    <select id="media_file" name="media_file"><option value="">Choose a video…</option>
+      {% for m in media %}<option value="{{m.path}}">{{m.name}} · {{m.mb}} MB</option>{% endfor %}</select>
     {% endif %}
-    <label for="source_file">Or upload a file</label>
-    <input id="source_file" type="file" name="source_file" accept="video/*">
-    <p class="hint">Uploads are copied into the studio's data folder. Large files are quicker through the media folder.</p>
-  </div>
-
-  <div class="card"><h2>2 · The look</h2>
-    <label for="theme">Theme / style</label>
-    <input id="theme" name="theme" required placeholder="1970s stop-motion claymation, warm film grain">
-    <label for="prompt">Extra detail (optional)</label>
-    <textarea id="prompt" name="prompt" placeholder="What should the agents emphasise? Characters, palette, mood…"></textarea>
-    <label for="name">Project name (optional)</label>
-    <input id="name" name="name" placeholder="Defaults to the file name">
-    <label for="character_key">Character</label>
-    <select id="character_key" name="character_key"><option value="">None</option>{% for key, desc in characters.items() %}<option value="{{ key }}">{{ key }} · {{ desc|truncate(60) }}</option>{% endfor %}</select>
-    <p class="hint">Characters are kept on the <a href="/ui/director">Director</a> page; the chosen one's description opens every shot's prompt.</p>
-    <details><summary>Or describe a character just for this video</summary>
-      <label for="character_description">Appearance and clothing, nouns first</label>
-      <input id="character_description" name="character_description" placeholder="an old fisherman, yellow oilskin coat, grey beard">
+    <label for="source_file" class="upload-zone"><b>Upload a video</b><span>MP4, MOV, MKV, WebM or AVI</span>
+    <input id="source_file" type="file" name="source_file" accept="video/*"></label>
+    <video id="source-preview" controls preload="metadata" hidden></video>
+    <p class="hint" id="source-info">Your original stays intact. The studio works on a copy.</p>
+    <label for="name">Project name</label><input id="name" name="name" placeholder="Defaults to your video's name" maxlength="200">
+  </section>
+  <section class="card"><div class="section-heading"><span class="step-number">02</span><div><h2>Creative direction</h2><p class="hint">Describe the finished image, then anchor the character.</p></div></div>
+    <label for="theme">Visual style</label><input id="theme" name="theme" required maxlength="2000" placeholder="Warm retro science-fiction animation, solid colors, soft shading">
+    <label for="prompt">What matters in this scene?</label><textarea id="prompt" name="prompt" placeholder="Keep the monkey's face, body proportions and original movement. A colorful retro spaceship interior."></textarea>
+    <div class="form-pair"><div><label for="character_key">Saved character</label><select id="character_key" name="character_key"><option value="">Use the source character</option>{% for key, desc in characters.items() %}<option value="{{key}}">{{key}} · {{desc|truncate(50)}}</option>{% endfor %}</select></div>
+    <div><label for="character_description">Or describe this character</label><input id="character_description" name="character_description" placeholder="Small brown monkey, tan face, round ears"></div></div>
+    <p class="hint">Manage reusable characters in <a href="/ui/director">Director</a>.</p>
+    <label for="reference_file">Appearance reference <span class="muted">optional</span></label>
+    <input id="reference_file" type="file" name="reference_file" accept="image/png,image/jpeg,image/webp">
+    <img id="reference-preview" alt="Your selected character reference" hidden>
+    <label for="reference_mode">When no reference is uploaded</label><select id="reference_mode" name="reference_mode"><option value="source">Use the first frame of each shot as an appearance guide</option><option value="none">Use the prompt and motion guide only</option></select>
+    <p class="hint">A custom reference guides the new appearance. Source frames help preserve the existing one.</p>
+    <label class="check"><input type="checkbox" name="use_global_look" value="true" checked> Apply my saved global look</label>
+    <p class="hint">Includes the prefix, style modifiers and negatives from Director.</p>
+    <details><summary>Negative prompt and advanced controls</summary>
+      <label for="negative_prompt">Things to avoid</label><textarea id="negative_prompt" name="negative_prompt" maxlength="2000" placeholder="Leave blank to use the director's negative prompt"></textarea>
+      <label for="control_strength">Follow source structure <output id="control-value">1.0</output></label><input id="control_strength" name="control_strength" type="range" min="0" max="2" step="0.05" value="1">
+      <p class="hint">1.0 is the baseline. Lower values give more freedom; higher values strengthen the source guide.</p>
+      <div class="form-pair"><div><label for="seed">Seed</label><input id="seed" name="seed" type="number" min="0" max="4294967295" placeholder="Automatic, reproducible per shot"></div><div><label for="steps">Sampling steps</label><input id="steps" name="steps" type="number" min="8" max="40" placeholder="Use the quality profile"></div></div>
+      <label for="cfg">Prompt guidance</label><input id="cfg" name="cfg" type="number" min="1" max="12" step="0.5" value="6">
+      <p class="hint">Keep a fixed seed when comparing a setting. More steps take longer and do not guarantee a better result.</p>
+      <label for="character_reference_path">Existing reference path on the worker</label><input id="character_reference_path" name="character_reference_path" placeholder="/media/character.png">
     </details>
-    <label class="check" style="margin-top:14px"><input type="checkbox" name="use_global_look" value="true" checked> Apply the global look <span class="muted">(prefix, style modifiers, negative prompt)</span></label>
-    <details><summary>Character reference image</summary>
-      <label for="character_reference_path">Path to an image the worker can read, e.g. /media/hero.png</label>
-      <input id="character_reference_path" name="character_reference_path">
-    </details>
-  </div>
+  </section>
 </div>
-
-<div class="stack">
-  <div class="card"><h2>3 · Rights</h2>
-    <label for="rights_category">Why may you use this video?</label>
-    <select id="rights_category" name="rights_category">{% for c in categories %}<option value="{{c}}" {% if c=='USER_OWNED' %}selected{% endif %}>{{ c|replace('_',' ')|lower|capitalize }}</option>{% endfor %}</select>
-    <label for="permission_evidence">Evidence</label>
-    <input id="permission_evidence" name="permission_evidence" placeholder="I filmed it myself / licence link / creator's written OK">
-    <p class="hint">Creator-provided and licensed clips need evidence or they wait for your approval. Unknown rights are never rendered.</p>
-  </div>
-
-  <div class="card"><h2>4 · Output</h2>
-    <label for="render_profile">Quality</label>
-    <select id="render_profile" name="render_profile">{% for name, pr in profiles.items() %}<option value="{{name}}" {% if name==default_profile %}selected{% endif %}>{{name}} · up to {{pr.max_width}}×{{pr.max_height}}, {{pr.fps}} fps, {{ '%.1f'|format(pr.max_frames / pr.fps) }} s</option>{% endfor %}</select>
-    <label for="target_format">Format</label>
-    <select id="target_format" name="target_format"><option value="youtube_short">YouTube Short (9:16)</option><option value="youtube_video">YouTube video (16:9)</option></select>
-    <label class="check" style="margin-top:14px"><input type="checkbox" name="autostart" value="true" checked> Start right away</label>
-    {% if settings.render.renderer != 'comfyui' %}<p class="hint warn">Renderer is set to the non-AI stand-in; see the note on the Overview page.</p>{% endif %}
-    <p style="margin:16px 0 0"><button>Create video</button></p>
-  </div>
-</div>
-</div>
-</form>
+<div class="stack creation-sidebar">
+  <section class="card"><div class="section-heading"><span class="step-number">03</span><h2>Output</h2></div>
+    <label for="render_profile">Render quality</label><select id="render_profile" name="render_profile">{% for name, pr in profiles.items() %}<option value="{{name}}" data-fps="{{pr.fps}}" data-steps="{{pr.steps}}" {% if profile_status[name] %}disabled{% endif %} {% if name==default_profile %}selected{% endif %}>{{name|replace('_',' ')}}{% if profile_status[name] %} · unavailable{% endif %}</option>{% endfor %}</select>
+    <p class="hint" id="profile-info"></p>
+    <label for="target_format">Delivery format</label><select id="target_format" name="target_format"><option value="youtube_short">Portrait · YouTube Short · 9:16</option><option value="youtube_video">Landscape · YouTube video · 16:9</option></select>
+    <p class="hint">Rendering preserves the source framing. The final export fits it inside your selected format with padding.</p>
+    <details><summary>Profile availability</summary>{% for name, pr in profiles.items() %}<p class="hint"><b>{{name}}</b><br>{{profile_status[name] or pr.description}}</p>{% endfor %}</details>
+  </section>
+  <section class="card"><div class="section-heading"><span class="step-number">04</span><h2>Source permission</h2></div>
+    <label for="rights_category">Why may you use this footage?</label><select id="rights_category" name="rights_category">{% for c in categories %}<option value="{{c}}" {% if c=='USER_OWNED' %}selected{% endif %}>{{c|replace('_',' ')|lower|capitalize}}</option>{% endfor %}</select>
+    <label for="permission_evidence">Evidence or attribution</label><input id="permission_evidence" name="permission_evidence" placeholder="I filmed it / licence link / written permission">
+    <p class="hint">Clips with unconfirmed rights wait for your decision.</p>
+  </section>
+  <section class="card launch-card"><h2>Ready when you are.</h2><p class="hint">Analyse → direct → render → review. Progress and individual shot previews appear on the project page.</p>
+    <label class="check"><input type="checkbox" name="autostart" value="true" checked> Start processing after creation</label>
+    {% if settings.render.renderer != 'comfyui' %}<p class="note">The non-AI preview renderer is selected. It applies a simple color grade.</p>{% endif %}
+    <button class="launch-button">Create video <span aria-hidden="true">↗</span></button>
+    <p class="hint">Creating a video never uploads it to YouTube.</p>
+  </section>
+</div></div></form>
+<script>
+(() => {
+  const form = document.getElementById('create-form'), video = document.getElementById('source-preview');
+  const file = document.getElementById('source_file'), media = document.getElementById('media_file');
+  let localURL, refURL;
+  file.addEventListener('change', () => { if (localURL) URL.revokeObjectURL(localURL); if (!file.files[0]) return;
+    if (media) media.value = ''; localURL = URL.createObjectURL(file.files[0]); video.src = localURL; video.hidden = false; });
+  media?.addEventListener('change', () => { file.value = ''; video.hidden = !media.value;
+    if (media.value) video.src = '/ui/media/preview?path=' + encodeURIComponent(media.value); });
+  video.addEventListener('loadedmetadata', () => { document.getElementById('source-info').textContent =
+    video.videoWidth + ' × ' + video.videoHeight + ' · ' + video.duration.toFixed(1) + ' seconds · source framing preserved'; });
+  document.getElementById('reference_file').addEventListener('change', e => { const im = document.getElementById('reference-preview');
+    if (refURL) URL.revokeObjectURL(refURL); im.hidden = !e.target.files[0];
+    if (!im.hidden) { refURL = URL.createObjectURL(e.target.files[0]); im.src = refURL; } });
+  const strength = document.getElementById('control_strength');
+  strength.addEventListener('input', () => document.getElementById('control-value').textContent = Number(strength.value).toFixed(2));
+  const profile = document.getElementById('render_profile');
+  if (profile.selectedOptions[0]?.disabled) profile.value = [...profile.options].find(op => !op.disabled)?.value || '';
+  const info = () => { const op = profile.selectedOptions[0]; document.getElementById('profile-info').textContent =
+    op ? op.dataset.fps + ' fps · ' + op.dataset.steps + ' default steps · one shot at a time' : 'No available profile'; };
+  profile.addEventListener('change', info); info();
+  form.addEventListener('submit', e => { if (!file.files.length && !media?.value) { e.preventDefault(); file.focus();
+    document.getElementById('source-info').textContent = 'Choose a source video before creating the project.'; } });
+})();
+</script>
 {% endblock %}

@@ -9,7 +9,7 @@
 # Wan wants WIDTH/HEIGHT in multiples of 16 and FRAME_COUNT of the form 4n+1 (VACE rounds it).
 # Run `scripts/studio.ps1 comfy-check` to validate node inputs and model files on the workstation.
 name: v2v_3070_quality
-version: 1
+version: 2
 description: Wan 2.1 VACE 1.3B restyle, Canny control from the source clip
 resource_class: GPU_HEAVY
 input_kind: video
@@ -21,6 +21,7 @@ parameters:
   STYLE_PROMPT: {node: "5", input: text, type: str, required: true}
   NEGATIVE_PROMPT: {node: "6", input: text, type: str, default: "blurry, deformed, watermark, text"}
   INPUT_VIDEO: {node: "10", input: file, type: str, required: true}
+  REFERENCE_IMAGE: {node: "20", input: image, type: str, optional_node: true}
   WIDTH: {targets: [{node: "12", input: width}, {node: "14", input: width}], type: int, min: 16, max: 1280}
   HEIGHT: {targets: [{node: "12", input: height}, {node: "14", input: height}], type: int, min: 16, max: 1280}
   FRAME_COUNT: {node: "14", input: length, type: int, min: 1, max: 161}

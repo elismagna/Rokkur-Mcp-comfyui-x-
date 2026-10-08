@@ -170,6 +170,8 @@ class RenderProfile(BaseModel):
     max_height: int
     fps: int
     max_frames: int
+    frame_multiple: int = Field(1, ge=1)
+    min_vram_gb: float = Field(0, ge=0)
     steps: int = 20
     denoise: float = 0.6
     controls: dict[str, bool] = Field(default_factory=dict)
@@ -204,6 +206,23 @@ class Settings(BaseModel):
             return self.profiles[name]
         except KeyError as exc:
             raise KeyError(f"unknown render profile {name!r}; known: {sorted(self.profiles)}") from exc
+
+    def profile_problem(self, name: str) -> str | None:
+        from rokkur_studio.comfyui.compiler import TemplateError, TemplateRegistry
+
+        profile = self.profile(name)
+        if self.render.renderer != "comfyui":
+            return None
+        if profile.location == "remote":
+            return "Remote rendering is not configured; choose a local profile."
+        if profile.min_vram_gb > self.gpu.vram_gb:
+            return (f"Needs {profile.min_vram_gb:g} GB VRAM; this studio is configured "
+                    f"for {self.gpu.vram_gb:g} GB.")
+        try:
+            TemplateRegistry(self.workflows_dir).get(profile.workflow)
+        except (TemplateError, OSError, ValueError) as exc:
+            return str(exc)
+        return None
 
 
 ENV_PREFIX = "STUDIO_"

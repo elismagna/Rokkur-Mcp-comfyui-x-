@@ -36,6 +36,7 @@ class ParamSpec(BaseModel):
     min: float | None = None
     max: float | None = None
     description: str = ""
+    optional_node: bool = False
 
 
 class TemplateSpec(BaseModel):
@@ -149,6 +150,13 @@ def compile_workflow(template: WorkflowTemplate, params: dict[str, Any]) -> Comp
         elif spec.required:
             raise TemplateError(f"{template.spec.name}: required parameter {name} missing")
         else:
+            if spec.optional_node:
+                for target in spec.targets:
+                    workflow.pop(target.node, None)
+                    for node in workflow.values():
+                        node["inputs"] = {k: v for k, v in node["inputs"].items()
+                                          if not (isinstance(v, list) and v
+                                                  and str(v[0]) == target.node)}
             continue
         for t in spec.targets:
             workflow[t.node]["inputs"][t.input] = value
@@ -164,7 +172,7 @@ def validate_against_object_info(template: WorkflowTemplate,
     # Inputs a required parameter fills at render time (e.g. the uploaded INPUT_VIDEO) hold a
     # placeholder in the template, so their installed-file choices are not checked here.
     runtime = {(t.node, t.input) for p in template.spec.parameters.values()
-               if p.required and p.default is None for t in p.targets}
+               if (p.required or p.optional_node) and p.default is None for t in p.targets}
     for node_id, node in template.workflow.items():
         cls = node["class_type"]
         info = object_info.get(cls)
