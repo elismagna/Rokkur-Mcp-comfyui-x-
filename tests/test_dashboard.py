@@ -1,10 +1,14 @@
 """The dashboard pages render and their actions go through the same gates as the API."""
 
+from pathlib import Path
+
 import httpx
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from rokkur_studio.api.app import create_app
 from rokkur_studio.dashboard.views import percent, stage_progress
+from rokkur_studio.db.models import Project
 from tests.fakes_youtube import FakeGoogle
 from tests.test_pipeline import create, run, status
 
@@ -63,6 +67,107 @@ def test_new_from_media_folder_and_upload(ctx, settings, sample_video, tmp_path)
     r = c.post("/ui/projects", data={"theme": "clay", "rights_category": "USER_OWNED"},
                follow_redirects=False)
     assert "err=" in r.headers["location"]
+
+
+def test_prompt_editor_returns_reviewable_draft_without_creating_project(ctx):
+    class FakeProvider:
+        name = "ollama"
+
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, role, instructions, payload, schema, images=None):
+            self.calls.append((role, payload))
+            return schema(theme="Soft clay animation", prompt="A monkey explores a bright room.",
+                          changes="Kept the original subject and action.")
+
+        def supports_images(self):
+            return False
+
+    ctx.settings.agents.provider = "ollama"
+    provider = FakeProvider()
+    ctx.provider = provider
+    with ctx.db.session() as session:
+        before = session.scalar(select(func.count(Project.id))) or 0
+
+    response = client_for(ctx).post("/ui/prompt-enhance", json={
+        "theme": "soft clay", "prompt": "monkey in room", "subject": "keep",
+        "character": "small brown monkey", "target_format": "youtube_video"})
+
+    assert response.status_code == 200
+    assert response.json() == {"theme": "Soft clay animation",
+                               "prompt": "A monkey explores a bright room.",
+                               "changes": "Kept the original subject and action."}
+    assert provider.calls == [("Prompt Editor", {"theme": "soft clay",
+        "prompt": "monkey in room", "subject": "keep", "character": "small brown monkey",
+        "target_format": "youtube_video"})]
+    with ctx.db.session() as session:
+        assert (session.scalar(select(func.count(Project.id))) or 0) == before
+    assert ctx.gpu.active() == []
+
+
+def test_prompt_editor_does_not_call_model_while_render_holds_gpu(ctx):
+    class FakeProvider:
+        name = "ollama"
+        called = False
+
+        def generate(self, role, instructions, payload, schema, images=None):
+            self.called = True
+            return schema(theme="unexpected", prompt="", changes="")
+
+        def supports_images(self):
+            return False
+
+    ctx.settings.agents.provider = "ollama"
+    provider = FakeProvider()
+    ctx.provider = provider
+    lease = ctx.gpu.try_acquire("active-render", "GPU_HEAVY")
+    assert lease is not None
+    try:
+        response = client_for(ctx).post("/ui/prompt-enhance", json={"theme": "clay"})
+    finally:
+        ctx.gpu.release(lease.id)
+    assert response.status_code == 409
+    assert not provider.called
+    assert "unchanged" in response.json()["detail"]
+
+
+def test_new_video_uploads_optional_sound_bed_and_preserves_source_audio(ctx, sample_video,
+                                                                        tmp_path):
+    bed = tmp_path / "bed.wav"
+    ctx.ffmpeg._run(ctx.ffmpeg._ff("-f", "lavfi", "-i", "sine=frequency=660:duration=1",
+                                   "-c:a", "pcm_s16le", str(bed)))
+    client = client_for(ctx)
+    with bed.open("rb") as fh:
+        rejected = client.post("/ui/projects", data={
+            "theme": "clay", "rights_category": "USER_OWNED", "local_path": str(sample_video)},
+            files={"audio_bed_file": ("bed.wav", fh, "audio/wav")}, follow_redirects=False)
+    assert "permission" in rejected.headers["location"].lower()
+    assert not list((ctx.settings.studio.data_dir / "uploads").glob("*_soundtrack.wav"))
+    with bed.open("rb") as fh:
+        response = client.post("/ui/projects", data={
+            "theme": "clay", "rights_category": "USER_OWNED", "local_path": str(sample_video),
+            "audio_bed_gain": "0.3", "audio_bed_rights_confirmed": "true",
+            "audio_bed_rights_evidence": "Created with a licensed tool"},
+            files={"audio_bed_file": ("bed.wav", fh, "audio/wav")}, follow_redirects=False)
+    assert response.status_code == 303
+    project_id = response.headers["location"].split("/ui/projects/")[-1].split("?")[0]
+    with ctx.db.session() as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        assert project.creative_input["keep_source_audio"] is True
+        assert project.creative_input["audio_bed_gain"] == 0.3
+        assert project.creative_input["audio_bed_rights_confirmed"] is True
+        sound_path = project.creative_input["audio_bed_path"]
+        assert sound_path.endswith("_soundtrack.wav") and "uploads" in sound_path
+        assert Path(sound_path).is_file()
+
+
+def test_new_video_prompt_workbench_is_outside_create_form(ctx):
+    page = client_for(ctx).get("/ui/new").text
+    assert page.index("</form>") < page.index('<dialog id="prompt-editor"')
+    assert "Use these prompts" in page and "Your form is unchanged" in page
+    assert "AI suggestions unavailable" in page
 
 
 def test_edit_metadata_and_publish_from_dashboard(ctx, settings, sample_video, tmp_path):

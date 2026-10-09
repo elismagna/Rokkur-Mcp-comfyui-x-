@@ -20,12 +20,14 @@
     <label for="name">Project name</label><input id="name" name="name" placeholder="Defaults to your video's name" maxlength="200">
   </section>
   <section class="card"><div class="section-heading"><span class="step-number">02</span><div><h2>Creative direction</h2><p class="hint">Describe the finished image, then anchor the character.</p></div></div>
+    <button type="button" class="secondary" id="open-prompt-editor">Open prompt editor</button>
+    <p class="hint">Review and apply your wording before the studio creates the video and prompt schedule.</p>
     <label for="theme">Visual style</label><input id="theme" name="theme" required maxlength="2000" placeholder="Warm retro science-fiction animation, solid colors, soft shading">
-    <label for="prompt">What matters in this scene?</label><textarea id="prompt" name="prompt" placeholder="Keep the monkey's face, body proportions and original movement. A colorful retro spaceship interior."></textarea>
+    <label for="prompt">What matters in this scene?</label><textarea id="prompt" name="prompt" maxlength="2000" placeholder="Keep the monkey's face, body proportions and original movement. A colorful retro spaceship interior."></textarea>
     <label for="subject">Main subject</label><select id="subject" name="subject"><option value="auto" selected>Let the studio decide (recommended)</option><option value="keep">Keep it real, restyle everything around it</option><option value="restyle">Restyle it too</option></select>
     <p class="hint" id="subject-hint">Wan restyles places well but can melt animals and people, so the studio keeps a real subject unless your prompt or character changes it.</p>
     <div class="form-pair"><div><label for="character_key">Saved character</label><select id="character_key" name="character_key"><option value="">Use the source character</option>{% for key, desc in characters.items() %}<option value="{{key}}">{{key}} · {{desc|truncate(50)}}</option>{% endfor %}</select></div>
-    <div><label for="character_description">Or describe this character</label><input id="character_description" name="character_description" placeholder="Small brown monkey, tan face, round ears"></div></div>
+    <div><label for="character_description">Or describe this character</label><input id="character_description" name="character_description" maxlength="700" placeholder="Small brown monkey, tan face, round ears"></div></div>
     <p class="hint">Manage reusable characters in <a href="/ui/director">Director</a>.</p>
     <label for="reference_file">Appearance reference <span class="muted">optional</span></label>
     <input id="reference_file" type="file" name="reference_file" accept="image/png,image/jpeg,image/webp">
@@ -53,6 +55,18 @@
     <p class="hint">Rendering preserves the source framing. The final export fits it inside your selected format with padding.</p>
     <details><summary>Profile availability</summary>{% for name, pr in profiles.items() %}<p class="hint"><b>{{name}}</b><br>{{profile_status[name] or pr.description}}</p>{% endfor %}</details>
   </section>
+  <section class="card"><h2>Sound</h2>
+    <label class="check"><input type="checkbox" name="mute_source_audio" value="true"> Mute the original video's sound</label>
+    <label for="audio_bed_file">Add a music or effects track <span class="muted">optional</span></label>
+    <input id="audio_bed_file" name="audio_bed_file" type="file" accept="audio/*,.m4a,.opus,.flac">
+    <audio id="audio-preview" controls preload="metadata" hidden></audio>
+    <label for="audio_bed_gain">Added track level <output id="audio-bed-value">25%</output></label>
+    <input id="audio_bed_gain" name="audio_bed_gain" type="range" min="0" max="1" step="0.05" value="0.25">
+    <p class="hint">Original sound stays on by default. Add a generated or recorded music/effects file to mix underneath it. In-app sound generation is not enabled yet.</p>
+    <label class="check"><input id="audio_bed_rights_confirmed" type="checkbox" name="audio_bed_rights_confirmed" value="true"> I have permission to use this added track</label>
+    <label for="audio_bed_rights_evidence">Track license or permission details</label>
+    <input id="audio_bed_rights_evidence" name="audio_bed_rights_evidence" maxlength="1000" placeholder="License, creator permission, or how you created it">
+  </section>
   <section class="card"><div class="section-heading"><span class="step-number">04</span><h2>Source permission</h2></div>
     <label for="rights_category">Why may you use this footage?</label><select id="rights_category" name="rights_category">{% for c in categories %}<option value="{{c}}" {% if c=='USER_OWNED' %}selected{% endif %}>{{c|replace('_',' ')|lower|capitalize}}</option>{% endfor %}</select>
     <label for="permission_evidence">Evidence or attribution</label><input id="permission_evidence" name="permission_evidence" placeholder="I filmed it / licence link / written permission">
@@ -65,6 +79,25 @@
     <p class="hint">Creating a video never uploads it to YouTube.</p>
   </section>
 </div></div></form>
+<dialog id="prompt-editor" class="prompt-dialog" aria-labelledby="prompt-editor-title">
+  <div class="prompt-dialog-head"><h2 id="prompt-editor-title">Prompt editor</h2>
+    <button type="button" class="secondary" id="close-prompt-editor" aria-label="Close prompt editor">Close</button></div>
+  <p class="hint">Work on a copy of your two prompts. Suggestions never replace your form until you apply them.</p>
+  <label for="draft-theme">Visual style draft</label>
+  <textarea id="draft-theme" maxlength="2000" rows="3"></textarea>
+  <label for="draft-prompt">Scene prompt draft</label>
+  <textarea id="draft-prompt" maxlength="2000" rows="5"></textarea>
+  <div class="prompt-dialog-actions">
+    {% if settings.agents.provider == 'ollama' %}
+    <button type="button" class="secondary" id="polish-prompts">Suggest a polish with local AI</button>
+    {% else %}
+    <button type="button" class="secondary" id="polish-prompts" disabled>AI suggestions unavailable</button>
+    {% endif %}
+    <button type="button" id="apply-prompts">Use these prompts</button>
+  </div>
+  <p class="hint prompt-status" id="prompt-status" role="status" aria-live="polite"></p>
+  {% if settings.agents.provider != 'ollama' %}<p class="hint">Local Ollama is not enabled. You can still edit and apply a draft here.</p>{% endif %}
+</dialog>
 <script>
 (() => {
   const form = document.getElementById('create-form'), video = document.getElementById('source-preview');
@@ -79,6 +112,17 @@
   document.getElementById('reference_file').addEventListener('change', e => { const im = document.getElementById('reference-preview');
     if (refURL) URL.revokeObjectURL(refURL); im.hidden = !e.target.files[0];
     if (!im.hidden) { refURL = URL.createObjectURL(e.target.files[0]); im.src = refURL; } });
+  const audioFile = document.getElementById('audio_bed_file'), audioPreview = document.getElementById('audio-preview');
+  let audioURL;
+  audioFile.addEventListener('change', () => { if (audioURL) URL.revokeObjectURL(audioURL);
+    audioPreview.hidden = !audioFile.files[0];
+    const rightsCheck = document.getElementById('audio_bed_rights_confirmed');
+    const rightsEvidence = document.getElementById('audio_bed_rights_evidence');
+    rightsCheck.required = Boolean(audioFile.files[0]); rightsEvidence.required = Boolean(audioFile.files[0]);
+    if (!audioPreview.hidden) { audioURL = URL.createObjectURL(audioFile.files[0]); audioPreview.src = audioURL; } });
+  const audioGain = document.getElementById('audio_bed_gain');
+  audioGain.addEventListener('input', () => document.getElementById('audio-bed-value').textContent =
+    Math.round(Number(audioGain.value) * 100) + '%');
   const strength = document.getElementById('control_strength');
   strength.addEventListener('input', () => document.getElementById('control-value').textContent = Number(strength.value).toFixed(2));
   const profile = document.getElementById('render_profile');
@@ -102,6 +146,40 @@
   explainSubject();
   form.addEventListener('submit', e => { if (!file.files.length && !media?.value) { e.preventDefault(); file.focus();
     document.getElementById('source-info').textContent = 'Choose a source video before creating the project.'; } });
+  const dialog = document.getElementById('prompt-editor'), draftTheme = document.getElementById('draft-theme');
+  const draftPrompt = document.getElementById('draft-prompt'), status = document.getElementById('prompt-status');
+  const polish = document.getElementById('polish-prompts'), apply = document.getElementById('apply-prompts');
+  let draftStarted = false;
+  document.getElementById('open-prompt-editor').addEventListener('click', () => {
+    if (!draftStarted) { draftTheme.value = document.getElementById('theme').value;
+      draftPrompt.value = document.getElementById('prompt').value; draftStarted = true; }
+    status.textContent = ''; dialog.showModal(); draftTheme.focus();
+  });
+  document.getElementById('close-prompt-editor').addEventListener('click', () => dialog.close());
+  [draftTheme, draftPrompt].forEach(el => el.addEventListener('input', () => { draftStarted = true; }));
+  polish.addEventListener('click', async () => {
+    if (!draftTheme.value.trim()) { status.textContent = 'Add a visual style before asking for a suggestion.'; draftTheme.focus(); return; }
+    polish.disabled = true; status.textContent = 'Preparing a suggestion on the local model...';
+    try {
+      const response = await fetch('/ui/prompt-enhance', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({theme: draftTheme.value, prompt: draftPrompt.value,
+          subject: document.getElementById('subject').value,
+          character: document.getElementById('character_description').value || document.getElementById('character_key').value,
+          target_format: document.getElementById('target_format').value})});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'The local model could not prepare a suggestion.');
+      draftTheme.value = data.theme; draftPrompt.value = data.prompt;
+      status.textContent = data.changes ? 'Suggestion ready. ' + data.changes : 'Suggestion ready. Review both fields, then apply if you like.';
+    } catch (error) { status.textContent = error.message || 'The local model could not prepare a suggestion. Your form is unchanged.'; }
+    finally { polish.disabled = false; }
+  });
+  apply.addEventListener('click', () => {
+    if (!draftTheme.value.trim()) { status.textContent = 'Visual style cannot be blank.'; draftTheme.focus(); return; }
+    const theme = document.getElementById('theme'), prompt = document.getElementById('prompt');
+    theme.value = draftTheme.value.trim(); prompt.value = draftPrompt.value.trim();
+    [theme, prompt].forEach(el => { el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); });
+    draftStarted = false; dialog.close();
+  });
 })();
 </script>
 {% endblock %}

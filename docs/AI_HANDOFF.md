@@ -4,9 +4,9 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-09 by Codex (local validation of Claude's subject update and profile
-preflight). See the [local upgrade findings](upgrade-2026-10-07.md) for implementation details
-and real render observations; the latest Git commit is authoritative.
+Last updated: 2026-10-09 by Codex (review-first prompt editing and optional sound-bed mixing).
+See the [local upgrade findings](upgrade-2026-10-07.md) for implementation details and real
+render observations; the latest Git commit is authoritative.
 
 ## How we share the work
 
@@ -160,8 +160,19 @@ ComfyUI, Ollama and Google servers (`tests/fakes*.py`).
 
 ## Verified results
 
+Tested directly by Codex on Elis's PC, 2026-10-09:
+- Current suite: **272 passed, 1 skipped**, with `ruff check src tests` and `mypy src` clean.
+  Real FFmpeg and the separate `rokkur_test` database were used. Windows does not expose the
+  POSIX mode bits checked by one OAuth test, so that assertion is conditional; the Linux app
+  container was separately verified to write mode `0600`.
+- The prompt workbench returned a draft through a fake local provider, left project count
+  unchanged, and refused to call the model while a render held the GPU lease. The real local
+  model was not exercised to avoid competing with rendering.
+- The soundtrack upload, separate rights-evidence gate, short-track looping, and final mix passed
+  dashboard, FFmpeg, and end-to-end pipeline tests. No live render was started.
+
 Tested directly by Codex on Elis's PC, 2026-10-07/08:
-- Final suite: **199 passed**, with `ruff check src tests` and `mypy src` clean. Real FFmpeg
+- Suite at that point: **199 passed**, with `ruff check src tests` and `mypy src` clean. Real FFmpeg
   and disposable Postgres; external APIs mocked in the suite. A `_test` database-name guard
   now prevents accidentally pointing tests at production.
 - Real Qwen3.5:9b source-vision passes, plus two actual Wan renders on the RTX 3070. Exact
@@ -255,6 +266,24 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Codex: prompt workbench and audio beds (2026-10-09).** The New video form now has a
+  reviewable theme/scene-prompt editor; its local Ollama endpoint uses the shared GPU lease and
+  never changes the form until Apply. Those applied fields flow into the existing creative
+  brief, Comfy prompts and prompt schedule. Video source audio stays on by default; the user
+  can mute it or add a previewable music/effects file and set its level. The final mix loops a
+  short bed to the video length. Added tracks require their own rights confirmation and evidence.
+  Full suite: 272 passed, 1 skipped; `ruff check src tests` and `mypy src` pass. The running API
+  and worker have not been restarted, so this code is not deployed in the open UI yet.
+  - In-app image/audio generation is still not implemented. On the PC the Z-Image weights and
+    Qwen text encoder exist, but `vae/ae.safetensors` is missing; no local audio-generation
+    model is installed. The [official Z-Image workflow](https://github.com/Comfy-Org/docs/blob/main/tutorials/image/z-image/z-image-turbo.mdx)
+    describes a 6B model for 16 GB consumer GPUs, while the RTX 3070 has 8 GB. The [Stable Audio 3
+    workflow](https://github.com/Comfy-Org/docs/blob/main/tutorials/audio/stable-audio/stable-audio-3.mdx)
+    offers smaller sound-effect and music variants, but this PC has no compatible local node/model
+    setup. Do not claim local generation works until a suitable lower-memory published workflow is
+    tested on the PC. An uploaded sound bed can be generated in another tool and mixed here, but
+    the studio itself does not generate it.
+
 - **Codex perspective on Claude's subject update:** the split between a VACE room-only mask and
   a final exact-subject composite is a sensible design, with raw renders and mask previews
   available for diagnosis. The repo's fake/synthetic tests do not establish real mask quality.
@@ -335,6 +364,12 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Codex: review-first prompt editing and optional soundtrack mixing are implemented.
+  Full suite 272 passed, 1 skipped, including Claude's keep-workflow fallback test; `ruff check
+  src tests` and `mypy src` pass. The prompt route
+  refuses when Ollama is not configured or the shared GPU lease is occupied. Sound beds are
+  stream-checked, looped to video length, and require separate user permission evidence. No new
+  models or workflow nodes were installed.
 - 2026-10-09 Claude: before a kept-subject render, the worker checks the keep workflow
   against the live ComfyUI (once per worker). If a node is missing, the shot uses the plain
   workflow plus the composite, and the reason is shown under Applied render settings.

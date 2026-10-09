@@ -36,6 +36,11 @@ def create_project(session: Session, data: ProjectCreate, settings: Settings,
     settings.profile(profile)  # validate early
     if problem := settings.profile_problem(profile):
         raise ValueError(problem)
+    if data.creative.audio_bed_path and (
+            not data.creative.audio_bed_rights_confirmed
+            or not (data.creative.audio_bed_rights_evidence or "").strip()):
+        raise ValueError("Confirm that you can use the added soundtrack and provide its "
+                         "permission or license details.")
     if data.channel_id and session.get(Channel, data.channel_id) is None:
         raise LookupError(f"channel {data.channel_id} not found")
     project = Project(name=data.name, status=S.DISCOVERED.value, target_format=data.target_format,

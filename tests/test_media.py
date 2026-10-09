@@ -39,6 +39,24 @@ def test_cut_splice_attach_encode(ffmpeg, sample_video, tmp_path):
     assert any("concat" in " ".join(h["cmd"]) for h in ffmpeg.history)  # commands are logged
 
 
+def test_mix_sound_bed_preserves_source_and_fills_video_length(ffmpeg, sample_video, tmp_path):
+    bed = tmp_path / "bed.wav"
+    ffmpeg._run(ffmpeg._ff("-f", "lavfi", "-i", "sine=frequency=880:duration=1",
+                           "-c:a", "pcm_s16le", str(bed)))
+    assert ffmpeg.has_audio(bed)
+    assert not ffmpeg.has_audio(ffmpeg.make_test_video(tmp_path / "silent.mp4", with_audio=False))
+
+    mixed = ffmpeg.mix_audio(sample_video, tmp_path / "mixed.mp4", source_audio=sample_video,
+                             audio_bed=bed, bed_volume=0.2)
+    info = ffmpeg.probe(mixed)
+    assert info.has_audio and abs(info.duration - 4) < 0.1
+    assert any("amix=inputs=2" in " ".join(item["cmd"]) for item in ffmpeg.history)
+
+    bed_only = ffmpeg.mix_audio(sample_video, tmp_path / "bed-only.mp4", audio_bed=bed)
+    info = ffmpeg.probe(bed_only)
+    assert info.has_audio and abs(info.duration - 4) < 0.1
+
+
 def test_errors_are_structured(ffmpeg, tmp_path):
     bad = tmp_path / "bad.mp4"
     bad.write_bytes(b"not a video")

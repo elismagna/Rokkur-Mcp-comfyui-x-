@@ -53,6 +53,11 @@ class CreativeIn(BaseModel):
     steps: int | None = Field(None, ge=8, le=40)
     cfg: float = Field(6.0, ge=1, le=12)
     negative_prompt: str | None = Field(None, max_length=2000)
+    keep_source_audio: bool = True
+    audio_bed_path: str | None = None
+    audio_bed_gain: float = Field(0.25, ge=0, le=2)
+    audio_bed_rights_confirmed: bool = False
+    audio_bed_rights_evidence: str | None = Field(None, max_length=1000)
     style_strength: float = Field(0.7, ge=0, le=1)
     identity_strength: float = Field(0.8, ge=0, le=1)
     title: str | None = None

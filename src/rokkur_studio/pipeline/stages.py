@@ -862,9 +862,26 @@ def edit(ctx: StudioContext, job: Job) -> dict[str, Any]:
     video = ctx.store.path_for(assembled)
     source = ctx.store.path_for(manifest.source_asset)
     try:
-        if ctx.ffmpeg.probe(source).has_audio:
+        creative = project.creative_input or {}
+        bed_path_value = creative.get("audio_bed_path")
+        bed_path: Path | None = None
+        if bed_path_value:
+            uploads = (Path(ctx.settings.studio.data_dir) / "uploads").resolve()
+            bed_path = Path(str(bed_path_value)).resolve()
+            if not bed_path.is_relative_to(uploads) or not bed_path.is_file():
+                raise JobError("audio_bed_missing", "The uploaded music or effects file is missing.")
+            if not ctx.ffmpeg.has_audio(bed_path):
+                raise JobError("audio_bed_invalid", "The uploaded file has no audio stream.")
+        source_audio = (ctx.ffmpeg.probe(source).has_audio
+                        if creative.get("keep_source_audio", True) else False)
+        if source_audio or bed_path is not None:
             with_audio = final_dir / "with_audio.mp4"
-            ctx.ffmpeg.attach_audio(video, source, with_audio)
+            if bed_path is not None:
+                ctx.ffmpeg.mix_audio(
+                    video, with_audio, source_audio=source if source_audio else None,
+                    audio_bed=bed_path, bed_volume=float(creative.get("audio_bed_gain", 0.25)))
+            else:
+                ctx.ffmpeg.attach_audio(video, source, with_audio)
             video = with_audio
         final = ctx.ffmpeg.encode_final(video, final_dir / "final.mp4", width=width,
                                         height=height, fps=manifest.video.fps)

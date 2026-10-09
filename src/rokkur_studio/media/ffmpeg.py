@@ -121,6 +121,13 @@ class FFmpeg:
             raw=data,
         )
 
+    def has_audio(self, path: Path) -> bool:
+        """Check audio streams, including in audio-only files used as soundtrack beds."""
+        cmd = [self.ffprobe_bin, "-v", "error", "-print_format", "json", "-show_streams",
+               str(path)]
+        data = json.loads(self._run(cmd).stdout or b"{}")
+        return any(stream.get("codec_type") == "audio" for stream in data.get("streams", []))
+
     def detect_scenes(self, path: Path, threshold: float = 0.3) -> list[float]:
         """Timestamps (s) where FFmpeg's scene score exceeds ``threshold``."""
         cmd = [self.ffmpeg_bin, "-hide_banner", "-nostdin", "-i", str(path), "-an",
@@ -255,6 +262,38 @@ class FFmpeg:
         if normalize:
             args += ["-af", "loudnorm=I=-14:TP=-1.5:LRA=11"]
         self._run(self._ff(*args, str(out)))
+        return out
+
+    def mix_audio(self, video: Path, out: Path, *, source_audio: Path | None = None,
+                  audio_bed: Path, bed_volume: float = 0.25) -> Path:
+        """Mix an optional music/effects file under source audio and fit it to video length."""
+        if not 0 <= bed_volume <= 2:
+            raise ValueError("bed_volume must be between 0 and 2")
+        args = ["-i", str(video)]
+        audio_streams: list[tuple[int, str]] = []
+        next_index = 1
+        if source_audio is not None:
+            args += ["-i", str(source_audio)]
+            audio_streams.append((next_index, "source"))
+            next_index += 1
+        args += ["-stream_loop", "-1", "-i", str(audio_bed)]
+        audio_streams.append((next_index, "bed"))
+        filters: list[str] = []
+        labels: list[str] = []
+        for index, kind in audio_streams:
+            label = f"a{index}"
+            volume = bed_volume if kind == "bed" else 1.0
+            filters.append(f"[{index}:a:0]volume={volume:.3f}[{label}]")
+            labels.append(f"[{label}]")
+        if len(labels) == 2:
+            filters.append("".join(labels) + "amix=inputs=2:duration=longest:"
+                            "dropout_transition=2:normalize=0,alimiter=limit=0.95[aout]")
+        else:
+            filters.append(labels[0] + "alimiter=limit=0.95[aout]")
+        filters[-1] = filters[-1].removesuffix("[aout]") + ",loudnorm=I=-14:TP=-1.5:LRA=11[aout]"
+        args += ["-filter_complex", ";".join(filters), "-map", "0:v:0", "-map", "[aout]",
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", str(out)]
+        self._run(self._ff(*args))
         return out
 
     def encode_final(self, video: Path, out: Path, *, width: int, height: int, fps: float,

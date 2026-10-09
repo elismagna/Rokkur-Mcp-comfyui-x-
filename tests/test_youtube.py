@@ -49,7 +49,8 @@ def test_token_store_is_owner_only_and_round_trips(tmp_path):
     with pytest.raises(oauth.OAuthError, match="youtube-auth"):
         store.load()
     store.save(oauth.Token(refresh_token="rt", access_token="at", expires_at=5.0))
-    assert stat.S_IMODE(os.stat(store.path).st_mode) == 0o600
+    if os.name != "nt":  # Windows ACLs do not expose POSIX owner/group/other mode bits.
+        assert stat.S_IMODE(os.stat(store.path).st_mode) == 0o600
     assert store.load() == oauth.Token(refresh_token="rt", access_token="at", expires_at=5.0)
     assert store.load().expired()
     store.delete()

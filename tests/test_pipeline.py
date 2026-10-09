@@ -82,6 +82,22 @@ def test_end_to_end_fixture_to_dry_run_publish(ctx, sample_video):
         assert all(j.status == "SUCCEEDED" and j.duration_s is not None for j in jobs)
 
 
+def test_end_to_end_mix_keeps_source_audio_under_optional_bed(ctx, sample_video):
+    upload_dir = ctx.settings.studio.data_dir / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    bed = upload_dir / "test-bed.wav"
+    ctx.ffmpeg._run(ctx.ffmpeg._ff("-f", "lavfi", "-i", "sine=frequency=660:duration=1",
+                                   "-c:a", "pcm_s16le", str(bed)))
+    pid = create(ctx, sample_video, audio_bed_path=str(bed), audio_bed_gain=0.2,
+                 keep_source_audio=True, audio_bed_rights_confirmed=True,
+                 audio_bed_rights_evidence="Synthetic test tone")
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+    info = ctx.ffmpeg.probe(ctx.store.path_for(f"{pid}/final/final.mp4"))
+    assert info.has_audio and abs(info.duration - 4) < 0.1
+    assert any("amix=inputs=2" in " ".join(item["cmd"]) for item in ctx.ffmpeg.history)
+
+
 def test_bad_shot_is_repaired_without_rerendering_good_shots(ctx, sample_video):
     pid = create(ctx, sample_video,
                  test_faults={"shot_002": {"kind": "black", "attempts": [1]}})

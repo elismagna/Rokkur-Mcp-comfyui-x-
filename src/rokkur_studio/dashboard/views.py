@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from rokkur_studio.agents.providers import AgentOutputError, AgentUnavailable
 from rokkur_studio.api.deps import get_ctx, get_session
 from rokkur_studio.api.routes_projects import project_detail
 from rokkur_studio.api.routes_system import gpu_leases as gpu_info
@@ -49,10 +50,16 @@ from rokkur_studio.director.assets import (
     save_tracker,
     tracker_path,
 )
+from rokkur_studio.director.prompt_editor import (
+    PromptDraft,
+    PromptEditor,
+    PromptEditRequest,
+)
 from rokkur_studio.director.prompts import Weights, preview
 from rokkur_studio.director.vocabulary import VOCABULARY
 from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.domain.states import ProjectStatus as S
+from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline.context import StudioContext, profile_availability
 from rokkur_studio.pipeline.subject import OnnxSubjectMasker, decide_subject
 from rokkur_studio.services import commands, publishing
@@ -112,6 +119,8 @@ STAGES: list[tuple[str, set[str]]] = [
     ("Published", {S.PUBLISHED, S.MONITORING}),
 ]
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+AUDIO_EXTS = {".aac", ".aif", ".aiff", ".flac", ".m4a", ".mp3", ".oga", ".ogg",
+              ".opus", ".wav", ".weba", ".webm", ".wma"}
 
 
 def stage_progress(status: str, failed_from: str | None = None) -> list[dict[str, str]]:
@@ -283,6 +292,30 @@ def subject_decision(theme: str = "", prompt: str = "", subject: str = "auto",
                            "character_reference_path": "form" if reference else ""}).to_dict()
 
 
+@router.post("/prompt-enhance")
+def prompt_enhance(body: PromptEditRequest, ctx: Ctx) -> PromptDraft:
+    """Return a local-model suggestion; the caller must explicitly apply it to the form."""
+    if ctx.settings.agents.provider != "ollama":
+        raise HTTPException(
+            503, "Local Ollama is not enabled. Your prompt draft is unchanged.")
+    lease = ctx.gpu.try_acquire(f"prompt-editor-{uuid.uuid4().hex[:10]}", "GPU_HEAVY")
+    if lease is None:
+        raise HTTPException(
+            409, "A render is using the GPU. Your draft is unchanged; try again after it finishes.")
+    try:
+        return PromptEditor(ctx.provider).polish(body)
+    except AgentUnavailable as exc:
+        raise HTTPException(
+            503, "The local prompt model is unavailable. Your draft is unchanged; check Ollama "
+                 "and try again.") from exc
+    except AgentOutputError as exc:
+        raise HTTPException(
+            502, "The model could not return a usable draft. Your prompts are unchanged; "
+                 "try again or edit them manually.") from exc
+    finally:
+        ctx.gpu.release(lease.id)
+
+
 @router.get("/media/preview")
 def media_preview(ctx: Ctx, path: str) -> FileResponse:
     if path not in {m["path"] for m in media_files(ctx)}:
@@ -298,7 +331,12 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                      media_file: Annotated[str, Form()] = "",
                      source_file: Annotated[UploadFile | None, File()] = None,
                      reference_file: Annotated[UploadFile | None, File()] = None,
+                     audio_bed_file: Annotated[UploadFile | None, File()] = None,
                      reference_mode: Annotated[str, Form()] = "auto",
+                     mute_source_audio: Annotated[bool, Form()] = False,
+                     audio_bed_gain: Annotated[float, Form()] = 0.25,
+                     audio_bed_rights_confirmed: Annotated[bool, Form()] = False,
+                     audio_bed_rights_evidence: Annotated[str, Form()] = "",
                      subject: Annotated[str, Form()] = "auto",
                      control_strength: Annotated[float, Form()] = 1.0,
                      seed: Annotated[str, Form()] = "",
@@ -361,6 +399,17 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
         return fail("The worker cannot read that source. Use Upload or the media folder.")
     if has_reference and reference_file is not None:
         character_reference_path = save_upload(reference_file, f"reference{ref_suffix}")
+    audio_bed_path: str | None = None
+    if audio_bed_file is not None and audio_bed_file.filename:
+        audio_suffix = Path(audio_bed_file.filename).suffix.lower()
+        if audio_suffix not in AUDIO_EXTS:
+            return fail("Use a supported audio file such as MP3, WAV, M4A, FLAC or OGG.")
+        audio_bed_path = save_upload(audio_bed_file, f"soundtrack{audio_suffix}")
+        try:
+            if not ctx.ffmpeg.has_audio(Path(audio_bed_path)):
+                return fail("The selected soundtrack file does not contain an audio stream.")
+        except FFmpegError:
+            return fail("The studio could not read that soundtrack file. Choose another audio file.")
     try:
         body = ProjectCreate(
             name=name or Path(path).stem, target_format=target_format,  # type: ignore[arg-type]
@@ -375,6 +424,11 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                                 seed=int(seed) if seed.strip() else None,
                                 steps=int(steps) if steps.strip() else None,
                                 negative_prompt=negative_prompt or None,
+                                keep_source_audio=not mute_source_audio,
+                                audio_bed_path=audio_bed_path,
+                                audio_bed_gain=audio_bed_gain,
+                                audio_bed_rights_confirmed=audio_bed_rights_confirmed,
+                                audio_bed_rights_evidence=audio_bed_rights_evidence or None,
                                 character_key=character_key or None,
                                 character_description=character_description or None,
                                 use_global_look=use_global_look,
