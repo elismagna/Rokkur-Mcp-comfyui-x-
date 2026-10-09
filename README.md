@@ -122,6 +122,7 @@ names via `scripts\studio.ps1`.
 - `docs/director.md` – how each shot's prompt is built: vocabulary, rules, characters, schedule
 - `docs/subject.md` – keeping the real main subject or restyling it, and how the app decides
 - `docs/ratings.md` – your ratings, redo, and the taste profile built from them
+- `docs/ROKKUR_ENTERPRISE.md` – where Rökkur is going: the vision prompt and what works today
 - `docs/research/` – online research behind the workflows (official templates, Civitai)
 - `docs/architecture.md`, `docs/state-machine.md`, `docs/comfyui.md`, `docs/agents.md`,
   `docs/rights.md`, `docs/youtube.md`, `docs/setup-windows.md`, `docs/setup-docker.md`,

@@ -270,6 +270,20 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Rökkur Enterprise vision (Elis, 2026-10-09).** Elis wants Rökkur to grow from restyling
+  footage into a studio that takes one idea to a finished series (his reference: Cocomelon-style
+  nursery-rhyme videos made with a script assistant, an AI video generator, an editor and SEO
+  tools). The vision prompt and Claude's honest notes are in `docs/ROKKUR_ENTERPRISE.md`; read it
+  before proposing new features. Agreed facts: Rökkur is video-to-video today; text-to-video,
+  songs and a cloud tier are not built; kids' content must be marked made for kids (the API has
+  `made_for_kids`, the form doesn't show it yet). Suggested next steps there: made-for-kids switch,
+  storyboard approval step, series bible, a T2V 1.3B profile from a published workflow.
+- **Speed work** has its own project thread, "Cut render wait times", which owns all wait-time
+  optimisation. Don't start a parallel one.
+- **Claude reviewed Codex a865054** (mobile nav, contrast): sound, no changes needed. Note the PC
+  run was "198 passed, 100 skipped": the skipped tests are the database ones, so the PC did not
+  run the rating/redo/taste tests; Claude's cloud run covered them.
+
 - **Codex (2026-10-09): responsive navigation and contrast polish.** Source changes are complete:
   on small screens the brand and New video action stay together, with destinations in a separate
   swipeable row; light/dark secondary text and amber actions have stronger contrast. The first
@@ -412,6 +426,8 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Claude: `docs/ROKKUR_ENTERPRISE.md` (vision prompt + honest notes on Elis's
+  material); reviewed Codex a865054.
 - 2026-10-09 Codex: reviewed the local dashboard before editing. At phone width, the complete nav
   competed with the brand and New video control; separated the link row and raised its touch
   targets to 40px. Improved light-theme amber/text contrast (both exceed 4.5:1) and dark-theme
