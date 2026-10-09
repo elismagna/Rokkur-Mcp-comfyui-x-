@@ -1,11 +1,11 @@
-{% extends "base.html" %}{% block title %}System · Rökkur Studio{% endblock %}{% block body %}
+{% extends "base.html" %}{% block title %}System · Rökkur Studio{% endblock %}{% block crumb %}Rökkur / System{% endblock %}{% block body %}
 <h1>System</h1>
 <p class="sub">Rökkur Studio {{ info.version }} · autonomy level {{ info.autonomy_level }} · local services and render capabilities</p>
 
 <div class="grid">
 <div class="card"><h2>Services</h2>
-  <table>{% for s in services %}<tr><td><span class="dot {{ 'ok' if s.ok else ('bad' if s.needed else '') }}"></span>{{s.name}}</td><td class="muted">{{s.detail}}</td></tr>{% endfor %}
-  <tr><td><span class="dot {{ 'ok' if info.database else 'bad' }}"></span>Database</td><td class="muted">Postgres</td></tr></table>
+  {% for s in services %}<div class="svc full"><span class="dot {{ 'ok' if s.ok else ('bad' if s.needed else '') }}"></span><div><b>{{ s.name }}</b><div class="hint">{{ s.detail }}</div></div></div>{% endfor %}
+  <div class="svc full"><span class="dot {{ 'ok' if info.database else 'bad' }}"></span><div><b>Database</b><div class="hint">Postgres</div></div></div>
 </div>
 <div class="card"><h2>Pipeline settings</h2>
   <dl class="kv"><dt>Renderer</dt><dd>{{ info.renderer }}</dd><dt>Agents</dt><dd>{{ info.agent_provider }}</dd>

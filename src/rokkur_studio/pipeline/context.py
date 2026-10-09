@@ -58,6 +58,17 @@ def profile_availability(ctx: StudioContext) -> dict[str, str | None]:
             for name in ctx.settings.profiles}
 
 
+def supported_controls(ctx: StudioContext, profile_name: str) -> set[str] | None:
+    """Parameters a profile's workflow takes, or None when any change may apply (preview
+    renderer, unknown profile): a redo or repair should only change what has an effect."""
+    if ctx.settings.render.renderer != "comfyui":
+        return None
+    try:
+        return set(ctx.registry.get(ctx.settings.profile(profile_name).workflow).spec.parameters)
+    except (KeyError, LookupError):
+        return None
+
+
 def free_idle_comfyui(settings: Settings) -> Callable[[], None]:
     """A hook that unloads ComfyUI's models, but only while ComfyUI has nothing running."""
 

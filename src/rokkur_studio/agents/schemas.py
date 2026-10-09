@@ -64,6 +64,9 @@ class DirectorNotes(BaseModel):
     global_look: bool = True
     weights: dict[str, float] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    subject: str | None = None          # the project's main subject (director.subject)
+    subject_source: str | None = None   # "your words" or "recurring"
+    subject_kept: list[str] = Field(default_factory=list)  # shots that saw something else first
 
 
 class _BriefFields(BaseModel):

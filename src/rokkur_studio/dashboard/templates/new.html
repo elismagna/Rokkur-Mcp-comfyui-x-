@@ -1,5 +1,6 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% from "_icons.html" import icon %}
 {% block title %}New video · Rökkur Studio{% endblock %}
+{% block crumb %}Rökkur / New video{% endblock %}
 {% block body %}
 <div class="eyebrow">CREATE / VIDEO RESTYLING</div>
 <h1>Give your footage a new world.</h1>
@@ -48,6 +49,15 @@
   </section>
 </div>
 <div class="stack creation-sidebar">
+  <section class="card"><div class="row spread"><h2>{{ icon('taste') }} Your taste</h2><a class="hint" href="/ui/taste">How it's built</a></div>
+    {% if suggestions %}{% for s in suggestions %}
+    <div class="tip"><div><b>{{ s.label }}</b><div class="hint">{{ s.why }}</div></div>
+      <button type="button" class="secondary small" data-apply data-field="{{ s.field }}" data-action="{{ s.action }}" data-value="{{ s.value }}">Apply</button></div>
+    {% endfor %}
+    <p class="hint">Nothing changes until you press Apply.</p>
+    {% elif taste.count %}<p class="hint" style="margin:0">{{ taste.count }} rating{{ '' if taste.count == 1 else 's' }} so far. Suggestions appear once a pattern holds across several projects.</p>
+    {% else %}<p class="hint" style="margin:0">Rate your finished shots and the studio suggests settings here, based only on what you liked.</p>{% endif %}
+  </section>
   <section class="card"><div class="section-heading"><span class="step-number">03</span><h2>Output</h2></div>
     <label for="render_profile">Render quality</label><select id="render_profile" name="render_profile">{% for name, pr in profiles.items() %}<option value="{{name}}" data-fps="{{pr.fps}}" data-steps="{{pr.steps}}" {% if profile_status[name] %}disabled{% endif %} {% if name==default_profile %}selected{% endif %}>{{name|replace('_',' ')}}{% if profile_status[name] %} · unavailable{% endif %}</option>{% endfor %}</select>
     <p class="hint" id="profile-info"></p>

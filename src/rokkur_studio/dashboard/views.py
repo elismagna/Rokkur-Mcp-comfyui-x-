@@ -8,6 +8,7 @@ QC, YouTube private-by-default) apply identically. Messages are passed back to t
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import shutil
@@ -19,7 +20,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -41,6 +42,7 @@ from rokkur_studio.db.models import (
     Job,
     Project,
     Publication,
+    Render,
 )
 from rokkur_studio.director.assets import (
     AssetTracker,
@@ -60,9 +62,9 @@ from rokkur_studio.director.vocabulary import VOCABULARY
 from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.domain.states import ProjectStatus as S
 from rokkur_studio.media.ffmpeg import FFmpegError
-from rokkur_studio.pipeline.context import StudioContext, profile_availability
+from rokkur_studio.pipeline.context import StudioContext, profile_availability, supported_controls
 from rokkur_studio.pipeline.subject import OnnxSubjectMasker, decide_subject
-from rokkur_studio.services import commands, publishing
+from rokkur_studio.services import commands, publishing, ratings, taste
 from rokkur_studio.services.projects import (
     at_budget_limit,
     at_repair_limit,
@@ -77,6 +79,10 @@ from rokkur_studio.youtube.oauth import OAuthError
 
 router = APIRouter(prefix="/ui", include_in_schema=False)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+STATIC_DIR = Path(__file__).parent / "static"
+# Changes whenever the stylesheet or script does, so a browser never keeps an old copy.
+templates.env.globals["static_version"] = hashlib.sha256(b"".join(
+    p.read_bytes() for p in sorted(STATIC_DIR.glob("*")) if p.is_file())).hexdigest()[:10]
 templates.env.filters["pretty"] = lambda v: json.dumps(v, indent=2, default=str)
 templates.env.globals["video_url"] = video_url
 
@@ -170,12 +176,54 @@ def _back(url: str, *, msg: str | None = None, err: str | None = None) -> Redire
 
 
 def _thumbs(session: Session, project_ids: list[str]) -> dict[str, str]:
+    """A picture per project: its thumbnail, else the first shot's middle frame."""
     if not project_ids:
         return {}
-    rows = session.execute(select(Asset.project_id, Asset.id)
-                           .where(Asset.project_id.in_(project_ids), Asset.kind == "thumbnail")
+    rows = session.execute(select(Asset.project_id, Asset.id, Asset.kind)
+                           .where(Asset.project_id.in_(project_ids),
+                                  Asset.kind.in_(("thumbnail", "keyframe")))
                            .order_by(Asset.created_at)).all()
-    return {pid: f"/projects/{pid}/assets/{aid}/file" for pid, aid in rows}
+    out: dict[str, str] = {}
+    for pid, aid, kind in rows:
+        if kind == "keyframe" and pid in out:
+            continue  # the first keyframe stands in until a thumbnail exists
+        out[pid] = f"/projects/{pid}/assets/{aid}/file"
+    return out
+
+
+STEP_LABELS = {"rights_check": "Checking rights", "ingest": "Copying the source",
+               "analyze": "Analysing the footage", "creative_plan": "Writing the brief",
+               "compile_workflow": "Building workflows", "render": "Rendering",
+               "qc": "Checking quality", "repair": "Planning repairs",
+               "edit": "Editing the final video"}
+
+
+def running_now(session: Session) -> list[dict[str, Any]]:
+    """What the workers are doing right now, in words, newest first."""
+    rows = session.execute(select(Job, Project.name).join(Project, Project.id == Job.project_id)
+                           .where(Job.status == "RUNNING").order_by(Job.started_at.desc())).all()
+    out = []
+    for job, name in rows:
+        step = STEP_LABELS.get(job.kind, job.kind.replace("_", " ").capitalize())
+        if job.kind == "render":
+            active = session.scalars(select(Render).where(Render.project_id == job.project_id,
+                                                          Render.status == "running")
+                                     .order_by(Render.started_at.desc()).limit(1)).one_or_none()
+            if active is not None:
+                step = f"Rendering shot {active.shot_id.replace('shot_', '')}" + (
+                    f", attempt {active.attempt}" if active.attempt > 1 else "")
+        out.append({"project_id": job.project_id, "name": name, "step": step,
+                    "since": job.started_at.isoformat() if job.started_at else None})
+    return out
+
+
+@router.get("/status")
+def live_status(session: Db) -> dict[str, Any]:
+    """The rail's live line: cheap database reads only, polled by every page."""
+    return {"running": running_now(session),
+            "queued": session.scalar(select(func.count(Job.id)).where(Job.status == "QUEUED")) or 0,
+            "approvals": session.scalar(select(func.count(ApprovalRequest.id))
+                                        .where(ApprovalRequest.status == "pending")) or 0}
 
 
 def media_files(ctx: StudioContext) -> list[dict[str, Any]]:
@@ -238,11 +286,16 @@ def overview(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
                                      .order_by(Project.updated_at.desc()).limit(8)))
     finished = list(session.scalars(
         select(Project).where(Project.status.in_(["READY_TO_PUBLISH", "PUBLISHED", "MONITORING"]))
-        .order_by(Project.updated_at.desc()).limit(8)))
+        .order_by(Project.updated_at.desc()).limit(12)))
     pending_approvals = session.scalar(select(func.count(ApprovalRequest.id))
                                        .where(ApprovalRequest.status == "pending")) or 0
+    running = {r["project_id"]: r["step"] for r in running_now(session)}
+    profile = taste.build_profile(session)
     return _page(request, "overview.html", ctx, tiles=tiles, active=active, attention=attention,
-                 finished=finished, thumbs=_thumbs(session, [p.id for p in finished]),
+                 finished=finished, running=running,
+                 thumbs=_thumbs(session, [p.id for p in finished + active + attention]),
+                 verdicts=ratings.video_verdicts(session, [p.id for p in finished]),
+                 unrated=ratings.unrated_count(session), taste=profile,
                  services=services(ctx), gpu=gpu_info(ctx, session),
                  workers=workers_info(session), pending_approvals=pending_approvals)
 
@@ -250,7 +303,7 @@ def overview(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
 # -- projects ------------------------------------------------------------------------------
 @router.get("/projects", response_class=HTMLResponse)
 def projects_page(request: Request, ctx: Ctx, session: Db, group: str = "all",
-                  q: str = "") -> HTMLResponse:
+                  q: str = "", view: str = "grid") -> HTMLResponse:
     stmt = select(Project).order_by(Project.created_at.desc()).limit(300)
     states = GROUPS.get(group)
     if states is not None:
@@ -258,8 +311,11 @@ def projects_page(request: Request, ctx: Ctx, session: Db, group: str = "all",
     if q:
         stmt = stmt.where(Project.name.ilike(f"%{q}%"))
     projects = list(session.scalars(stmt))
+    ids = [p.id for p in projects]
     return _page(request, "projects.html", ctx, projects=projects, group=group, q=q,
-                 groups=list(GROUPS), thumbs=_thumbs(session, [p.id for p in projects]))
+                 groups=list(GROUPS), thumbs=_thumbs(session, ids),
+                 verdicts=ratings.video_verdicts(session, ids),
+                 view="list" if view == "list" else "grid")
 
 
 def _tracker(ctx: StudioContext) -> tuple[AssetTracker | None, str | None]:
@@ -270,9 +326,11 @@ def _tracker(ctx: StudioContext) -> tuple[AssetTracker | None, str | None]:
 
 
 @router.get("/new", response_class=HTMLResponse)
-def new_page(request: Request, ctx: Ctx) -> HTMLResponse:
+def new_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
     tracker, _ = _tracker(ctx)
+    profile = taste.build_profile(session)
     return _page(request, "new.html", ctx, media=media_files(ctx),
+                 suggestions=taste.suggestions(profile), taste=profile,
                  profile_status=profile_availability(ctx),
                  characters=tracker.characters if tracker else {},
                  profiles=ctx.settings.profiles,
@@ -449,6 +507,55 @@ def _budget_stop(session: Session, ctx: StudioContext, project: Project) -> dict
             "grant": commands.render_grant(ctx.settings)}
 
 
+def _shot_reviews(session: Session, project: Project, detail: Any,
+                  keyframes: dict[Any, str]) -> list[dict[str, Any]]:
+    """Everything the review room shows per shot: the plan, every attempt, the latest render
+    with its QC result and your rating of it."""
+    docs = detail.documents
+    planned = {s["shot_id"]: s for s in (docs.get("creative_brief") or {}).get("data", {})
+               .get("shot_plan", [])}
+    manifest_shots = (docs.get("manifest") or {}).get("data", {}).get("shots", [])
+    timing = {s["shot_id"]: (s["start"], s["end"]) for s in manifest_shots}
+    qc = {r.get("render_id"): r for r in (docs.get("qc_report") or {}).get("data", {})
+          .get("shots", [])}
+    rows = list(session.scalars(select(Render).where(Render.project_id == project.id)
+                                .order_by(Render.attempt)))
+    by_asset = {r.output_asset_id: r for r in rows if r.output_asset_id}
+    verdicts = {r.render_id: r for r in ratings.project_ratings(session, project.id)
+                if r.render_id}
+    order = list(timing) or list(planned)
+    for r in rows:
+        if r.shot_id not in order:
+            order.append(r.shot_id)
+    out = []
+    for sid in order:
+        attempts = [a for a in detail.assets if a.kind in ("render", "render_raw")
+                    and a.meta.get("shot_id") == sid]
+        finals = [a for a in attempts if a.kind == "render"]
+        latest = max(finals, key=lambda a: a.meta.get("attempt", 0), default=None)
+        render = by_asset.get(latest.id) if latest else None
+        running = next((r for r in rows if r.shot_id == sid and r.status == "running"), None)
+        start, end = timing.get(sid, (planned.get(sid, {}).get("start", 0),
+                                      planned.get(sid, {}).get("end", 0)))
+        rating = verdicts.get(render.id) if render else None
+        earlier = None
+        if render and rating is None:  # a disliked attempt that was redone stays visible
+            earlier = next((verdicts[r.id] for r in reversed(rows) if r.shot_id == sid
+                            and r.id in verdicts), None)
+        details = (render.params or {}).get("_details", {}) if render else {}
+        out.append({
+            "id": sid, "label": sid.replace("shot_", "Shot "), "number": sid.replace("shot_", ""),
+            "start": start, "end": end, "plan": planned.get(sid, {}),
+            "keyframe": keyframes.get(sid), "asset": latest, "render": render,
+            "attempts": [{"asset": a, "render_id": by_asset[a.id].id if a.id in by_asset else None}
+                         for a in sorted(attempts, key=lambda a: (a.meta.get("attempt", 0),
+                                                                   a.kind))],
+            "qc": qc.get(render.id) if render else None, "rating": rating, "earlier": earlier,
+            "subject": details.get("subject"), "running": running,
+        })
+    return out
+
+
 @router.get("/projects/{project_id}", response_class=HTMLResponse)
 def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
     try:
@@ -470,24 +577,31 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
                  if project.status == S.READY_TO_PUBLISH else None)
     proposals = publishing.pending_proposals(session, project_id)
     failed = project.status == S.FAILED
-    previews: dict[str, Any] = {}
-    for asset in detail.assets:
-        if asset.kind == "render" and asset.meta.get("shot_id"):
-            key = asset.meta["shot_id"]
-            if key not in previews or asset.meta.get("attempt", 0) > previews[key].meta.get("attempt", 0):
-                previews[key] = asset
     manifest = detail.documents.get("manifest")
     if manifest is not None:  # manifests from before subject handling have none: they restyled
         subject = manifest["data"].get("subject")
     else:
         subject = {**decide_subject(project.creative_input).to_dict(), "planned": True}
-    shot_subject = {r.shot_id: r.params["_details"]["subject"] for r in detail.renders
-                    if r.status == "succeeded" and "subject" in r.params.get("_details", {})}
+    shots = _shot_reviews(session, project, detail, keyframes)
+    video_asset = ratings.latest_video_asset(session, project_id)
+    verdicts = ratings.project_ratings(session, project_id)
+    video_rating = next((r for r in reversed(verdicts) if r.target == ratings.VIDEO
+                         and video_asset is not None and r.asset_id == video_asset.id), None)
+    earlier_video_rating = None if video_rating else next(
+        (r for r in reversed(verdicts) if r.target == ratings.VIDEO), None)
+    source = next((a for a in reversed(detail.assets) if a.kind == "source"), None)
+    repair_limit = at_repair_limit(project)
+    gpu_minutes = session.scalar(select(func.coalesce(func.sum(CostEntry.amount), 0.0)).where(
+        CostEntry.project_id == project_id, CostEntry.kind == "gpu_minutes")) or 0.0
     return _page(request, "project.html", ctx, d=detail, p=project, events=events,
-                 shot_previews=previews, subject=subject, shot_subject=shot_subject,
-                 keyframes=keyframes,
+                 shots=shots, subject=subject, keyframes=keyframes, tags=ratings.TAGS,
+                 video_asset=video_asset, video_rating=video_rating,
+                 earlier_video_rating=earlier_video_rating,
+                 source_url=(f"/projects/{project_id}/assets/{source.id}/file" if source else None),
+                 can_redo=project.status == S.READY_TO_PUBLISH or repair_limit,
+                 gpu_minutes=float(gpu_minutes),
                  failure=failure_reason(session, project) if failed else None,
-                 repair_limit=at_repair_limit(project),
+                 repair_limit=repair_limit,
                  budget=_budget_stop(session, ctx, project),
                  steps=stage_progress(project.status, project.failed_from_state),
                  publish_block=publish_block,
@@ -513,7 +627,7 @@ def save_metadata(project_id: str, ctx: Ctx, session: Db, title: Annotated[str, 
         return _back(url, err="no metadata yet; it is written when the video is finished")
     if project.status not in (S.READY_TO_PUBLISH, S.EDITING):
         return _back(url, err=f"metadata can only be edited before publishing ({project.status})")
-    data = {**current.data, "title": title.strip(),
+    data = {**current.data, "text_by": "you", "title": title.strip(),
             "description": description.replace("\r\n", "\n").strip(),
             "tags": [t.strip() for t in tags.split(",") if t.strip()]}
     errors = publishing.validate_metadata(data)
@@ -569,6 +683,47 @@ def publish_from_ui(project_id: str, ctx: Ctx, session: Db,
     return _back(url, msg=done)
 
 
+@router.post("/projects/{project_id}/rate")
+async def rate_from_ui(project_id: str, request: Request, session: Db) -> Any:
+    """Rate a shot attempt or the video. Answers JSON to the page's script, else redirects."""
+    url = f"/ui/projects/{project_id}"
+    wants_json = "application/json" in request.headers.get("accept", "")
+    form = await request.form()
+    try:
+        body = ratings.RatingIn(target=str(form.get("target", "")),
+                                value=int(str(form.get("value", "0"))),  # type: ignore[arg-type]
+                                tags=[str(t) for t in form.getlist("tags")],
+                                note=str(form.get("note") or "") or None,
+                                render_id=str(form.get("render_id") or "") or None)
+        project = get_project(session, project_id)
+        rating = ratings.rate(session, project, body, actor="dashboard")
+    except (ValidationError, ValueError, LookupError) as exc:
+        message = (exc.errors()[0]["msg"] if isinstance(exc, ValidationError) else str(exc))
+        if wants_json:
+            return JSONResponse({"error": message}, status_code=422)
+        return _back(url, err=message)
+    label = ratings.VALUES.get(rating.value, "") if rating else "Rating removed"
+    if wants_json:
+        return {"value": rating.value if rating else 0, "label": label,
+                "tags": rating.tags if rating else [], "note": rating.note if rating else None}
+    return _back(url, msg=f"{label} saved" if rating else label)
+
+
+@router.post("/projects/{project_id}/redo")
+def redo_from_ui(project_id: str, ctx: Ctx, session: Db,
+                 shots: Annotated[list[str] | None, Form()] = None) -> RedirectResponse:
+    url = f"/ui/projects/{project_id}"
+    project = get_project(session, project_id, for_update=True)
+    try:
+        commands.redo_shots(session, project, ctx.settings, shot_ids=shots or [],
+                            actor="dashboard", supported=supported_controls(ctx, project.render_profile))
+    except ValueError as exc:
+        return _back(url, err=str(exc))
+    names = ", ".join(s.replace("shot_", "") for s in shots or [])
+    return _back(url, msg=f"Redoing shot{'s' if len(shots or []) > 1 else ''} {names}; "
+                          "the other shots stay as they are")
+
+
 @router.post("/projects/{project_id}/{action}")
 def project_action(project_id: str, action: str, ctx: Ctx, session: Db) -> RedirectResponse:
     url = f"/ui/projects/{project_id}"
@@ -605,11 +760,24 @@ def project_action(project_id: str, action: str, ctx: Ctx, session: Db) -> Redir
                            "reject-rights": "Rights rejected"}[action])
 
 
+# -- taste ---------------------------------------------------------------------------------
+@router.get("/taste", response_class=HTMLResponse)
+def taste_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
+    profile = taste.build_profile(session)
+    return _page(request, "taste.html", ctx, profile=profile,
+                 suggestions=taste.suggestions(profile), report=taste.report(profile),
+                 queue=ratings.unrated_renders(session, limit=12),
+                 unrated=ratings.unrated_count(session), tags=ratings.TAGS,
+                 kinds=taste.KINDS, min_projects=taste.MIN_PROJECTS)
+
+
 # -- queue / approvals ---------------------------------------------------------------------
 @router.get("/queue", response_class=HTMLResponse)
 def queue_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
     jobs = list(session.scalars(select(Job).order_by(Job.created_at.desc()).limit(200)))
-    return _page(request, "queue.html", ctx, jobs=jobs, workers=workers_info(session),
+    names = dict(session.execute(select(Project.id, Project.name).where(
+        Project.id.in_(list({j.project_id for j in jobs if j.project_id})))).all())
+    return _page(request, "queue.html", ctx, jobs=jobs, names=names, workers=workers_info(session),
                  gpu=gpu_info(ctx, session))
 
 

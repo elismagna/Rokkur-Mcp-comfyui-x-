@@ -204,6 +204,25 @@ class ProjectDetail(BaseModel):
     next_job: str | None
 
 
+class RatingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    target: str
+    render_id: str | None
+    asset_id: str | None
+    rater: str
+    value: int
+    tags: list[str]
+    note: str | None
+    snapshot: dict[str, Any]
+    updated_at: datetime
+
+
+class RedoIn(BaseModel):
+    shots: list[str] = Field(min_length=1)
+
+
 class PublishIn(BaseModel):
     dry_run: bool = True
     privacy: Literal["private", "unlisted", "public"] | None = None

@@ -70,7 +70,7 @@ from rokkur_studio.pipeline.subject import (
     unusable,
     vace_mask_video,
 )
-from rokkur_studio.services import publishing
+from rokkur_studio.services import publishing, ratings
 from rokkur_studio.services.assets import import_file, register_asset
 from rokkur_studio.services.events import EventType, record_event
 from rokkur_studio.services.projects import (
@@ -760,6 +760,7 @@ def quality_check(ctx: StudioContext, job: Job) -> dict[str, Any]:
     shots = []
     offset = 0
     with ctx.db.session() as s:
+        accepted = ratings.accepted_renders(s, pid)
         for shot in manifest.shots:
             r = latest[shot.shot_id]
             asset = s.get(Asset, r.output_asset_id)
@@ -770,6 +771,11 @@ def quality_check(ctx: StudioContext, job: Job) -> dict[str, Any]:
                                        frame_offset=offset)
             result["render_id"] = r.id
             result["attempt"] = r.attempt
+            if result["decision"] != "PASS" and r.id in accepted:
+                # You liked this render, or kept it while redoing other shots: QC still
+                # records what it measured, but never sends it back for repair.
+                result["decision"] = "PASS"
+                result["accepted_by"] = "you"
             shots.append(result)
             offset += len(src)
     report = qc_mod.summarize(shots, threshold)
@@ -940,6 +946,14 @@ def edit(ctx: StudioContext, job: Job) -> dict[str, Any]:
         if draft is not None:
             metadata = publishing.apply_draft(metadata, draft.model_dump(),
                                               target_format=p.target_format, rights=rights)
+        previous = latest_document(s, pid, "metadata")
+        if previous is not None and (previous.created_by == "dashboard"
+                                     or previous.data.get("text_by") == "you"):
+            # A video re-edited after redone shots keeps the text you already wrote, on every
+            # later redo too.
+            metadata = {**metadata, "text_by": "you",
+                        **{k: previous.data[k] for k in ("title", "description", "tags")
+                           if k in previous.data}}
         save_document(s, pid, "metadata", metadata, created_by=f"channel_manager:{drafted_by}")
         record_event(s, EventType.FINAL_ENCODED, project_id=pid, actor="editor", job_id=job.id,
                      data={"final": final_asset.rel_path, "thumbnail": thumb_asset.rel_path,

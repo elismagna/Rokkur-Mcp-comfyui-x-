@@ -58,6 +58,33 @@ because the render keeps the source's composition: the framing words should desc
 is actually there. `director.vision_model` can name a separate Ollama vision model for this
 pass; `director.vision: off` disables images.
 
+### One main subject per video (subject lock)
+
+With images, the DP also names what it sees in each shot (`observed_subject`), and that used
+to become the shot's subject. A prop that fills a shot's middle frame (a bright bucket) could
+then replace the person the video is about. `director/subject.py` now picks one main subject
+for the whole project before the prompts are built:
+
+1. Your own words (the scene prompt or character description) naming something the shots
+   show, people and animals first.
+2. Otherwise, the person or animal named first in the most shots' observations. People words
+   count as one family ("fisherman" and "man in a green shirt" are the same subject), and so
+   do monkey, ape and chimp.
+3. Neither: nothing is locked and each shot keeps what it saw.
+
+A shot whose observation names the main subject anywhere keeps that observation. A shot that
+saw only something else keeps the main subject when its story puts the subject in the shot,
+and the prop is listed with the surroundings. A shot without the main subject keeps what it
+shows (writing a man over a bucket would turn the bucket into a man) and gets a warning. A
+character anchor already fixes the subject, so the lock is not used with one. The project page
+shows the main subject under **Follows**, and every kept or warned shot is listed in the
+brief's warnings. The DP is also told to describe a visible person or animal rather than a
+bigger prop.
+
+This fixes the prompt side only. The keep mask is a salient-object model (U²-Net) that does
+not read the prompt, so it can still follow the bucket; a segmentation model seeded by the
+chosen subject is the next step and needs testing on the workstation.
+
 Rule-based framing (no model): Medium Shot, Eye-level, movement from the measured motion
 (static → Static, gentle → Slow push-in, moderate → Tracking pan, high → Handheld shake),
 lighting from theme keywords (neon → Moody neon rim lighting, noir → Chiaroscuro, forest/fog →

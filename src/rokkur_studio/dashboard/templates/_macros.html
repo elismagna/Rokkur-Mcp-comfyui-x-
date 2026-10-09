@@ -1,3 +1,4 @@
+{% from "_icons.html" import icon %}
 {% macro status_pill(status) -%}
 <span class="pill {% if status in ['FAILED','RIGHTS_REJECTED','CANCELLED'] %}bad{% elif status in ['READY_TO_PUBLISH','PUBLISHED','MONITORING'] %}ok{% elif status=='RIGHTS_PENDING' %}warn{% elif status in working %}info{% endif %}">{{ status|replace('_',' ')|lower|capitalize }}</span>
 {%- endmacro %}
@@ -6,13 +7,34 @@
 <div class="pipe" role="list">{% for s in steps %}<div class="st {{s.state}}" role="listitem" title="{{s.label}}: {{s.state}}"><div class="bar"></div><div class="lbl">{{s.label}}</div></div>{% endfor %}</div>
 {%- endmacro %}
 
-{% macro project_row(p, thumb=None) -%}
+{% macro project_row(p, thumb=None, step=None) -%}
 <div class="row" style="flex-wrap:nowrap">
   <div class="mini" {% if thumb %}style="background-image:url('{{thumb}}')"{% endif %}></div>
   <div style="min-width:0;flex:1">
     <a href="/ui/projects/{{p.id}}"><b>{{p.name}}</b></a> {{ status_pill(p.status) }}
     <div class="progress" aria-hidden="true"><i style="width:{{ percent(p.status, p.failed_from_state) }}%"></i></div>
-    <div class="hint">{{p.render_profile}} · {{p.target_format|replace('youtube_','')}} · updated {{p.updated_at.strftime('%d %b %H:%M')}}</div>
+    <div class="hint">{% if step %}<span class="warn">{{ step }}</span> · {% endif %}{{p.render_profile}} · updated {{p.updated_at.strftime('%d %b %H:%M')}}</div>
   </div>
 </div>
+{%- endmacro %}
+
+{% macro score(value, decision=None, small=False) -%}
+{% if value is not none %}<div class="score{% if small %} small{% endif %}{% if decision and decision != 'PASS' %} fail{% endif %}" style="--v:{{ value }}" title="Measured quality {{ value }} of 10{% if decision %}: {{ decision|lower }}{% endif %}"><b>{{ '%.1f'|format(value) }}</b></div>{% endif %}
+{%- endmacro %}
+
+{# One rating control: four verdicts, what it is about, an optional note. Saved instantly by
+   studio.js; without script each press submits the form. #}
+{% macro rate_form(pid, target, rating, tags, render_id=None, label='', compact=False, show_tags=True) -%}
+<form class="rate{% if compact %} compact{% endif %}" method="post" action="/ui/projects/{{pid}}/rate" data-rate data-value="{{ rating.value if rating else 0 }}">
+  <input type="hidden" name="target" value="{{ target }}">
+  {% if render_id %}<input type="hidden" name="render_id" value="{{ render_id }}">{% endif %}
+  <div class="rate-buttons" role="group" aria-label="Rate {{ label }}">
+    {% for v, name, ic in [(-2, 'Super dislike', 'nope'), (-1, 'Dislike', 'down'), (1, 'Like', 'up'), (2, 'Super like', 'star')] %}
+    <button type="submit" class="rate-btn" name="value" value="{{ v }}" data-v="{{ v }}" aria-pressed="{{ 'true' if rating and rating.value == v else 'false' }}" aria-label="{{ name }}" title="{{ name }}">{{ icon(ic) }}<span>{{ name }}</span></button>
+    {% endfor %}
+  </div>
+  {% if show_tags %}<div class="rate-tags{% if compact %} needs-verdict{% endif %}" role="group" aria-label="What it is about" {% if compact and not rating %}hidden{% endif %}>{% for key, text in tags.items() %}<label><input type="checkbox" name="tags" value="{{ key }}" {% if rating and key in rating.tags %}checked{% endif %}><span>{{ text }}</span></label>{% endfor %}</div>
+  <input class="rate-note needs-verdict" name="note" maxlength="1000" placeholder="Keep this, or change this…" value="{{ rating.note if rating and rating.note else '' }}" aria-label="Note for {{ label }}" {% if not rating %}hidden{% endif %}>{% endif %}
+  <span class="rate-status" aria-live="polite"></span>
+</form>
 {%- endmacro %}

@@ -1,12 +1,37 @@
-{% extends "base.html" %}{% from "_macros.html" import project_row, status_pill %}
+{% extends "base.html" %}{% from "_macros.html" import project_row, status_pill with context %}{% from "_icons.html" import icon, verdict_badge %}
 {% block head %}{% if active %}<meta name="studio-refresh" content="10">{% endif %}{% endblock %}
+{% block crumb %}Rökkur / Home{% endblock %}
 {% block body %}
-<div class="eyebrow">YOUR PRODUCTION DESK</div>
-<h1>From footage to finished film.</h1>
-<p class="sub">Renders with <b>{{ settings.render.renderer }}</b> · agents on <b>{{ settings.agents.provider }}</b>{% if settings.agents.provider == 'ollama' %} ({{ settings.ollama.model }}){% endif %} · default profile <b>{{ settings.render.default_profile }}</b></p>
+<section class="hero">
+  <div class="eyebrow">Your production desk</div>
+  <h1>From footage to finished film.</h1>
+  <p class="sub">Renders with <b>{{ settings.render.renderer }}</b> · agents on <b>{{ settings.agents.provider }}</b>{% if settings.agents.provider == 'ollama' %} ({{ settings.ollama.model }}){% endif %} · default profile <b>{{ settings.render.default_profile }}</b></p>
+  {% for p in active %}
+  <a class="now" href="/ui/projects/{{p.id}}">
+    <div class="poster" {% if thumbs.get(p.id) %}style="background-image:url('{{thumbs[p.id]}}')"{% endif %}></div>
+    <div style="min-width:0">
+      <div class="stage">{% if running.get(p.id) %}<span class="pulse on"></span> {{ running[p.id] }}{% else %}{{ p.status|replace('_',' ')|lower|capitalize }}{% endif %}</div>
+      <b>{{ p.name }}</b>
+      <div class="progress" aria-hidden="true"><i style="width:{{ percent(p.status, p.failed_from_state) }}%"></i></div>
+      <div class="hint">{{ p.render_profile }} · updated {{ p.updated_at.strftime('%d %b %H:%M') }}</div>
+    </div>
+    <span class="btn secondary small">Open</span>
+  </a>
+  {% else %}
+  <div class="row"><a class="btn ember" href="/ui/new">{{ icon('plus') }} Start a new video</a><span class="muted">Nothing rendering right now.</span></div>
+  {% endfor %}
+</section>
 
 {% if settings.render.renderer != 'comfyui' %}
 <div class="note">Renders use the quick non-AI stand-in (<code>ffmpeg_preview</code>), so videos from this page won't get the Wan style. For real renders, put <code>STUDIO_RENDER__RENDERER=comfyui</code> in <code>.env</code> and run <code>.\scripts\studio.ps1 up</code>.</div>
+{% endif %}
+
+{% if unrated %}
+<a class="callout" href="/ui/taste#rate" style="margin-bottom:22px;color:var(--fg)">
+  <span style="color:var(--ember)">{{ icon('star') }}</span>
+  <div><p><b>{{ unrated }} shot{{ '' if unrated == 1 else 's' }} waiting for your verdict.</b></p>
+  <div class="hint">Every rating teaches the studio what you like. It takes a few seconds per shot.</div></div>
+</a>
 {% endif %}
 
 <div class="tiles">
@@ -22,25 +47,30 @@
 <div class="stack">
   {% if attention %}
   <div class="card"><h2>Needs you</h2>
-    <div class="stack">{% for p in attention %}{{ project_row(p) }}{% endfor %}</div>
+    <div class="stack">{% for p in attention %}{{ project_row(p, thumbs.get(p.id)) }}{% endfor %}</div>
   </div>{% endif %}
 
-  <div class="card"><h2>In progress</h2>
-    {% if active %}<div class="stack">{% for p in active %}{{ project_row(p) }}{% endfor %}</div>
-    {% else %}<p class="empty">Nothing rendering right now. <a href="/ui/new">Start a new video</a>.</p>{% endif %}
-  </div>
-
-  <div class="card"><h2>Latest finished</h2>
+  <div class="card"><div class="row spread"><h2>Latest videos</h2><a href="/ui/projects?group=ready">All finished</a></div>
     {% if finished %}<div class="gallery">{% for p in finished %}
-      <a href="/ui/projects/{{p.id}}"><div class="thumb" {% if thumbs.get(p.id) %}style="background-image:url('{{thumbs[p.id]}}')"{% endif %}></div>
+      <a href="/ui/projects/{{p.id}}"><div class="thumb" {% if thumbs.get(p.id) %}style="background-image:url('{{thumbs[p.id]}}')"{% endif %}>
+        <div class="badges">{{ verdict_badge(verdicts.get(p.id)) }}</div></div>
       <div class="cap">{{p.name}}</div><div>{{ status_pill(p.status) }}</div></a>{% endfor %}</div>
     {% else %}<p class="empty">Finished videos show up here.</p>{% endif %}
   </div>
 </div>
 
 <div class="stack">
+  <a class="card" href="/ui/taste" style="display:block;color:var(--fg)"><h2>Your taste</h2>
+    {% if taste.count %}
+    <p style="margin:0 0 6px">{{ taste.count }} rating{{ '' if taste.count == 1 else 's' }} across {{ taste.projects }} project{{ '' if taste.projects == 1 else 's' }}.</p>
+    {% if taste.liked %}<div class="hint">You tend to like <b>{{ taste.liked[0].label }}</b>{% if taste.liked[0].confidence == 'early' %} (early signal){% endif %}.</div>{% endif %}
+    {% if taste.disliked %}<div class="hint">You tend to dislike <b>{{ taste.disliked[0].label }}</b>{% if taste.disliked[0].confidence == 'early' %} (early signal){% endif %}.</div>{% endif %}
+    {% else %}<p class="muted" style="margin:0">No ratings yet. Rate shots on a project page and the studio starts learning what you like.</p>{% endif %}
+  </a>
   <div class="card"><h2>Services</h2>
-    <table>{% for s in services %}<tr><td><span class="dot {{ 'ok' if s.ok else ('bad' if s.needed else '') }}"></span>{{s.name}}</td><td class="muted">{{s.detail}}</td><td style="text-align:right">{% if s.ok %}<span class="ok">ready</span>{% elif s.needed %}<span class="bad">down</span>{% else %}<span class="muted">off</span>{% endif %}</td></tr>{% endfor %}</table>
+    {% for s in services %}<div class="svc"><span class="dot {{ 'ok' if s.ok else ('bad' if s.needed else '') }}"></span>
+      <div><b>{{ s.name }}</b><div class="hint" title="{{ s.detail }}">{{ s.detail }}</div></div>
+      {% if s.ok %}<span class="ok">ready</span>{% elif s.needed %}<span class="bad">down</span>{% else %}<span class="muted">off</span>{% endif %}</div>{% endfor %}
   </div>
   <div class="card"><h2>Graphics card</h2>
     <div class="row" style="justify-content:space-between"><span>{{ '%.0f'|format(gpu.in_use_gb) }} of {{ '%.0f'|format(gpu.vram_gb) }} GB reserved</span><span class="muted">{{ gpu.leases|length }} job{{ '' if gpu.leases|length == 1 else 's' }}</span></div>

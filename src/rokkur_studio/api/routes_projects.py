@@ -21,15 +21,21 @@ from rokkur_studio.api.schemas import (
     ProjectOut,
     PublicationOut,
     PublishIn,
+    RatingOut,
+    RedoIn,
     RenderOut,
     RightsDecisionIn,
     RightsOut,
 )
-from rokkur_studio.db.models import Asset, Event, Job, Project, Publication, Render
+from rokkur_studio.db.models import Asset, Event, Job, Project, Publication, Rating, Render
 from rokkur_studio.domain.states import ProjectStatus
-from rokkur_studio.pipeline.context import StudioContext, profile_availability
+from rokkur_studio.pipeline.context import (
+    StudioContext,
+    profile_availability,
+    supported_controls,
+)
 from rokkur_studio.pipeline.driver import advance, next_job_kind
-from rokkur_studio.services import commands, publishing
+from rokkur_studio.services import commands, publishing, ratings
 from rokkur_studio.services.assets import import_file, project_assets
 from rokkur_studio.services.projects import get_project, latest_document, latest_rights
 from rokkur_studio.youtube.client import YouTubeError
@@ -138,6 +144,32 @@ def resume_project(project_id: str, ctx: Ctx, session: Db) -> Project:
     project = _project(session, project_id, for_update=True)
     try:
         commands.resume_project(session, project, ctx.settings)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return project
+
+
+@router.get("/{project_id}/ratings", response_model=list[RatingOut], tags=["ratings"])
+def list_ratings(project_id: str, session: Db) -> list[Rating]:
+    return ratings.project_ratings(session, _project(session, project_id).id)
+
+
+@router.put("/{project_id}/ratings", response_model=RatingOut | None, tags=["ratings"],
+            summary="Rate a shot attempt or the video (value 0 removes your rating)")
+def put_rating(project_id: str, body: ratings.RatingIn, session: Db) -> Rating | None:
+    try:
+        return ratings.rate(session, _project(session, project_id), body, actor="api")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/{project_id}/redo", response_model=ProjectOut, tags=["ratings"],
+             summary="Render the given shots again; every other shot keeps its render")
+def redo(project_id: str, body: RedoIn, ctx: Ctx, session: Db) -> Project:
+    project = _project(session, project_id, for_update=True)
+    try:
+        commands.redo_shots(session, project, ctx.settings, shot_ids=body.shots, actor="api",
+                            supported=supported_controls(ctx, project.render_profile))
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return project

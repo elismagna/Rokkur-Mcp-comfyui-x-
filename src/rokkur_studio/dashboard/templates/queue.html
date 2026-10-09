@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}Queue · Rökkur Studio{% endblock %}
-{% block head %}<meta name="studio-refresh" content="6">{% endblock %}{% block body %}
+{% block head %}<meta name="studio-refresh" content="6">{% endblock %}{% block crumb %}Rökkur / Queue{% endblock %}{% block body %}
 <h1>Queue</h1>
 <p class="sub">Every step of every video is a job. Workers pick them up in order; the GPU is lent to one heavy render at a time.</p>
 <div class="tiles">
@@ -8,7 +8,7 @@
 </div>
 <p>{% for w in workers.active %}<span class="pill ok">{{w.worker_id}} · {{w.running_jobs}} running</span> {% else %}<span class="muted">No worker is holding a job right now.</span>{% endfor %}</p>
 <div class="table-wrap"><table><tr><th>Project</th><th>Step</th><th>Status</th><th>Tries</th><th>Worker</th><th>Created</th><th>Time</th><th>Error</th></tr>
-{% for j in jobs %}<tr><td>{% if j.project_id %}<a href="/ui/projects/{{j.project_id}}">{{j.project_id[-8:]}}</a>{% endif %}</td><td>{{j.kind|replace('_',' ')}}</td>
+{% for j in jobs %}<tr><td>{% if j.project_id %}<a href="/ui/projects/{{j.project_id}}">{{ names.get(j.project_id) or j.project_id[-8:] }}</a>{% endif %}</td><td>{{j.kind|replace('_',' ')}}</td>
 <td><span class="pill {{ 'ok' if j.status=='SUCCEEDED' else ('bad' if j.status=='FAILED' else ('info' if j.status=='RUNNING' else ('warn' if j.status=='RETRY_WAIT' else ''))) }}">{{j.status|replace('_',' ')|lower}}</span></td>
 <td>{{j.retry_count}}/{{j.max_attempts}}</td><td class="muted">{{j.locked_by or ''}}</td><td class="muted">{{j.created_at.strftime('%d %b %H:%M:%S')}}</td><td>{{ '%.1f s'|format(j.duration_s) if j.duration_s else '' }}</td><td class="bad">{{j.error.message if j.error else ''}}</td></tr>
 {% else %}<tr><td colspan="8" class="empty">No jobs yet.</td></tr>{% endfor %}</table></div>

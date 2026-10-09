@@ -589,6 +589,17 @@ def cmd_render(args: argparse.Namespace) -> int:
     return _drive(ctx, pid, args.timeout, actor="cli-render")
 
 
+def cmd_taste(args: argparse.Namespace) -> int:
+    """Print what your ratings say works: plain text to paste to a collaborator."""
+    from rokkur_studio.db.session import Database
+    from rokkur_studio.services import taste
+
+    settings = _settings(args)
+    with Database(settings.database.url).session() as s:
+        print(taste.report(taste.build_profile(s)))
+    return 0
+
+
 def cmd_prompt_schedule(args: argparse.Namespace) -> int:
     """Print a project's Batch Prompt Schedule, ready to paste into FizzNodes."""
     from rokkur_studio.db.session import Database
@@ -688,6 +699,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("prompt-schedule", help="print a project's Batch Prompt Schedule")
     p.add_argument("project_id")
     p.set_defaults(func=cmd_prompt_schedule)
+    sub.add_parser("taste", help="print what your ratings say works").set_defaults(
+        func=cmd_taste)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

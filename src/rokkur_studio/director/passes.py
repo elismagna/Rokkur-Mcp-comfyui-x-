@@ -38,9 +38,14 @@ def direct(provider: AgentProvider, creative_input: dict[str, Any], analysis: di
         return brief, story_by
     dp = dp_provider or provider
     vision = settings.vision == "auto" and bool(keyframes) and dp.supports_images()
-    framed, framing_by = DirectorOfPhotography(
-        dp, vision=vision, max_calls=settings.max_framing_calls).run(brief, keyframes)
+    photography = DirectorOfPhotography(dp, vision=vision, max_calls=settings.max_framing_calls)
+    framed, framing_by = photography.run(brief, keyframes, user_text=" ".join(
+        creative_input.get(k) or "" for k in ("prompt", "character_description")))
     notes.framing_by = framing_by
+    if photography.lock.key:
+        notes.subject, notes.subject_source = photography.lock.label, photography.lock.source
+        notes.subject_kept = photography.lock.kept
+    notes.warnings += photography.warnings
     notes.vision = any((s.framing_by or "").endswith("+vision") for s in framed.shot_plan)
     if not notes.vision and not story_images:
         notes.warnings.append("Source images were not read by a vision model; check the shot descriptions.")

@@ -163,6 +163,35 @@ class Render(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class Rating(Base):
+    """A judgement of one render attempt (``target`` = shot id) or a whole video ("video").
+
+    ``value``: -2 super dislike, -1 dislike, 1 like, 2 super like. ``rater`` keeps a person's
+    taste apart from any model's estimate; learning only ever reads ``human``. ``snapshot``
+    freezes what produced the rated result (prompt, workflow, seed, controls, QC), so what the
+    studio learns never depends on documents that change later.
+    """
+
+    __tablename__ = "ratings"
+    __table_args__ = (Index("ix_ratings_target", "project_id", "target", "rater"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("rat"))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    target: Mapped[str] = mapped_column(String(32))  # "video" or a shot id
+    render_id: Mapped[str | None] = mapped_column(ForeignKey("renders.id"))
+    asset_id: Mapped[str | None] = mapped_column(ForeignKey("assets.id"))
+    rater: Mapped[str] = mapped_column(String(16), default="human")  # human | ai
+    value: Mapped[int] = mapped_column(Integer)
+    tags: Mapped[list[Any]] = mapped_column(default=list)
+    note: Mapped[str | None] = mapped_column(Text)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class Job(Base):
     __tablename__ = "jobs"
     __table_args__ = (

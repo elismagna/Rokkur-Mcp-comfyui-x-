@@ -60,10 +60,12 @@ shot-level repair → encode → metadata/thumbnail → publish.
 | Agents (Ollama + rule-based fallback) | `agents/` | `docs/agents.md` |
 | AI director (vocabulary, DP pass, prompts, characters) | `director/` | `docs/director.md` |
 | Main subject: keep real or restyle, masks, composite | `pipeline/subject.py` | `docs/subject.md` |
+| Subject lock: one main subject per video in the prompts | `director/subject.py` | `docs/director.md` |
+| Your ratings, redo, taste profile and suggestions | `services/ratings.py`, `services/taste.py` | `docs/ratings.md` |
 | Rights gate | `domain/rights.py` | `docs/rights.md` |
 | YouTube OAuth, upload, schedule, playlists, approvals | `youtube/`, `services/publishing.py` | `docs/youtube.md` |
 | Use cases shared by API, dashboard and CLI | `services/commands.py` | |
-| Dashboard | `dashboard/views.py`, `dashboard/templates/` | `README.md` |
+| Dashboard | `dashboard/views.py`, `dashboard/templates/`, `dashboard/static/` (one CSS, one JS) | `README.md` |
 | CLI | `cli.py`; Windows wrapper `scripts/studio.ps1`, Linux `Makefile` | `README.md` |
 | Config | `config/studio.yaml`, overridden by `.env` (`STUDIO_<SECTION>__<KEY>`) | `.env.example` |
 
@@ -240,8 +242,10 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 3. **The vision pass and character anchors.** With a character anchor the DP pass keeps the
    story's subject (pose and expression) and takes only the observed background, so the
    source animal or actor is not written next to the anchor. Without an anchor the observation
-   replaces the story subject, so a request like "turn the cat into a tiger" belongs in a
-   character anchor, not the free-text prompt. Not yet checked on the real model.
+   replaces the story subject, except that the subject lock (`director/subject.py`) keeps one
+   main subject per video so a prop seen first can't take over a shot. A request like "turn
+   the cat into a tiger" still belongs in a character anchor. Not yet checked on the real
+   model. The keep mask (U²-Net) still follows the most salient object, not the locked subject.
 4. One render job in the same project hit "ComfyUI unreachable … [Errno 101] Network is
    unreachable" before the run that got to QC. Not diagnosed; ComfyUI was probably not
    running at the time.
@@ -265,6 +269,31 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   refused there.
 
 ## Current work
+
+- **Claude (2026-10-09): ratings, redo, taste profile, interface overhaul, subject lock.**
+  Follows Codex's design note: human, QC and AI signals stay separate; learning is a visible
+  profile that only suggests; one main subject per video.
+  - Tested here: full suite, ruff, mypy; every page rendered in Chromium at desktop and phone
+    width with no script errors; rating, redo and taste flows through the dashboard.
+  - Not yet run on the PC. Steps: pull, `.\scripts\studio.ps1 up` (runs migration `0002`,
+    the `ratings` table), open a finished project, rate shots and the video, tick a shot and
+    press Redo, then open **Your taste**.
+  - Ratings: −2/−1/+1/+2 per shot attempt and per video, with tags and a note, each with a
+    snapshot of what made it. A liked shot passes QC. Redo re-renders picked shots with a new
+    seed (motion tag: source structure +0.1, style/prompt tag: −0.1, bounded 0.7–1.0) and
+    keeps the rest. Taste: lift per prompt term and setting, averaged per project first,
+    suggestions only from 2+ projects, applied on New video by an Apply button. See
+    `docs/ratings.md`; `studio.ps1 taste` prints the same summary.
+  - Interface: new design (twilight palette, rail with a live "now rendering" line, light
+    theme), home hero with what is rendering, project page rebuilt as a review room (render,
+    original or side by side per shot), projects grid, Your taste page. Static files live in
+    `dashboard/static/`; templates no longer carry inline CSS/JS except new.html's own script.
+  - Subject lock: the DP's per-shot observations no longer switch the video's subject to a
+    prop (the bucket case). Main subject from your words, else the person/animal seen in most
+    shots; shown as **Follows** on the brief. Prompt side only; masks are unchanged.
+  - Next for the subject: a segmentation model seeded by the locked subject, compared on the
+    same shot against U²-Net before replacing it (Codex's acceptance test).
+  - Elis's better outputs: not seen yet; he still needs to attach them.
 
 - **Claude overnight (2026-10-09): draft profile + repair stall stop. Untested on the PC.**
   - New `RTX3070_DRAFT` profile (`v2v_3070_draft`, `v2v_3070_draft_keep`): the quality/keep
@@ -377,6 +406,8 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Claude: ratings (per shot and video), redo of picked shots, taste profile with
+  suggestions, interface overhaul, subject lock in the director. Migration `0002`.
 - 2026-10-09 Claude: RTX3070_DRAFT Self-Forcing LoRA profile; stalled-repair stop; reviewed Codex 462be3b.
 - 2026-10-09 Codex: review-first prompt editing and optional soundtrack mixing are implemented.
   Full suite 272 passed, 1 skipped, including Claude's keep-workflow fallback test; `ruff check

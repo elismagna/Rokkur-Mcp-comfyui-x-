@@ -1,0 +1,98 @@
+{% extends "base.html" %}{% from "_macros.html" import rate_form with context %}{% from "_icons.html" import icon, verdict_badge %}
+{% block title %}Your taste · Rökkur Studio{% endblock %}
+{% block crumb %}Rökkur / Your taste{% endblock %}
+
+{% macro lift_row(s) -%}
+<div class="lift{% if s.confidence == 'early' %} early{% endif %}">
+  <div><div class="name">{{ s.label }}</div>
+  <div class="meta">{{ s.kind_label }} · {{ s.ratings }} rating{{ '' if s.ratings == 1 else 's' }} in {{ s.projects }} project{{ '' if s.projects == 1 else 's' }} · {{ {'strong': 'strong signal', 'some': 'some signal', 'early': 'too early to tell'}[s.confidence] }}</div></div>
+  <div class="bar" title="{{ '%+.2f'|format(s.lift) }} against your average"><i class="{{ 'pos' if s.lift > 0 else 'neg' }}" style="width:{{ [50, (s.lift|abs) * 25]|min }}%"></i></div>
+</div>
+{%- endmacro %}
+
+{% block body %}
+<section class="hero">
+  <div class="eyebrow">What the studio has learned from you</div>
+  <h1>Your taste</h1>
+  <p class="sub" style="max-width:720px">Built only from your own ratings. The quality check and the AI agents are shown next to it but never feed it, and nothing here changes a default on its own: suggestions wait for you to apply them on a new video.</p>
+  <div class="facts" style="max-width:720px">
+    <div><b>{{ profile.count }}</b><span>Ratings</span></div>
+    <div><b>{{ profile.projects }}</b><span>Projects rated</span></div>
+    {% for label, n in profile['values'].items() %}<div><b>{{ n }}</b><span>{{ label }}</span></div>{% endfor %}
+  </div>
+</section>
+
+{% if not profile.count %}
+<div class="callout" style="margin-bottom:22px"><span style="color:var(--ember)">{{ icon('spark') }}</span>
+  <div><p><b>Nothing learned yet.</b></p><div class="hint">Rate shots below or on any project page. Patterns show up once you have rated work from {{ min_projects }} or more projects, so one lucky video can't steer everything.</div></div></div>
+{% endif %}
+
+<div class="grid2">
+<div class="stack">
+  <div class="card"><h2>What you like</h2>
+    {% if profile.liked %}{% for s in profile.liked %}{{ lift_row(s) }}{% endfor %}
+    {% else %}<p class="empty">No clear likes yet.</p>{% endif %}
+  </div>
+  <div class="card"><h2>What you dislike</h2>
+    {% if profile.disliked %}{% for s in profile.disliked %}{{ lift_row(s) }}{% endfor %}
+    {% else %}<p class="empty">No clear dislikes yet.</p>{% endif %}
+  </div>
+  <div class="card"><h2>Settings and your verdicts</h2>
+    <p class="hint" style="margin-top:0">How each setting did against your average verdict. Faded rows come from fewer than {{ min_projects }} projects.</p>
+    {% if profile.settings %}{% for s in profile.settings %}{{ lift_row(s) }}{% endfor %}
+    {% else %}<p class="empty">Rate a few shots and the settings behind them show up here.</p>{% endif %}
+  </div>
+</div>
+
+<div class="stack">
+  <div class="card"><div class="row spread"><h2>Try next</h2><a class="btn small" href="/ui/new">{{ icon('plus') }} New video</a></div>
+    {% if suggestions %}{% for s in suggestions %}
+    <div class="tip"><div><b>{{ s.label }}</b><div class="hint">{{ s.why }}</div></div><span class="pill {{ 'ok' if s.confidence == 'strong' else '' }}">{{ s.confidence }}</span></div>
+    {% endfor %}<p class="hint">Apply any of these on the New video page; each is one click and you can edit it after.</p>
+    {% else %}<p class="empty">Suggestions appear once a pattern holds across at least {{ min_projects }} projects.</p>{% endif %}
+  </div>
+
+  <div class="card"><h2>What your verdicts are about</h2>
+    {% if profile.tags.liked or profile.tags.disliked %}
+    <div class="form-pair">
+      <div><div class="hint">In your likes</div>{% for t, n in profile.tags.liked.items() %}<div class="row spread"><span>{{ t }}</span><b>{{ n }}</b></div>{% else %}<p class="muted">None yet</p>{% endfor %}</div>
+      <div><div class="hint">In your dislikes</div>{% for t, n in profile.tags.disliked.items() %}<div class="row spread"><span>{{ t }}</span><b>{{ n }}</b></div>{% else %}<p class="muted">None yet</p>{% endfor %}</div>
+    </div>
+    {% else %}<p class="empty">Tick what a rating is about (motion, flicker, subject…) and it adds up here.</p>{% endif %}
+  </div>
+
+  <div class="card"><h2>Quality check against you</h2>
+    {% set qc = profile.qc %}
+    {% if qc %}
+    <div class="row" style="gap:16px;align-items:center">
+      <div class="score" style="--v:{{ qc.percent / 10 }}"><b>{{ qc.percent }}%</b></div>
+      <div><b>Agrees with you on {{ qc.agree }} of {{ qc.rated }} rated shots.</b>
+      <div class="hint">Shots you liked averaged {{ qc.liked_mean if qc.liked_mean is not none else '–' }}; shots you disliked averaged {{ qc.disliked_mean if qc.disliked_mean is not none else '–' }}.</div></div>
+    </div>
+    {% if qc.too_strict %}<h3 style="margin-top:16px">Failed by QC, liked by you</h3>{% for e in qc.too_strict %}<div class="hint"><a href="/ui/projects/{{ e.project_id }}#shots">{{ e.project }}</a> · {{ e.target|replace('shot_', 'shot ') }}{% if e.overall is not none %} · QC {{ '%.1f'|format(e.overall) }}{% endif %}</div>{% endfor %}{% endif %}
+    {% if qc.too_lenient %}<h3 style="margin-top:16px">Passed by QC, disliked by you</h3>{% for e in qc.too_lenient %}<div class="hint"><a href="/ui/projects/{{ e.project_id }}#shots">{{ e.project }}</a> · {{ e.target|replace('shot_', 'shot ') }}{% if e.overall is not none %} · QC {{ '%.1f'|format(e.overall) }}{% endif %}</div>{% endfor %}{% endif %}
+    {% else %}<p class="empty">Rate shots that went through the quality check to see where it agrees with you.</p>{% endif %}
+  </div>
+</div>
+</div>
+
+<section class="section" id="rate">
+  <div class="section-title"><h2>Rate more</h2><span class="muted">{% if unrated %}{{ unrated }} shot{{ '' if unrated == 1 else 's' }} waiting{% else %}All caught up{% endif %}</span></div>
+  {% if queue %}
+  <div class="queue-grid">{% for r in queue %}
+    <div class="queue-card" data-verdict="0">
+      <video controls preload="metadata" playsinline {% if r.keyframe_id %}poster="/projects/{{ r.project_id }}/assets/{{ r.keyframe_id }}/file"{% endif %} src="/projects/{{ r.project_id }}/assets/{{ r.asset_id }}/file"></video>
+      <div><a href="/ui/projects/{{ r.project_id }}#{{ r.shot_id }}"><b>{{ r.project }}</b></a><div class="hint">Shot {{ r.shot_id|replace('shot_', '') }}{% if r.attempt > 1 %} · attempt {{ r.attempt }}{% endif %}</div></div>
+      {{ rate_form(r.project_id, r.shot_id, None, tags, render_id=r.render_id, label='shot ' ~ r.shot_id|replace('shot_', ''), compact=True) }}
+    </div>{% endfor %}
+  </div>
+  {% if unrated > queue|length %}<p class="hint"><a href="/ui/taste#rate">Load the next batch</a> after rating these.</p>{% endif %}
+  {% else %}<p class="empty">Nothing waiting. New renders show up here once they finish.</p>{% endif %}
+</section>
+
+<details>
+  <summary>Plain-text summary, for sharing with Codex or another assistant</summary>
+  <div class="row" style="margin-top:10px"><button type="button" class="secondary small" data-copy="taste-report">Copy</button></div>
+  <pre id="taste-report">{{ report }}</pre>
+</details>
+{% endblock %}

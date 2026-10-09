@@ -61,7 +61,9 @@ _EDGES: dict[ProjectStatus, set[ProjectStatus]] = {
     S.REPAIRING: {S.RENDER_QUEUED, S.QUALITY_CHECK},
     S.QUALITY_PASSED: {S.EDITING},
     S.EDITING: {S.READY_TO_PUBLISH},
-    S.READY_TO_PUBLISH: {S.PUBLISHING, S.EDITING, S.ARCHIVED},
+    # REPAIRING from READY_TO_PUBLISH is a person redoing shots they disliked
+    # (commands.redo_shots); the other shots keep their renders.
+    S.READY_TO_PUBLISH: {S.PUBLISHING, S.EDITING, S.REPAIRING, S.ARCHIVED},
     S.PUBLISHING: {S.PUBLISHED, S.READY_TO_PUBLISH},
     S.PUBLISHED: {S.MONITORING, S.ARCHIVED},
     S.MONITORING: {S.ARCHIVED},

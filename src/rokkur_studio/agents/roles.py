@@ -24,6 +24,9 @@ from rokkur_studio.agents.schemas import (
     ShotStory,
     StoryBrief,
 )
+from rokkur_studio.director.subject import SubjectLock
+from rokkur_studio.director.subject import apply as apply_subject
+from rokkur_studio.director.subject import choose as choose_subject
 from rokkur_studio.director.vocabulary import (
     CAMERA_ANGLES,
     CAMERA_MOVEMENTS,
@@ -176,6 +179,8 @@ class DirectorOfPhotography:
         "for a change, and fit it to the theme. When an image is attached, also return "
         "observed_subject (specific visible subject, appearance, pose and expression) and "
         "observed_background (visible surroundings), as short concrete noun phrases. "
+        "When a person or animal is visible, observed_subject describes them even if a prop "
+        "is bigger or brighter; the prop goes in observed_background. "
         "Do not describe edges or instructions as the subject. Do not invent unseen objects. "
         "Keep overlapping objects separate: an occluding hand or prop is not the subject's "
         "anatomy or clothing. Leave uncertain details out instead of copying a guess from "
@@ -185,6 +190,8 @@ class DirectorOfPhotography:
     def __init__(self, provider: AgentProvider, *, vision: bool = False,
                  max_calls: int = 24) -> None:
         self.provider, self.vision, self.max_calls = provider, vision, max_calls
+        self.lock = SubjectLock()
+        self.warnings: list[str] = []
 
     @staticmethod
     def rules(brief: CreativeBrief, shot: ShotPlan) -> ShotFraming:
@@ -195,10 +202,15 @@ class DirectorOfPhotography:
             lighting=lighting_for(" ".join([brief.theme, brief.style,  # type: ignore[arg-type]
                                             brief.visual_identity])))
 
-    def run(self, brief: CreativeBrief, keyframes: dict[str, bytes] | None = None
-            ) -> tuple[CreativeBrief, str]:
-        """A copy of ``brief`` with framing on every shot, and who chose it."""
+    def run(self, brief: CreativeBrief, keyframes: dict[str, bytes] | None = None, *,
+            user_text: str = "") -> tuple[CreativeBrief, str]:
+        """A copy of ``brief`` with framing on every shot, and who chose it.
+
+        ``user_text`` is your own description of the scene; it can name the main subject
+        (``director.subject``). The chosen subject and any warnings are left on ``lock`` and
+        ``warnings``."""
         out = brief.model_copy(deep=True)
+        observed: dict[str, str] = {}
         use_model = not isinstance(self.provider, RuleBasedProvider)
         calls = 0
         previous: ShotFraming | None = None
@@ -249,10 +261,13 @@ class DirectorOfPhotography:
                 # With a character anchor the story's subject is only pose and expression; the
                 # observed appearance (the source's actor or animal) would fight the anchor.
                 if framing.observed_subject.strip() and not brief.character:
-                    shot.subject = framing.observed_subject.strip()
+                    observed[shot.shot_id] = framing.observed_subject.strip()
                 if framing.observed_background.strip():
                     shot.background = framing.observed_background.strip()
             previous = framing
+        # One main subject for the whole video, so a prop seen first can't take over a shot.
+        self.lock = choose_subject(observed, user_text)
+        self.warnings = apply_subject(out.shot_plan, observed, self.lock)
         sources = {s.framing_by for s in out.shot_plan}
         return out, (sources.pop() if len(sources) == 1 else "mixed") or "rule_based"
 

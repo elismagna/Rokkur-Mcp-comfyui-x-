@@ -22,7 +22,7 @@ from rokkur_studio.api.schemas import (
 from rokkur_studio.db.models import ApprovalRequest, Channel, GpuLease, Job, utcnow
 from rokkur_studio.jobs.queue import JobStatus
 from rokkur_studio.pipeline.context import StudioContext
-from rokkur_studio.services import commands, publishing
+from rokkur_studio.services import commands, publishing, taste
 from rokkur_studio.youtube.client import YouTubeError
 from rokkur_studio.youtube.oauth import OAuthError
 
@@ -148,6 +148,13 @@ def system(ctx: Ctx, session: Db, probe_services: bool = True) -> dict[str, Any]
         out["comfyui"] = _probe(f"{s.comfyui.url}/system_stats")
         out["ollama"] = _probe(f"{s.ollama.url}/api/version")
     return out
+
+
+@router.get("/taste", tags=["ratings"],
+            summary="What your ratings say works, and the suggestions they support")
+def taste_profile(session: Db) -> dict[str, Any]:
+    profile = taste.build_profile(session)
+    return {**profile, "suggestions": taste.suggestions(profile)}
 
 
 @router.get("/health", tags=["system"])

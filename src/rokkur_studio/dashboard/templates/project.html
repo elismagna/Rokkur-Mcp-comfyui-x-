@@ -1,132 +1,149 @@
-{% extends "base.html" %}{% from "_macros.html" import status_pill, pipeline %}
+{% extends "base.html" %}{% from "_macros.html" import status_pill, pipeline, rate_form, score with context %}{% from "_icons.html" import icon, verdict_badge %}
 {% block title %}{{p.name}} · Rökkur Studio{% endblock %}
+{% block crumb %}<a href="/ui/projects">Projects</a> / {{ p.name }}{% endblock %}
 {% block head %}{% if p.status in working %}<meta name="studio-refresh" content="8">{% endif %}{% endblock %}
 {% block body %}
 {% set docs = d.documents %}
 {% set finals = d.assets|selectattr('kind','equalto','final')|list %}
 {% set thumbs = d.assets|selectattr('kind','equalto','thumbnail')|list %}
+{% set assembled = d.assets|selectattr('kind','equalto','assembled')|list %}
+{% set sources = d.assets|selectattr('kind','equalto','source')|list %}
 {% set uploaded = d.publications|selectattr('dry_run','equalto',false)|selectattr('youtube_video_id')|list %}
+{% set q = docs.qc_report.data if docs.qc_report else {} %}
 
-<p class="hint" style="margin:0 0 6px"><a href="/ui/projects">← Projects</a></p>
-<div class="row" style="justify-content:space-between;align-items:flex-start">
+<div class="row spread" style="align-items:flex-start">
   <div style="min-width:0">
+    <div class="eyebrow">{{ p.target_format|replace('youtube_','')|capitalize }} · {{ p.render_profile|replace('_',' ') }}</div>
     <h1>{{p.name}} {{ status_pill(p.status) }}</h1>
-    <p class="sub">{{ p.creative_input.get('theme','') }} · {{p.render_profile}} · {{p.target_format|replace('youtube_','')}}{% if p.repair_rounds %} · {{p.repair_rounds}} repair round{{'' if p.repair_rounds==1 else 's'}}{% endif %}</p>
+    <p class="sub">{{ p.creative_input.get('theme','') }}{% if p.repair_rounds %} · {{p.repair_rounds}} repair round{{'' if p.repair_rounds==1 else 's'}}{% endif %}</p>
   </div>
   <div class="row">
     {% if p.status in ['DISCOVERED','SCORED'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/start"><button>Start</button></form>{% endif %}
     {% if p.status == 'RIGHTS_PENDING' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/approve-rights"><button>Approve rights</button></form>
     <form class="inline" method="post" action="/ui/projects/{{p.id}}/reject-rights"><button class="secondary">Reject</button></form>{% endif %}
     {% if p.status == 'FAILED' and not repair_limit and not budget %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/resume"><button>Resume</button></form>{% endif %}
-    {% if p.status not in ['ARCHIVED','CANCELLED','RIGHTS_REJECTED','PUBLISHED','MONITORING'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/cancel" onsubmit="return confirm('Cancel this project? Running jobs stop.')"><button class="secondary">Cancel</button></form>{% endif %}
+    {% if p.status not in ['ARCHIVED','CANCELLED','RIGHTS_REJECTED','PUBLISHED','MONITORING'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/cancel" onsubmit="return confirm('Cancel this project? Running jobs stop.')"><button class="ghost">Cancel</button></form>{% endif %}
   </div>
 </div>
 
-<div class="card" style="margin-bottom:16px">
+<div class="card" style="margin-bottom:6px">
   {{ pipeline(steps) }}
-  {% if p.status in working %}<p class="hint" style="margin:8px 0 0">Working{% if d.next_job %}: next step is <b>{{ d.next_job|replace('_',' ') }}</b>{% endif %}. This page refreshes on its own.</p>{% endif %}
-  {% if repair_limit %}{% set q = docs.qc_report.data if docs.qc_report else {} %}
-  <p class="bad" style="margin:8px 0 0">Stopped after {{ p.repair_rounds }} repair round{{ '' if p.repair_rounds == 1 else 's' }}: the quality check still fails on {{ (q.failed_shots or [])|map('replace','shot_','')|join(', ') or 'some shots' }}. Look at the renders below, then repair again or keep them as they are.</p>
-  <div class="row" style="margin-top:8px">
-    <form class="inline" method="post" action="/ui/projects/{{p.id}}/repair-more"><button>Try {{ settings.render.max_retries }} more repairs</button></form>
-    <form class="inline" method="post" action="/ui/projects/{{p.id}}/recheck-quality"><button class="secondary" title="Scores the current renders again without rendering. Useful after the quality check itself changed.">Check quality again</button></form>
-    <form class="inline" method="post" action="/ui/projects/{{p.id}}/keep-renders" onsubmit="return confirm('Keep these renders and finish the video from them? The quality check result is recorded as overridden by you.')"><button class="secondary">Keep these renders</button></form>
-  </div>
-  {% elif budget %}
-  <p class="bad" style="margin:8px 0 0">Stopped at this project's render budget: {{ budget.renders }} of {{ budget.max_renders }} renders and {{ '%.1f'|format(budget.gpu) }} of {{ '%g'|format(budget.max_gpu) }} GPU minutes used. Every repair round renders the failing shots again, so they count too. Look at the renders below before allowing more.</p>
-  <div class="row" style="margin-top:8px">
-    <form class="inline" method="post" action="/ui/projects/{{p.id}}/allow-more-renders"><button>Allow {{ budget.grant }} more renders and continue</button></form>
-  </div>
-  {% elif p.status == 'FAILED' %}<p class="bad" style="margin:8px 0 0">Stopped during {{ (p.failed_from_state or '')|replace('_',' ')|lower }}{% if failure %}: {{ failure }}{% endif %}. Fix the cause, then press Resume.</p>{% endif %}
-  {% if p.status == 'RIGHTS_PENDING' and d.rights %}<p class="warn" style="margin:8px 0 0">Waiting for your rights decision: {{ d.rights.reason }}</p>{% endif %}
-</div>
-
-<div class="grid2">
-<div class="stack">
-  {% set assembled = d.assets|selectattr('kind','equalto','assembled')|list %}
-  {% set sources = d.assets|selectattr('kind','equalto','source')|list %}
-  {% if assembled and not finals %}<section class="card review-player"><div class="eyebrow">REVIEW BEFORE YOU RETRY</div><h2>Source & latest render</h2>
-    <p class="hint">A rendered preview can be reviewed here even when the quality check stops the project.</p>
-    <div class="compare-grid">{% if sources %}<figure><figcaption>Original footage</figcaption><video controls preload="metadata" src="/projects/{{p.id}}/assets/{{sources[-1].id}}/file"></video></figure>{% endif %}
-    <figure><figcaption>Latest assembled render · not a final export</figcaption><video controls preload="metadata" src="/projects/{{p.id}}/assets/{{assembled[-1].id}}/file"></video></figure></div>
-  </section>{% endif %}
-  {% if shot_previews %}<section class="card"><h2>Review individual shots</h2><p class="hint">Compare attempts before deciding whether to repair or keep a shot. Automatic refresh pauses while a video plays.</p>
-    <div class="shot-grid">{% for sid, asset in shot_previews.items() %}<div class="shot-preview"><div class="row"><b>{{sid|replace('shot_','Shot ')}}</b><span class="pill">Latest #{{asset.meta.attempt}}</span></div>
-      <video id="video-{{sid}}" controls preload="none" {% if keyframes.get(sid) %}poster="{{keyframes[sid]}}"{% endif %} src="/projects/{{p.id}}/assets/{{asset.id}}/file"></video>
-      {% set sj = shot_subject.get(sid) %}{% if sj %}<p class="hint" style="margin:6px 0 0">{% if sj.kept %}Real subject kept ({{ (sj.coverage * 100)|round|int }}% of the frame){% else %}Whole frame restyled: {{ sj.reason }}{% endif %}</p>{% endif %}
-      <label for="attempt-{{sid}}">Compare a render attempt</label><select id="attempt-{{sid}}" data-preview-target="video-{{sid}}">{% for item in d.assets if item.kind in ['render', 'render_raw'] and item.meta.shot_id==sid %}<option value="/projects/{{p.id}}/assets/{{item.id}}/file" {% if item.id==asset.id %}selected{% endif %}>Attempt {{item.meta.attempt}}{% if item.kind == 'render_raw' %} · restyled subject{% elif item.meta.subject == 'kept' %} · real subject{% endif %}</option>{% endfor %}</select>
-    </div>{% endfor %}</div></section>{% endif %}
-  {% if finals %}
-  <div class="card"><h2>Final video</h2>
-    <video controls preload="metadata" {% if thumbs %}poster="/projects/{{p.id}}/assets/{{thumbs[-1].id}}/file"{% endif %} src="/projects/{{p.id}}/assets/{{finals[-1].id}}/file"></video>
-    <div class="row" style="margin-top:10px"><a class="btn secondary" href="/projects/{{p.id}}/assets/{{finals[-1].id}}/file" download="{{p.name}}.mp4">Download</a>
-    <span class="hint">{{ '%.1f'|format(finals[-1].size_bytes / 1e6) if finals[-1].size_bytes else '' }} MB · data\{{ finals[-1].rel_path|replace('/','\\') }}</span></div>
-  </div>
-  {% endif %}
-
-  {% if docs.creative_brief %}{% set b = docs.creative_brief.data %}{% set dn = b.director or {} %}
-  <div class="card"><h2>Creative brief <span class="pill {{ 'info' if docs.creative_brief.created_by=='ollama' else '' }}">by {{ docs.creative_brief.created_by|replace('_',' ') }}</span></h2>
-    <dl class="kv"><dt>Style</dt><dd>{{ b.style }}</dd>
-    {% if b.character %}<dt>Character</dt><dd>{% if dn.character_key %}<b>{{ dn.character_key }}</b> · {% endif %}{{ b.character }}</dd>{% endif %}
-    <dt>Look</dt><dd>{{ b.visual_identity }}</dd><dt>Avoid</dt><dd class="muted">{{ b.negative_prompt }}</dd>
-    <dt>Requested guidance</dt><dd>{% if 'reference_mode' in p.creative_input %}source structure {{p.creative_input.get('control_strength',1.0)}} · {{'custom reference' if p.creative_input.get('character_reference_asset') else {'source': 'source-frame reference', 'cutout': 'subject cutout reference', 'auto': 'reference chosen by the studio'}.get(p.creative_input.get('reference_mode'), 'no appearance reference')}}{% else %}Created with earlier settings; see applied render settings below.{% endif %} · motion {{ b.motion_preservation }}</dd>
-    {% if subject %}<dt>Main subject</dt><dd>{{ 'Kept real' if subject.mode == 'keep' else 'Restyled' }}{% if subject.planned %} <span class="muted">(planned)</span>{% endif %} · {{ subject.reason }}</dd>{% endif %}
-    {% if dn %}<dt>Framing</dt><dd>by {{ (dn.framing_by or 'rule_based')|replace('_',' ') }}{% if dn.vision %} <span class="pill info">source images used</span>{% endif %}{% if not dn.global_look %} · global look off{% endif %}</dd>{% endif %}
-    {% if not dn %}<dt>Prompt</dt><dd>{{ b.prompt }}</dd>{% endif %}</dl>
-    {% if dn.warnings %}<div class="note" style="margin:10px 0 0">{{ dn.warnings|join('; ') }}</div>{% endif %}
-    <h3>Shots</h3>
-    {% for s in b.shot_plan %}<div class="shotrow">
-      {% if keyframes.get(s.shot_id) %}<img class="kf" src="{{ keyframes[s.shot_id] }}" alt="Middle frame of {{ s.shot_id|replace('shot_','shot ') }}" loading="lazy">{% endif %}
-      <div style="min-width:0;flex:1">
-        <b>{{ s.shot_id|replace('shot_','Shot ') }}</b> <span class="muted">{{ '%.1f'|format(s.start) }}–{{ '%.1f'|format(s.end) }} s · {{ s.motion_type }}</span>
-        {% if s.shot_size %}<div class="chips">{% for t in [s.shot_size, s.camera_angle, s.camera_movement, s.lighting] if t %}<span class="pill">{{ t }}</span>{% endfor %}</div>{% endif %}
-        {% if s.intent %}<div>{{ s.intent }}</div>{% endif %}
-        {% if s.subject %}<div class="hint">Subject: {{ s.subject }}</div>{% endif %}
-        {% if s.prompt %}<details><summary>Prompt</summary><pre>{{ s.prompt }}</pre></details>{% endif %}
-      </div>
-    </div>{% endfor %}
-  </div>{% endif %}
-
-  {% if docs.prompt_schedule %}{% set sc = docs.prompt_schedule.data %}
-  <div class="card"><h2>Prompt schedule <span class="pill">{{ sc.keyframes|length }} keyframes</span></h2>
-    <p class="hint" style="margin:0 0 10px">For FizzNodes' Batch Prompt Schedule: a keyframe every {{ sc.interval }} frames at {{ sc.fps }} fps, plus both sides of each cut. Set the node's max_frames to {{ sc.max_frames }}. The studio's own Wan render does not use this; it renders each shot with that shot's prompt.</p>
-    <pre id="schedule">{{ sc.text }}</pre>
+  {% if p.status in working %}<p class="hint" style="margin:10px 0 0"><span class="pulse on" style="display:inline-block;margin-right:8px"></span>Working{% if d.next_job %}: next step is <b>{{ d.next_job|replace('_',' ') }}</b>{% endif %}. This page refreshes on its own and pauses while you watch or type.</p>{% endif %}
+  {% if repair_limit %}
+  <div class="callout bad" style="margin-top:14px"><div>
+    <p><b>Stopped after {{ p.repair_rounds }} repair round{{ '' if p.repair_rounds == 1 else 's' }}</b>: the quality check still fails on {{ (q.failed_shots or [])|map('replace','shot_','')|join(', ') or 'some shots' }}.</p>
+    <p class="hint">Watch the shots below. Like the ones that look right (a liked render passes the check), pick the ones to redo, or keep everything as it is.</p>
     <div class="row" style="margin-top:10px">
-      <button type="button" class="secondary" onclick="navigator.clipboard.writeText(document.getElementById('schedule').textContent).then(()=>{this.textContent='Copied'})">Copy</button>
-      <a class="btn secondary" href="/projects/{{p.id}}/prompt-schedule" download="{{ p.name }} prompt schedule.txt">Download .txt</a>
-    </div>
-  </div>{% endif %}
-
-  {% if docs.qc_report %}{% set q = docs.qc_report.data %}
-  <div class="card"><h2>Quality check <span class="pill {{ 'ok' if q.decision=='PASS' else 'bad' }}">{{ q.decision|lower }}</span>{% if q.override %} <span class="pill warn">kept by {{ q.override.by }}</span>{% endif %}</h2>
-    {% if q.override %}<p class="hint" style="margin-top:0">The check failed on {{ q.override.failed_shots|map('replace','shot_','')|join(', ') }}; these renders were kept anyway.</p>{% endif %}
-    <div class="table-wrap" style="border:0;box-shadow:none"><table><tr><th>Shot</th><th>Score</th><th>Temporal</th><th>Motion</th><th>Structure</th><th>Artifacts</th><th>Notes</th></tr>
-    {% for s in q.shots %}<tr><td>{{s.shot_id|replace('shot_','')}} <span class="muted">#{{s.attempt}}</span></td><td class="{{ 'ok' if s.decision=='PASS' else 'bad' }}"><b>{{s.overall}}</b></td><td>{{s.temporal_consistency}}</td><td>{{s.motion}}</td><td>{{s.structure}}</td><td>{{s.artifact_score}}</td><td class="muted">{{ (s.issues + s.recommendations)|join('; ') }}</td></tr>{% endfor %}</table></div>
-    {% if q.not_measured %}<p class="hint">Not measured yet: {% for k, v in q.not_measured.items() %}{{k}}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
-  </div>{% endif %}
-
-  {% if docs.repair_plan %}<section class="card"><h2>What the last repair changed</h2>{% for action in docs.repair_plan.data.actions %}<p><b>{{action.shot_id|replace('shot_','Shot ')}}</b></p><dl class="kv">{% for key,value in action.changes.items() %}<dt>{{key|replace('_',' ')}}</dt><dd>{{value}}</dd>{% endfor %}</dl>{% if action.unsupported %}<p class="hint">Unavailable in this workflow: {{action.unsupported|join(', ')}}. These controls were not changed.</p>{% endif %}{% endfor %}</section>{% endif %}
-  <div class="card"><h2>Renders</h2>
-    <div class="table-wrap" style="border:0;box-shadow:none"><table><tr><th>Shot</th><th>Try</th><th>Renderer</th><th>Status</th><th>Time</th><th>Error</th></tr>
-    {% for r in d.renders %}<tr><td>{{r.shot_id|replace('shot_','')}}</td><td>{{r.attempt}}</td><td>{{r.renderer}}{% if r.workflow %} <span class="muted">{{r.workflow}}</span>{% endif %}</td><td><span class="pill {{ 'ok' if r.status=='succeeded' else ('bad' if r.status in ['failed','oom'] else 'info') }}">{{r.status}}</span></td><td>{{ '%.0f s'|format(r.duration_s) if r.duration_s else '' }}</td><td class="bad">{{ r.error.message if r.error else '' }}</td></tr>
-    {% else %}<tr><td colspan="6" class="empty">No renders yet.</td></tr>{% endfor %}</table></div>
-    <details><summary>Applied render settings</summary>
-      <p class="hint">These values come from each attempt. Controls listed as unavailable did not affect the model.</p>
-      {% for r in d.renders if r.params %}{% set used = r.params.get('_details',{}) %}{% set applied = used.get('applied',{}) %}
-      <h3>{{r.shot_id|replace('shot_','Shot ')}} · attempt {{r.attempt}}</h3>
-      <dl class="kv"><dt>Size</dt><dd>{{r.params.get('WIDTH')}} × {{r.params.get('HEIGHT')}} · {{'%.2f'|format(r.params.get('FPS',0))}} fps</dd>
-        <dt>Sampling</dt><dd>{{r.params.get('STEPS')}} steps · guidance {{r.params.get('CFG')}} · seed {{r.params.get('SEED')}}</dd>
-        {% if applied.get('CONTROL_STRENGTH') is not none %}<dt>Source structure</dt><dd>{{applied.CONTROL_STRENGTH}}</dd>{% endif %}
-        <dt>Appearance</dt><dd>{{used.get('reference','Not recorded by this renderer version')}}</dd>
-        {% if r.workflow %}<dt>Workflow</dt><dd>{{r.workflow}}{% if used.get('subject_mask') %} · Wan kept the real subject and redrew the room{% endif %}</dd>{% endif %}
-        {% if used.get('guidance',{}).get('masks') %}<dt>Subject masks</dt><dd>Not used: {{used.guidance.masks}}</dd>{% endif %}
-        {% if applied.get('CANNY_LOW') is not none %}<dt>Edges</dt><dd>Canny {{applied.CANNY_LOW}} / {{applied.CANNY_HIGH}}</dd>{% endif %}
-        {% if used.get('ignored_params') %}<dt>Unavailable</dt><dd>{{used.ignored_params|join(', ')}}</dd>{% endif %}
-      </dl>{% endfor %}
-    </details>
-  </div>
+      <form class="inline" method="post" action="/ui/projects/{{p.id}}/repair-more"><button>Try {{ settings.render.max_retries }} more repairs</button></form>
+      <form class="inline" method="post" action="/ui/projects/{{p.id}}/recheck-quality"><button class="secondary" title="Scores the current renders again without rendering. Renders you liked pass.">Check quality again</button></form>
+      <form class="inline" method="post" action="/ui/projects/{{p.id}}/keep-renders" onsubmit="return confirm('Keep these renders and finish the video from them? The quality check result is recorded as overridden by you.')"><button class="secondary">Keep these renders</button></form>
+    </div></div></div>
+  {% elif budget %}
+  <div class="callout bad" style="margin-top:14px"><div>
+    <p>Stopped at this project's render budget: {{ budget.renders }} of {{ budget.max_renders }} renders and {{ '%.1f'|format(budget.gpu) }} of {{ '%g'|format(budget.max_gpu) }} GPU minutes used.</p>
+    <p class="hint">Every repair round renders the failing shots again, so they count too. Look at the renders below before allowing more.</p>
+    <div class="row" style="margin-top:10px"><form class="inline" method="post" action="/ui/projects/{{p.id}}/allow-more-renders"><button>Allow {{ budget.grant }} more renders and continue</button></form></div>
+  </div></div>
+  {% elif p.status == 'FAILED' %}<div class="callout bad" style="margin-top:14px"><p>Stopped during {{ (p.failed_from_state or '')|replace('_',' ')|lower }}{% if failure %}: {{ failure }}{% endif %}. Fix the cause, then press Resume.</p></div>{% endif %}
+  {% if p.status == 'RIGHTS_PENDING' and d.rights %}<div class="callout warn" style="margin-top:14px"><p>Waiting for your rights decision: {{ d.rights.reason }}</p></div>{% endif %}
 </div>
 
+<nav class="subnav" aria-label="On this page"><a href="#review">Review</a>{% if shots %}<a href="#shots">Shots</a>{% endif %}{% if docs.metadata %}<a href="#publish">Publish</a>{% endif %}{% if docs.creative_brief %}<a href="#brief">Brief</a>{% endif %}{% if q %}<a href="#quality">Quality</a>{% endif %}<a href="#details">Details</a></nav>
+
+<section class="section review" id="review">
+  <div class="card">
+    {% if finals %}
+      <div class="section-title"><h2>Final video</h2><span class="hint">{{ '%.1f'|format(finals[-1].size_bytes / 1e6) if finals[-1].size_bytes else '' }} MB</span></div>
+      <div class="player"><video controls preload="metadata" {% if thumbs %}poster="/projects/{{p.id}}/assets/{{thumbs[-1].id}}/file"{% endif %} src="/projects/{{p.id}}/assets/{{finals[-1].id}}/file"></video></div>
+      <div class="row" style="margin-top:12px"><a class="btn secondary small" href="/projects/{{p.id}}/assets/{{finals[-1].id}}/file" download="{{p.name}}.mp4">Download</a>
+      <span class="hint">data\{{ finals[-1].rel_path|replace('/','\\') }}</span></div>
+    {% elif assembled %}
+      <div class="eyebrow">Review before you retry</div><h2>Source & latest render</h2>
+      <p class="hint">A rendered preview can be reviewed here even when the quality check stops the project.</p>
+      <div class="compare-grid">{% if sources %}<figure><figcaption>Original footage</figcaption><video controls preload="metadata" src="/projects/{{p.id}}/assets/{{sources[-1].id}}/file"></video></figure>{% endif %}
+      <figure><figcaption>Latest assembled render · not a final export</figcaption><video controls preload="metadata" src="/projects/{{p.id}}/assets/{{assembled[-1].id}}/file"></video></figure></div>
+    {% elif sources %}
+      <h2>Your footage</h2>
+      <div class="player"><video controls preload="metadata" src="/projects/{{p.id}}/assets/{{sources[-1].id}}/file"></video></div>
+      <p class="hint">{% if p.status in working %}The finished video appears here once its shots are rendered and edited. Shots show up below as they finish.{% else %}No render yet.{% endif %}</p>
+    {% else %}
+      <h2>Your video</h2><p class="empty">The footage appears here once it is copied in.</p>
+    {% endif %}
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <div class="section-title"><h2>How is it?</h2>{% if video_rating %}{{ verdict_badge(video_rating.value) }}{% endif %}</div>
+      {% if video_asset %}
+        <p class="rate-q">Your verdict on the whole video. It teaches the studio your taste; nothing changes without you.</p>
+        <div style="margin-top:12px">{{ rate_form(p.id, 'video', video_rating, tags, label='the whole video') }}</div>
+        {% if earlier_video_rating %}<p class="hint">You rated an earlier version: {{ {2: 'super like', 1: 'like', -1: 'dislike', -2: 'super dislike'}[earlier_video_rating.value] }}.</p>{% endif %}
+      {% else %}<p class="hint" style="margin:0">Rate the whole video once it is assembled. You can rate each shot below as soon as it renders.</p>{% endif %}
+    </div>
+    <div class="card">
+      <div class="section-title"><h2>Measured quality</h2>{% if q %}<span class="pill {{ 'ok' if q.decision=='PASS' else 'bad' }}">{{ q.decision|lower }}</span>{% endif %}</div>
+      {% if q %}<div class="row" style="flex-wrap:nowrap;gap:16px">{{ score(q.overall, q.decision) }}
+        <p class="hint" style="margin:0">The studio's own check: flicker, motion, structure and artifacts, out of 10 (pass mark {{ settings.quality.pass_threshold }}). It is kept apart from your rating.</p></div>
+      {% else %}<p class="hint" style="margin:0">Scores appear after the first quality check.</p>{% endif %}
+      <div class="facts">
+        <div><b>{{ shots|length }}</b><span>shots</span></div>
+        <div><b>{{ d.renders|length }}</b><span>renders</span></div>
+        <div><b>{{ '%.1f'|format(gpu_minutes) }}</b><span>GPU minutes</span></div>
+        <div><b>{{ shots|selectattr('rating')|list|length }}/{{ shots|selectattr('render')|list|length }}</b><span>shots rated</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if shots %}
+<section class="section" id="shots">
+  <div class="section-title"><h2>Shots</h2><span class="hint">In a like, tags say what worked. In a dislike, what went wrong.</span></div>
+  <p class="hint" style="margin:-6px 0 16px">A shot you like passes the quality check. Shots you dislike are picked for a redo with a new seed{% if can_redo %}, and their tags steer what changes{% endif %}.</p>
+  <div class="shots">
+  {% for s in shots %}{% set r = s.rating %}
+  <article class="shot-card" id="{{ s.id }}" data-verdict="{{ r.value if r else 0 }}" data-render-id="{{ s.render.id if s.render else '' }}">
+    <div class="shot-media" data-view="render">
+      {% if s.asset %}
+      <div class="row spread" style="margin-bottom:8px">
+        {% if source_url %}<div class="seg" role="group" aria-label="Show"><button type="button" data-view="render" aria-pressed="true">Render</button><button type="button" data-view="source" aria-pressed="false">Original</button><button type="button" data-view="split" aria-pressed="false">Side by side</button></div>{% endif %}
+        <span class="hint">{{ '%.1f'|format(s.start) }}–{{ '%.1f'|format(s.end) }} s</span>
+      </div>
+      <div class="views">
+        <figure><span class="tag pill">Render #{{ s.asset.meta.attempt }}</span><video id="video-{{ s.id }}" data-role="render" controls preload="none" {% if s.keyframe %}poster="{{ s.keyframe }}"{% endif %} src="/projects/{{p.id}}/assets/{{ s.asset.id }}/file"></video></figure>
+        {% if source_url %}<figure hidden><span class="tag pill">Original</span><video data-role="source" data-start="{{ s.start }}" controls muted preload="none" {% if s.keyframe %}poster="{{ s.keyframe }}"{% endif %} src="{{ source_url }}#t={{ '%.3f'|format(s.start) }},{{ '%.3f'|format(s.end) }}"></video></figure>{% endif %}
+      </div>
+      {% elif s.keyframe %}
+      <figure style="margin:0;position:relative"><span class="tag pill {{ 'info' if s.running else '' }}">{{ 'Rendering now' if s.running else 'Not rendered yet' }}</span><img class="shot" src="{{ s.keyframe }}" alt="Middle frame of {{ s.label }}" style="aspect-ratio:16/9;object-fit:contain"></figure>
+      {% else %}<p class="empty">{{ 'Rendering now…' if s.running else 'Not rendered yet.' }}</p>{% endif %}
+    </div>
+    <div class="shot-info">
+      <div class="shot-head">
+        <div><h3>{{ s.label }}</h3>{% if s.plan.intent %}<div class="hint" style="margin:2px 0 0">{{ s.plan.intent }}</div>{% endif %}</div>
+        {% if s.qc %}<div class="row" style="flex-wrap:nowrap;gap:8px">{% if s.qc.accepted_by %}<span class="pill ok" title="QC measured {{ s.qc.overall }}, you accepted it">kept by you</span>{% endif %}{{ score(s.qc.overall, 'PASS' if s.qc.accepted_by else s.qc.decision, small=True) }}</div>{% endif %}
+      </div>
+      {% set pl = s.plan %}{% if pl.shot_size %}<div class="chips">{% for t in [pl.shot_size, pl.camera_angle, pl.camera_movement, pl.lighting] if t %}<span class="pill">{{ t }}</span>{% endfor %}</div>{% endif %}
+      {% if pl.subject %}<div class="hint" style="margin:0">Subject: {{ pl.subject }}</div>{% endif %}
+      {% if s.subject %}<div class="hint" style="margin:0">{% if s.subject.kept %}Real subject kept ({{ (s.subject.coverage * 100)|round|int }}% of the frame){% else %}Whole frame restyled: {{ s.subject.reason }}{% endif %}</div>{% endif %}
+      {% if s.qc and s.qc.issues and not s.qc.accepted_by and s.qc.decision != 'PASS' %}<div class="hint bad" style="margin:0">QC: {{ s.qc.issues|join('; ') }}</div>{% endif %}
+      {% if s.attempts|length > 1 %}<label for="attempt-{{ s.id }}" style="margin:0">Compare a render attempt</label><select id="attempt-{{ s.id }}" data-preview-target="video-{{ s.id }}">{% for item in s.attempts %}<option value="/projects/{{p.id}}/assets/{{ item.asset.id }}/file" {% if item.render_id %}data-render-id="{{ item.render_id }}"{% endif %} {% if item.asset.id == s.asset.id %}selected{% endif %}>Attempt {{ item.asset.meta.attempt }}{% if item.asset.kind == 'render_raw' %} · restyled subject{% elif item.asset.meta.subject == 'kept' %} · real subject{% endif %}</option>{% endfor %}</select>{% endif %}
+      {% if s.render %}{{ rate_form(p.id, s.id, r, tags, render_id=s.render.id, label=s.label) }}
+      {% if s.earlier %}<p class="hint" style="margin:0">You {{ {2: 'super liked', 1: 'liked', -1: 'disliked', -2: 'super disliked'}[s.earlier.value] }} an earlier attempt{% if s.earlier.tags %} ({{ s.earlier.tags|map('replace','_',' ')|join(', ') }}){% endif %}.</p>{% endif %}
+      {% if can_redo %}<label class="check" style="margin:0"><input type="checkbox" name="shots" value="{{ s.id }}" form="redo-form" {% if r and r.value < 0 %}checked{% endif %}> Redo this shot</label>{% endif %}{% endif %}
+      {% if pl.prompt %}<details style="margin-top:0"><summary>Prompt</summary><pre>{{ pl.prompt }}</pre></details>{% endif %}
+    </div>
+  </article>
+  {% endfor %}
+  </div>
+  {% if can_redo %}
+  <form class="redo-bar" id="redo-form" method="post" action="/ui/projects/{{p.id}}/redo" onsubmit="return confirm('Render the picked shots again? The other shots keep their renders, and the video is edited again afterwards.')">
+    <div><b id="redo-count">Pick shots to redo</b><div class="hint" style="margin:2px 0 0">New seed for each; motion complaints firm up the source guide, style or prompt complaints loosen it. The other shots stay exactly as they are.</div></div>
+    <button class="ember" id="redo-submit">{{ icon('redo') }} Redo</button>
+  </form>{% endif %}
+</section>
+{% endif %}
+
+{% if docs.metadata or thumbs or d.publications %}
+<section class="section grid2" id="publish">
 <div class="stack">
   {% if docs.metadata %}{% set m = docs.metadata.data %}
   <div class="card"><h2>YouTube</h2>
@@ -141,9 +158,9 @@
       <textarea id="description" name="description" rows="5">{{ m.description }}</textarea>
       <label for="tags">Tags, comma separated</label>
       <input id="tags" name="tags" value="{{ m.tags|join(', ') }}">
-      <p style="margin:10px 0 0"><button class="secondary">Save text</button></p>
+      <p style="margin:12px 0 0"><button class="secondary">Save text</button></p>
     </form>
-    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+    <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
     <form method="post" action="/ui/projects/{{p.id}}/publish" id="publish-form" data-next-slot="{{ next_slot.isoformat() if next_slot else '' }}">
       <label>When</label>
       <label class="check" style="margin:4px 0"><input type="radio" name="release" value="now" checked> Now</label>
@@ -161,7 +178,7 @@
       <select id="playlist_id" name="playlist_id"><option value="">None</option>{% for pl in playlists %}<option value="{{pl.id}}" {% if pl.id == settings.youtube.default_playlist_id %}selected{% endif %}>{{ pl.title }}</option>{% endfor %}</select>
       {% if not playlists %}<p class="hint">To pick one, load your playlists on the <a href="/ui/youtube">YouTube page</a>.</p>{% endif %}
       {% if publish_block %}<p class="hint warn">{{ publish_block }}</p>{% endif %}
-      <div class="row" style="margin-top:12px">
+      <div class="row" style="margin-top:14px">
         <button name="mode" value="upload" {% if publish_block %}disabled{% endif %}>Upload to YouTube</button>
         <button name="mode" value="dry" class="secondary">Dry run</button>
       </div>
@@ -199,11 +216,97 @@
     <dl class="kv"><dt>Title</dt><dd>{{ m.title }}</dd><dt>Tags</dt><dd>{{ m.tags|join(', ') }}</dd></dl>
     <pre style="margin-top:10px">{{ m.description }}</pre>
     {% endif %}
+  </div>{% endif %}
+</div>
+<div class="stack">
+  {% if thumbs %}<div class="card"><h2>Thumbnail</h2><img class="shot" src="/projects/{{p.id}}/assets/{{thumbs[-1].id}}/file" alt="Thumbnail for {{p.name}}" style="max-height:340px;object-fit:contain"></div>{% endif %}
+  {% if d.publications %}<div class="card"><h2>Publish history</h2>
+    {% for pub in d.publications|reverse %}<div class="row spread" style="padding:4px 0"><span>{{ 'Dry run' if pub.dry_run else 'Upload' }} · {{ pub.request.body.status.privacyStatus }}{% if pub.request.body.status.publishAt %}, public {{ pub.request.body.status.publishAt|release_label(settings) }}{% endif %}{% if pub.request.then %} · playlist{% endif %}</span><span class="pill {{ 'ok' if pub.status in ['uploaded','prepared'] else ('bad' if pub.status=='failed' else 'info') }}">{{ pub.status }}</span></div>
+    {% if pub.error %}<div class="hint bad">{{ pub.error.message }}</div>{% endif %}{% endfor %}
+    <details><summary>Latest request</summary><pre>{{ d.publications[-1].request|pretty }}</pre></details>
+  </div>{% endif %}
+</div>
+</section>{% endif %}
+
+{% if docs.creative_brief or docs.prompt_schedule %}
+<section class="section grid2" id="brief">
+  {% if docs.creative_brief %}{% set b = docs.creative_brief.data %}{% set dn = b.director or {} %}
+  <div class="card"><h2>Creative brief <span class="pill {{ 'info' if docs.creative_brief.created_by=='ollama' else '' }}">by {{ docs.creative_brief.created_by|replace('_',' ') }}</span></h2>
+    <dl class="kv"><dt>Style</dt><dd>{{ b.style }}</dd>
+    {% if b.character %}<dt>Character</dt><dd>{% if dn.character_key %}<b>{{ dn.character_key }}</b> · {% endif %}{{ b.character }}</dd>{% endif %}
+    <dt>Look</dt><dd>{{ b.visual_identity }}</dd><dt>Avoid</dt><dd class="muted">{{ b.negative_prompt }}</dd>
+    <dt>Requested guidance</dt><dd>{% if 'reference_mode' in p.creative_input %}source structure {{p.creative_input.get('control_strength',1.0)}} · {{'custom reference' if p.creative_input.get('character_reference_asset') else {'source': 'source-frame reference', 'cutout': 'subject cutout reference', 'auto': 'reference chosen by the studio'}.get(p.creative_input.get('reference_mode'), 'no appearance reference')}}{% else %}Created with earlier settings; see applied render settings below.{% endif %} · motion {{ b.motion_preservation }}</dd>
+    {% if subject %}<dt>Main subject</dt><dd>{{ 'Kept real' if subject.mode == 'keep' else 'Restyled' }}{% if subject.planned %} <span class="muted">(planned)</span>{% endif %} · {{ subject.reason }}</dd>{% endif %}
+    {% if dn.subject %}<dt>Follows</dt><dd>{{ dn.subject }} <span class="muted">({{ 'named in your words' if dn.subject_source == 'your words' else 'seen across the shots' }})</span>{% if dn.subject_kept %} · kept on shot {{ dn.subject_kept|map('replace', 'shot_', '')|join(', ') }}{% endif %}</dd>{% endif %}
+    {% if dn %}<dt>Framing</dt><dd>by {{ (dn.framing_by or 'rule_based')|replace('_',' ') }}{% if dn.vision %} <span class="pill info">source images used</span>{% endif %}{% if not dn.global_look %} · global look off{% endif %}</dd>{% endif %}
+    {% if not dn %}<dt>Prompt</dt><dd>{{ b.prompt }}</dd>{% endif %}</dl>
+    {% if dn.warnings %}<div class="note" style="margin:12px 0 0">{% if dn.warnings|length == 1 %}{{ dn.warnings[0] }}{% else %}<ul style="margin:0;padding-left:18px">{% for w in dn.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}</div>{% endif %}
+    <h3>Shot plan</h3>
+    {% for s in b.shot_plan %}<div class="shotrow">
+      {% if keyframes.get(s.shot_id) %}<img class="kf" src="{{ keyframes[s.shot_id] }}" alt="Middle frame of {{ s.shot_id|replace('shot_','shot ') }}" loading="lazy">{% endif %}
+      <div style="min-width:0;flex:1">
+        <b>{{ s.shot_id|replace('shot_','Shot ') }}</b> <span class="muted">{{ '%.1f'|format(s.start) }}–{{ '%.1f'|format(s.end) }} s · {{ s.motion_type }}</span>
+        {% if s.shot_size %}<div class="chips">{% for t in [s.shot_size, s.camera_angle, s.camera_movement, s.lighting] if t %}<span class="pill">{{ t }}</span>{% endfor %}</div>{% endif %}
+        {% if s.intent %}<div>{{ s.intent }}</div>{% endif %}
+        {% if s.subject %}<div class="hint">Subject: {{ s.subject }}</div>{% endif %}
+        {% if s.prompt %}<details><summary>Prompt</summary><pre>{{ s.prompt }}</pre></details>{% endif %}
+      </div>
+    </div>{% endfor %}
+  </div>{% endif %}
+  {% if docs.prompt_schedule %}{% set sc = docs.prompt_schedule.data %}
+  <div class="card"><h2>Prompt schedule <span class="pill">{{ sc.keyframes|length }} keyframes</span></h2>
+    <p class="hint" style="margin:0 0 10px">For FizzNodes' Batch Prompt Schedule: a keyframe every {{ sc.interval }} frames at {{ sc.fps }} fps, plus both sides of each cut. Set the node's max_frames to {{ sc.max_frames }}. The studio's own Wan render does not use this; it renders each shot with that shot's prompt.</p>
+    <pre id="schedule">{{ sc.text }}</pre>
+    <div class="row" style="margin-top:10px">
+      <button type="button" class="secondary small" data-copy="schedule">Copy</button>
+      <a class="btn secondary small" href="/projects/{{p.id}}/prompt-schedule" download="{{ p.name }} prompt schedule.txt">Download .txt</a>
+    </div>
+  </div>{% endif %}
+</section>{% endif %}
+
+{% if q %}
+<section class="section" id="quality">
+  <div class="card"><h2>Quality check <span class="pill {{ 'ok' if q.decision=='PASS' else 'bad' }}">{{ q.decision|lower }}</span>{% if q.override %} <span class="pill warn">kept by {{ q.override.by }}</span>{% endif %}</h2>
+    {% if q.override %}<p class="hint" style="margin-top:0">The check failed on {{ q.override.failed_shots|map('replace','shot_','')|join(', ') }}; these renders were kept anyway.</p>{% endif %}
+    <div class="table-wrap" style="border:0;box-shadow:none"><table><tr><th>Shot</th><th>Score</th><th>Temporal</th><th>Motion</th><th>Structure</th><th>Artifacts</th><th>Notes</th></tr>
+    {% for s in q.shots %}<tr><td>{{s.shot_id|replace('shot_','')}} <span class="muted">#{{s.attempt}}</span></td><td class="{{ 'ok' if s.decision=='PASS' else 'bad' }}"><b>{{s.overall}}</b>{% if s.accepted_by %} <span class="pill ok">kept by you</span>{% endif %}</td><td>{{s.temporal_consistency}}</td><td>{{s.motion}}</td><td>{{s.structure}}</td><td>{{s.artifact_score}}</td><td class="muted">{{ (s.issues + s.recommendations)|join('; ') }}</td></tr>{% endfor %}</table></div>
+    {% if q.not_measured %}<p class="hint">Not measured yet: {% for k, v in q.not_measured.items() %}{{k}}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
   </div>
-  {% endif %}
+  {% if docs.repair_plan %}<div class="card" style="margin-top:20px"><h2>What the last {{ 'redo' if docs.repair_plan.data.requested_by else 'repair' }} changed</h2>{% for action in docs.repair_plan.data.actions %}<p><b>{{action.shot_id|replace('shot_','Shot ')}}</b>{% if action.reason %} <span class="hint">{{ action.reason }}</span>{% endif %}</p><dl class="kv">{% for key,value in action.changes.items() %}<dt>{{key|replace('_',' ')}}</dt><dd>{{value}}</dd>{% endfor %}</dl>{% if action.unsupported %}<p class="hint">Unavailable in this workflow: {{action.unsupported|join(', ')}}. These controls were not changed.</p>{% endif %}{% endfor %}</div>{% endif %}
+  <div class="card" style="margin-top:20px"><h2>Renders</h2>
+    <div class="table-wrap" style="border:0;box-shadow:none"><table><tr><th>Shot</th><th>Try</th><th>Renderer</th><th>Status</th><th>Time</th><th>Error</th></tr>
+    {% for r in d.renders %}<tr><td>{{r.shot_id|replace('shot_','')}}</td><td>{{r.attempt}}</td><td>{{r.renderer}}{% if r.workflow %} <span class="muted">{{r.workflow}}</span>{% endif %}</td><td><span class="pill {{ 'ok' if r.status=='succeeded' else ('bad' if r.status in ['failed','oom'] else 'info') }}">{{r.status}}</span></td><td>{{ '%.0f s'|format(r.duration_s) if r.duration_s else '' }}</td><td class="bad">{{ r.error.message if r.error else '' }}</td></tr>
+    {% else %}<tr><td colspan="6" class="empty">No renders yet.</td></tr>{% endfor %}</table></div>
+    <details><summary>Applied render settings</summary>
+      <p class="hint">These values come from each attempt. Controls listed as unavailable did not affect the model.</p>
+      {% for r in d.renders if r.params %}{% set used = r.params.get('_details',{}) %}{% set applied = used.get('applied',{}) %}
+      <h3>{{r.shot_id|replace('shot_','Shot ')}} · attempt {{r.attempt}}</h3>
+      <dl class="kv"><dt>Size</dt><dd>{{r.params.get('WIDTH')}} × {{r.params.get('HEIGHT')}} · {{'%.2f'|format(r.params.get('FPS',0))}} fps</dd>
+        <dt>Sampling</dt><dd>{{r.params.get('STEPS')}} steps · guidance {{r.params.get('CFG')}} · seed {{r.params.get('SEED')}}</dd>
+        {% if applied.get('CONTROL_STRENGTH') is not none %}<dt>Source structure</dt><dd>{{applied.CONTROL_STRENGTH}}</dd>{% endif %}
+        <dt>Appearance</dt><dd>{{used.get('reference','Not recorded by this renderer version')}}</dd>
+        {% if r.workflow %}<dt>Workflow</dt><dd>{{r.workflow}}{% if used.get('subject_mask') %} · Wan kept the real subject and redrew the room{% endif %}</dd>{% endif %}
+        {% if used.get('guidance',{}).get('masks') %}<dt>Subject masks</dt><dd>Not used: {{used.guidance.masks}}</dd>{% endif %}
+        {% if applied.get('CANNY_LOW') is not none %}<dt>Edges</dt><dd>Canny {{applied.CANNY_LOW}} / {{applied.CANNY_HIGH}}</dd>{% endif %}
+        {% if used.get('ignored_params') %}<dt>Unavailable</dt><dd>{{used.ignored_params|join(', ')}}</dd>{% endif %}
+      </dl>{% endfor %}
+    </details>
+  </div>
+</section>{% endif %}
 
-  {% if thumbs %}<div class="card"><h2>Thumbnail</h2><img class="shot" src="/projects/{{p.id}}/assets/{{thumbs[-1].id}}/file" alt="Thumbnail for {{p.name}}" style="max-height:320px;object-fit:contain"></div>{% endif %}
-
+<section class="section grid2" id="details">
+  <div class="card"><h2>Behind the scenes</h2>
+    {% for kind in ['analysis','creative_brief','prompt_schedule','manifest','repair_plan','metadata','qc_report'] %}{% if docs[kind] %}
+    <details><summary>{{ kind|replace('_',' ')|capitalize }} · v{{ docs[kind].version }} · {{ docs[kind].created_by }}</summary><pre>{{ docs[kind].data|pretty }}</pre></details>{% endif %}{% endfor %}
+    <details><summary>Jobs ({{ d.jobs|length }})</summary>
+      <div class="table-wrap" style="margin-top:8px"><table><tr><th>Kind</th><th>Status</th><th>Tries</th><th>Time</th><th>Error</th></tr>
+      {% for j in d.jobs %}<tr><td>{{j.kind}}</td><td>{{j.status|lower}}</td><td>{{j.retry_count}}/{{j.max_attempts}}</td><td>{{ '%.1f s'|format(j.duration_s) if j.duration_s else '' }}</td><td class="bad">{{ j.error.message if j.error else '' }}</td></tr>{% endfor %}</table></div>
+    </details>
+    <details><summary>Audit trail ({{ events|length }} events)</summary>
+      <div class="table-wrap" style="margin-top:8px"><table><tr><th>Time</th><th>Event</th><th>Change</th><th>By</th><th>Data</th></tr>
+      {% for e in events %}<tr><td class="muted">{{e.created_at.strftime('%H:%M:%S')}}</td><td>{{e.type|replace('_',' ')|lower}}</td><td>{{ (e.from_state or '')|lower }}{% if e.to_state %} → {{ e.to_state|lower }}{% endif %}</td><td>{{e.actor}}</td><td><small class="muted">{{e.data|tojson|truncate(140)}}</small></td></tr>{% endfor %}</table></div>
+    </details>
+  </div>
   <div class="card"><h2>Source and rights</h2>
     <dl class="kv">
       <dt>File</dt><dd>{{ (d.source.local_path or d.source.url or '—') if d.source else '—' }}</dd>
@@ -213,26 +316,5 @@
       <dt>ID</dt><dd><code>{{ p.id }}</code></dd>
     </dl>
   </div>
-
-  {% if d.publications %}<div class="card"><h2>Publish history</h2>
-    {% for pub in d.publications|reverse %}<div class="row" style="justify-content:space-between;padding:4px 0"><span>{{ 'Dry run' if pub.dry_run else 'Upload' }} · {{ pub.request.body.status.privacyStatus }}{% if pub.request.body.status.publishAt %}, public {{ pub.request.body.status.publishAt|release_label(settings) }}{% endif %}{% if pub.request.then %} · playlist{% endif %}</span><span class="pill {{ 'ok' if pub.status in ['uploaded','prepared'] else ('bad' if pub.status=='failed' else 'info') }}">{{ pub.status }}</span></div>
-    {% if pub.error %}<div class="hint bad">{{ pub.error.message }}</div>{% endif %}{% endfor %}
-    <details><summary>Latest request</summary><pre>{{ d.publications[-1].request|pretty }}</pre></details>
-  </div>{% endif %}
-</div>
-</div>
-
-<h2 style="margin-top:24px">Behind the scenes</h2>
-<div class="card">
-  {% for kind in ['analysis','creative_brief','prompt_schedule','manifest','repair_plan','metadata','qc_report'] %}{% if docs[kind] %}
-  <details><summary>{{ kind|replace('_',' ')|capitalize }} · v{{ docs[kind].version }} · {{ docs[kind].created_by }}</summary><pre>{{ docs[kind].data|pretty }}</pre></details>{% endif %}{% endfor %}
-  <details><summary>Jobs ({{ d.jobs|length }})</summary>
-    <div class="table-wrap" style="margin-top:8px"><table><tr><th>Kind</th><th>Status</th><th>Tries</th><th>Time</th><th>Error</th></tr>
-    {% for j in d.jobs %}<tr><td>{{j.kind}}</td><td>{{j.status|lower}}</td><td>{{j.retry_count}}/{{j.max_attempts}}</td><td>{{ '%.1f s'|format(j.duration_s) if j.duration_s else '' }}</td><td class="bad">{{ j.error.message if j.error else '' }}</td></tr>{% endfor %}</table></div>
-  </details>
-  <details><summary>Audit trail ({{ events|length }} events)</summary>
-    <div class="table-wrap" style="margin-top:8px"><table><tr><th>Time</th><th>Event</th><th>Change</th><th>By</th><th>Data</th></tr>
-    {% for e in events %}<tr><td class="muted">{{e.created_at.strftime('%H:%M:%S')}}</td><td>{{e.type|replace('_',' ')|lower}}</td><td>{{ (e.from_state or '')|lower }}{% if e.to_state %} → {{ e.to_state|lower }}{% endif %}</td><td>{{e.actor}}</td><td><small class="muted">{{e.data|tojson|truncate(140)}}</small></td></tr>{% endfor %}</table></div>
-  </details>
-</div>
+</section>
 {% endblock %}

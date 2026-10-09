@@ -27,6 +27,8 @@ ComfyUI and Ollama keep running where they run; Studio talks to them over their 
 | Ollama agents (Creative Director, Channel Manager) | Working on the workstation's GPU (qwen3.5:9b, checked with `agent-check`) |
 | AI director: source vision, cinematography, per-shot prompts, character tracker, Batch Prompt Schedule export (`docs/director.md`) | Both vision passes verified locally on qwen3.5:9b; observations still need review |
 | Main subject: the app keeps the real subject or restyles it, from the prompt (`docs/subject.md`) | Built and tested here (CPU U²-Net masks, VACE keep workflow, composite); not yet run on the PC |
+| Your ratings (super like to super dislike, per shot and video), redo of picked shots, taste profile and suggestions (`docs/ratings.md`) | Built and tested here; not yet used on the PC |
+| Subject lock: one main subject per video in the prompts (`docs/director.md`) | Built and tested here with fake vision answers; masks still follow the most salient object |
 | Rökkur Collective / Odysseus integration | Not built: their interfaces could not be inspected (see `docs/current-state.md`) |
 | Discovery, comments, analytics, learning, autonomy loop | Phases 5–10, not started |
 
@@ -43,14 +45,17 @@ Open http://127.0.0.1:8400/ui. The dashboard has:
 The [2026-10-07 upgrade guide](docs/upgrade-2026-10-07.md) covers appearance references,
 effective Wan controls, timing fixes, render comparisons and real RTX 3070 findings.
 
-- **Overview**: what is rendering, what needs you, finished videos, and whether ComfyUI,
-  Ollama and YouTube are reachable.
+- **Home**: what is rendering right now, what needs you, finished videos with your verdicts,
+  shots waiting for a rating, and whether ComfyUI, Ollama and YouTube are reachable.
 - **New video**: pick a clip from the `media` folder (or upload one), describe the look,
   declare the rights, choose the quality, start.
-- **Project page**: pipeline progress, the final video, the model-written brief with each
+- **Project page**: rate the video and every shot (render, original or side by side), pick
+  shots to redo, pipeline progress, the final video, the model-written brief with each
   shot's frame, framing and prompt, the prompt schedule, QC scores, and an editable
   title/description/tags with Dry run and Upload to YouTube buttons: upload now, or private
   now and public at a set time, optionally into a playlist.
+- **Your taste**: what your ratings say you like and dislike, how settings did, where QC
+  disagrees with you, suggestions for the next video, and a queue of shots to rate.
 - **Director**: the global look, your characters, the allowed cinematography terms, and a
   form that shows how the prompt rules turn a description into a prompt.
 - **YouTube**: sign-in, quota, release times and what is scheduled, your playlists.
@@ -105,7 +110,7 @@ curl -X POST localhost:8400/projects -H 'content-type: application/json' -d '{
 ## Commands
 
 `make up | down | logs | test | migrate | studio | worker | comfy-check | agent-check |
-render | youtube-auth | publish | youtube-playlists | prompt-schedule | smoke-test | audit | lint` — or the same
+render | youtube-auth | publish | youtube-playlists | prompt-schedule | taste | smoke-test | audit | lint` — or the same
 names via `scripts\studio.ps1`.
 
 ## Documentation
@@ -116,6 +121,7 @@ names via `scripts\studio.ps1`.
 - `docs/milestones.md` – phase plan and status
 - `docs/director.md` – how each shot's prompt is built: vocabulary, rules, characters, schedule
 - `docs/subject.md` – keeping the real main subject or restyling it, and how the app decides
+- `docs/ratings.md` – your ratings, redo, and the taste profile built from them
 - `docs/research/` – online research behind the workflows (official templates, Civitai)
 - `docs/architecture.md`, `docs/state-machine.md`, `docs/comfyui.md`, `docs/agents.md`,
   `docs/rights.md`, `docs/youtube.md`, `docs/setup-windows.md`, `docs/setup-docker.md`,

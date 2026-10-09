@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rokkur_studio.api.schemas import ProjectCreate
 from rokkur_studio.config import Settings
-from rokkur_studio.db.models import ApprovalRequest, Channel, Job, Project, utcnow
+from rokkur_studio.db.models import ApprovalRequest, Channel, Job, Project, Render, utcnow
 from rokkur_studio.domain.rights import RightsCategory, RightsStatus
 from rokkur_studio.domain.states import TERMINAL, InvalidTransition, ProjectStatus
 from rokkur_studio.jobs.queue import cancel_project_jobs
+from rokkur_studio.manifest.schema import ReconstructionManifest
 from rokkur_studio.pipeline.driver import advance
+from rokkur_studio.services import ratings
 from rokkur_studio.services.events import EventType, record_event
 from rokkur_studio.services.projects import (
     at_budget_limit,
@@ -183,6 +186,80 @@ def keep_renders(session: Session, project: Project, settings: Settings, *, acto
     resume(session, project, actor=actor)
     transition(session, project, S.QUALITY_PASSED, actor=actor,
                reason="renders kept by a human despite QC")
+    return advance(session, project, settings, manual=True)
+
+
+def redo_shots(session: Session, project: Project, settings: Settings, *, shot_ids: list[str],
+               actor: str, supported: set[str] | None = None) -> Job | None:
+    """Render the shots you picked again; every other shot keeps its render as it is.
+
+    Allowed on a finished video and on a project stopped at the repair limit. Each redone shot
+    gets a new seed plus the changes its dislike tags call for (ratings.redo_changes); the
+    plan is saved as a repair plan so the project page shows what changed. The shots left
+    alone are recorded as accepted, so QC never sends them back for repair, and the redone
+    shots get the usual automatic repair rounds.
+    """
+    shot_ids = list(dict.fromkeys(shot_ids))
+    if not shot_ids:
+        raise ValueError("Pick at least one shot to redo")
+    ready = project.status == S.READY_TO_PUBLISH
+    if not ready and not at_repair_limit(project):
+        raise InvalidTransition(S(project.status), S.REPAIRING,
+                                "shots can be redone on a finished video or on a project "
+                                "stopped at the repair limit")
+    mdoc = latest_document(session, project.id, "manifest")
+    if mdoc is None:
+        raise ValueError("This project has no shots to redo yet")
+    manifest = ReconstructionManifest.model_validate(mdoc.data)
+    unknown = [s for s in shot_ids if s not in {shot.shot_id for shot in manifest.shots}]
+    if unknown:
+        raise ValueError(f"Unknown shots: {', '.join(unknown)}")
+    current: dict[str, Render] = {}
+    for r in session.scalars(select(Render).where(Render.project_id == project.id,
+                                                  Render.status == "succeeded")
+                             .order_by(Render.attempt)):
+        current[r.shot_id] = r
+    verdicts = {r.render_id: r for r in ratings.project_ratings(session, project.id)}
+    actions: list[dict[str, Any]] = []
+    for sid in shot_ids:
+        render = current.get(sid)
+        verdict = verdicts.get(render.id) if render is not None else None
+        tags = verdict.tags if verdict is not None and verdict.value < 0 else []
+        changes, reasons = ratings.redo_changes(manifest, sid, tags,
+                                                attempt=render.attempt if render else 1,
+                                                supported=supported)
+        manifest.shot(sid).overrides.update(changes)
+        actions.append({"shot_id": sid, "changes": changes, "reason": "; ".join(reasons),
+                        "recommendations": ["CHANGE_SEED"] + (
+                            ["ADJUST_CONTROL_STRENGTH"] if "control_strength" in changes else []),
+                        "unsupported": [], "tags": tags})
+    accepted = sorted(r.id for sid, r in current.items() if sid not in shot_ids)
+    if not ready:
+        resume(session, project, actor=actor)  # back to QUALITY_FAILED, then repair below
+        _close_repair_requests(session, project, decided_by=actor,
+                               note=f"redoing {', '.join(shot_ids)}")
+    for req in session.query(ApprovalRequest).filter_by(project_id=project.id, kind="publish",
+                                                        status="pending"):
+        req.status, req.decided_by, req.decided_at = "rejected", actor, utcnow()
+        req.note = "superseded: shots are being redone, a new video will be proposed"
+    transition(session, project, S.REPAIRING, actor=actor, reason="you asked to redo shots",
+               data={"shots": shot_ids})
+    save_document(session, project.id, "repair_plan",
+                  {"round": project.repair_rounds, "requested_by": actor, "actions": actions},
+                  created_by=actor)
+    save_document(session, project.id, "manifest", manifest.model_dump(), created_by=actor)
+    for r in session.scalars(select(Render).where(Render.project_id == project.id,
+                                                  Render.shot_id.in_(shot_ids),
+                                                  Render.status == "succeeded")):
+        r.status = "superseded"
+    record_event(session, EventType.SHOTS_REDO_REQUESTED, project_id=project.id, actor=actor,
+                 data={"shots": shot_ids, "changes": {a["shot_id"]: a["changes"] for a in actions},
+                       "accepted_renders": accepted})
+    # The redone shots get the normal number of automatic repair rounds.
+    record_event(session, EventType.REPAIR_BUDGET_EXTENDED, project_id=project.id, actor=actor,
+                 data={"rounds": settings.render.max_retries, "after": project.repair_rounds,
+                       "reason": "redo"})
+    transition(session, project, S.RENDER_QUEUED, actor=actor)
     return advance(session, project, settings, manual=True)
 
 
