@@ -56,6 +56,26 @@ def test_context_manager_runs_vram_hooks_and_tolerates_hook_failure(db):
     assert m.active() == []
 
 
+def test_heavy_batch_runs_vram_hooks_once_around_many_leases(db):
+    calls = []
+    m = GpuLeaseManager(db, GpuSection(),
+                        before_heavy=[lambda h: calls.append(("unload_ollama", h))],
+                        after_heavy=[lambda h: calls.append(("free_comfy", h))])
+    with m.heavy_batch("job1"):
+        for _ in range(3):  # three shots: models stay loaded between them
+            with m.lease("job1", "GPU_HEAVY"):
+                assert len(m.active()) == 1
+            assert m.active() == []
+        # Nested: still only the outermost batch runs the hooks.
+        with m.heavy_batch("job1"), m.lease("job1", "GPU_HEAVY"):
+            pass
+        assert calls == [("unload_ollama", "job1")]
+    assert calls == [("unload_ollama", "job1"), ("free_comfy", "job1")]
+    with m.lease("job2", "GPU_HEAVY"):  # outside a batch: hooks per lease again
+        pass
+    assert calls[-2:] == [("unload_ollama", "job2"), ("free_comfy", "job2")]
+
+
 def test_lease_times_out(db):
     m = mgr(db)
     m.try_acquire("holder", "GPU_HEAVY")

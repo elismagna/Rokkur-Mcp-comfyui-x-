@@ -3,7 +3,7 @@
   Windows equivalent of the Makefile. Usage: .\scripts\studio.ps1 <command>
   Commands: up, down, logs, test, migrate, studio, worker, comfy-check, youtube-auth,
             smoke-test, audit, lint, build, install-models, comfy-render, render, agent-check, publish,
-            prompt-schedule, youtube-playlists, taste
+            prompt-schedule, youtube-playlists, taste, timings
   publish: .\scripts\studio.ps1 publish <project id> [--privacy unlisted] [--dry-run]
            [--at "2026-10-09 18:00" | --at next] [--playlist "Shorts"]
   render: .\scripts\studio.ps1 render myclip.mp4 --theme "1970s claymation" --rights USER_OWNED --evidence "I filmed it"
@@ -11,6 +11,7 @@
           e.g. --character NEO)
   prompt-schedule: .\scripts\studio.ps1 prompt-schedule <project id>   (FizzNodes Batch Prompt Schedule text)
   taste:        .\scripts\studio.ps1 taste   (what your ratings say works, to paste to Claude or Codex)
+  timings:      .\scripts\studio.ps1 timings [project id]   (where the render time went)
 #>
 # Plain (non-advanced) param block on purpose: options like --theme land in $args
 # instead of being rejected as unknown PowerShell parameters.
@@ -42,6 +43,7 @@ switch ($Command) {
   "youtube-playlists" { InApi youtube-playlists }
   "prompt-schedule" { InApi prompt-schedule @Rest }
   "taste"        { InApi taste }
+  "timings"      { InApi timings @Rest }
   "smoke-test"   { InApi smoke-test --inject-fault }
   "comfy-render" { InApi smoke-test --renderer comfyui --profile PREVIEW --timeout 3600 }
   "render"       {

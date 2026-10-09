@@ -600,6 +600,26 @@ def cmd_taste(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_timings(args: argparse.Namespace) -> int:
+    """Print where a project's time went (latest project by default), to compare settings."""
+    from rokkur_studio.db.session import Database
+    from rokkur_studio.services import timings
+
+    settings = _settings(args)
+    with Database(settings.database.url).session() as s:
+        pid = args.project_id or timings.latest_project_id(s)
+        if pid is None:
+            print("no projects yet", file=sys.stderr)
+            return 1
+        try:
+            data = timings.collect(s, pid)
+        except LookupError:
+            print(f"no project {pid}", file=sys.stderr)
+            return 2
+    print(json.dumps(data, indent=2, default=str) if args.json else timings.report(data))
+    return 0
+
+
 def cmd_prompt_schedule(args: argparse.Namespace) -> int:
     """Print a project's Batch Prompt Schedule, ready to paste into FizzNodes."""
     from rokkur_studio.db.session import Database
@@ -701,6 +721,10 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_prompt_schedule)
     sub.add_parser("taste", help="print what your ratings say works").set_defaults(
         func=cmd_taste)
+    p = sub.add_parser("timings", help="print where a project's time went (default: latest)")
+    p.add_argument("project_id", nargs="?")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_timings)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

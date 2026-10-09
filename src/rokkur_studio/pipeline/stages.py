@@ -3,6 +3,7 @@ a handler resumed after a crash continues from what is already recorded in the d
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections.abc import Callable
@@ -467,114 +468,119 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
               if keep or manifest.identity.reference_mode == "cutout" else None)
     rendered: list[str] = []
 
-    for shot in manifest.shots:
-        if shot.shot_id in done:
-            continue
-        while True:
-            with ctx.db.session() as s:
-                if is_cancelled(s, job.id):
-                    raise JobCancelled()
-            _check_budget(ctx, pid)
-            profile = ctx.settings.profile(str(shot.overrides.get("profile",
-                                                                   base_profile.name)))
-            params = shot_params(manifest, shot, profile)
-            if params.get("REFERENCE_IMAGE"):
-                params["REFERENCE_IMAGE"] = str(ctx.store.path_for(params["REFERENCE_IMAGE"]))
-            with ctx.db.session() as s:
-                attempt = (s.scalar(select(func.count(Render.id)).where(
-                    Render.project_id == pid, Render.shot_id == shot.shot_id)) or 0) + 1
-            fault = faults.get(shot.shot_id)
-            if fault and attempt in fault.get("attempts", [1]):
-                params["_FAULT"] = fault.get("kind", "black")
-            clip = _shot_clip(ctx, manifest, shot, fps=params["FPS"])
-            workflow = profile.workflow
-            guidance: dict[str, Any] = {}
-            if masker is not None and renderer.name == "comfyui":
-                workflow, guidance = _subject_guidance(ctx, manifest, shot, clip, params,
-                                                       profile, masker)
-            out_dir = ctx.store.project_dir(pid, f"renders/{shot.shot_id}")
-            out = out_dir / f"attempt_{attempt:02d}.mp4"
-            with ctx.db.transaction() as s:
-                row = Render(project_id=pid, job_id=job.id, shot_id=shot.shot_id,
-                             attempt=attempt, profile=profile.name, renderer=renderer.name,
-                             workflow=workflow if renderer.name == "comfyui" else None,
-                             status="running", params={k: v for k, v in params.items()})
-                s.add(row)
-                s.flush()
-                render_id = row.id
-                record_event(s, EventType.RENDER_SUBMITTED, project_id=pid, actor="render",
-                             job_id=job.id, data={"shot_id": shot.shot_id, "attempt": attempt,
-                                                  "renderer": renderer.name})
-            try:
-                if renderer.name == "ffmpeg_preview":
-                    outcome = renderer.render_shot(clip=clip, params=params,
-                                                   workflow=workflow, out=out)
-                else:
-                    with ctx.gpu.lease(job.id, profile.resource_class):
+    # One batch for every shot: ComfyUI keeps the Wan model and text encoder loaded between
+    # shots instead of reloading them from disk for each one (docs/speed.md).
+    batch = (ctx.gpu.heavy_batch(job.id) if renderer.name != "ffmpeg_preview"
+             else contextlib.nullcontext())
+    with batch:
+        for shot in manifest.shots:
+            if shot.shot_id in done:
+                continue
+            while True:
+                with ctx.db.session() as s:
+                    if is_cancelled(s, job.id):
+                        raise JobCancelled()
+                _check_budget(ctx, pid)
+                profile = ctx.settings.profile(str(shot.overrides.get("profile",
+                                                                       base_profile.name)))
+                params = shot_params(manifest, shot, profile)
+                if params.get("REFERENCE_IMAGE"):
+                    params["REFERENCE_IMAGE"] = str(ctx.store.path_for(params["REFERENCE_IMAGE"]))
+                with ctx.db.session() as s:
+                    attempt = (s.scalar(select(func.count(Render.id)).where(
+                        Render.project_id == pid, Render.shot_id == shot.shot_id)) or 0) + 1
+                fault = faults.get(shot.shot_id)
+                if fault and attempt in fault.get("attempts", [1]):
+                    params["_FAULT"] = fault.get("kind", "black")
+                clip = _shot_clip(ctx, manifest, shot, fps=params["FPS"])
+                workflow = profile.workflow
+                guidance: dict[str, Any] = {}
+                if masker is not None and renderer.name == "comfyui":
+                    workflow, guidance = _subject_guidance(ctx, manifest, shot, clip, params,
+                                                           profile, masker)
+                out_dir = ctx.store.project_dir(pid, f"renders/{shot.shot_id}")
+                out = out_dir / f"attempt_{attempt:02d}.mp4"
+                with ctx.db.transaction() as s:
+                    row = Render(project_id=pid, job_id=job.id, shot_id=shot.shot_id,
+                                 attempt=attempt, profile=profile.name, renderer=renderer.name,
+                                 workflow=workflow if renderer.name == "comfyui" else None,
+                                 status="running", params={k: v for k, v in params.items()})
+                    s.add(row)
+                    s.flush()
+                    render_id = row.id
+                    record_event(s, EventType.RENDER_SUBMITTED, project_id=pid, actor="render",
+                                 job_id=job.id, data={"shot_id": shot.shot_id, "attempt": attempt,
+                                                      "renderer": renderer.name})
+                try:
+                    if renderer.name == "ffmpeg_preview":
                         outcome = renderer.render_shot(clip=clip, params=params,
                                                        workflow=workflow, out=out)
-            except RenderOOM as exc:
-                step = _apply_degrade(ctx, manifest, shot, profile.degrade)
-                _render_failed(ctx, job, render_id, "oom", str(exc), {"next_step": step})
+                    else:
+                        with ctx.gpu.lease(job.id, profile.resource_class):
+                            outcome = renderer.render_shot(clip=clip, params=params,
+                                                           workflow=workflow, out=out)
+                except RenderOOM as exc:
+                    step = _apply_degrade(ctx, manifest, shot, profile.degrade)
+                    _render_failed(ctx, job, render_id, "oom", str(exc), {"next_step": step})
+                    with ctx.db.transaction() as s:
+                        record_event(s, EventType.GPU_OOM, project_id=pid, actor="render",
+                                     job_id=job.id, data={"shot_id": shot.shot_id,
+                                                          "recovery_step": step})
+                        save_document(s, pid, "manifest", manifest.model_dump(),
+                                      created_by="oom_recovery")
+                    if step is None:
+                        raise PermanentJobError(
+                            "oom_unrecoverable",
+                            f"{shot.shot_id}: CUDA OOM after the full recovery ladder; needs a "
+                            "smaller shot, a lighter profile or cloud GPU (approval required)") from exc
+                    continue  # retry with the degraded settings (never identical)
+                except RenderUnavailable as exc:
+                    _render_failed(ctx, job, render_id, "unavailable", str(exc))
+                    raise JobError("renderer_unavailable", str(exc)) from exc
+                except (RenderRejected, TemplateError) as exc:
+                    _render_failed(ctx, job, render_id, "rejected", str(exc))
+                    raise PermanentJobError("render_rejected", str(exc)) from exc
+                except GpuUnavailable as exc:
+                    _render_failed(ctx, job, render_id, "gpu_busy", str(exc))
+                    raise JobError("gpu_busy", str(exc)) from exc
+                except JobCancelled:
+                    _render_failed(ctx, job, render_id, "cancelled", "Render cancelled by the user")
+                    raise
+                except FFmpegError as exc:
+                    _render_failed(ctx, job, render_id, "ffmpeg", str(exc), exc.to_dict())
+                    raise JobError("ffmpeg_failed", str(exc), exc.to_dict()) from exc
+                details, final = outcome.details, outcome.path
+                if guidance:
+                    details = {**details, "guidance": guidance}
+                if keep and masker is not None:
+                    subject, kept = _keep_subject(ctx, manifest, shot, clip, outcome, params, masker)
+                    details = {**details, "subject": subject}
+                    final = kept or final
+                meta = {"shot_id": shot.shot_id, "attempt": attempt}
                 with ctx.db.transaction() as s:
-                    record_event(s, EventType.GPU_OOM, project_id=pid, actor="render",
-                                 job_id=job.id, data={"shot_id": shot.shot_id,
-                                                      "recovery_step": step})
-                    save_document(s, pid, "manifest", manifest.model_dump(),
-                                  created_by="oom_recovery")
-                if step is None:
-                    raise PermanentJobError(
-                        "oom_unrecoverable",
-                        f"{shot.shot_id}: CUDA OOM after the full recovery ladder; needs a "
-                        "smaller shot, a lighter profile or cloud GPU (approval required)") from exc
-                continue  # retry with the degraded settings (never identical)
-            except RenderUnavailable as exc:
-                _render_failed(ctx, job, render_id, "unavailable", str(exc))
-                raise JobError("renderer_unavailable", str(exc)) from exc
-            except (RenderRejected, TemplateError) as exc:
-                _render_failed(ctx, job, render_id, "rejected", str(exc))
-                raise PermanentJobError("render_rejected", str(exc)) from exc
-            except GpuUnavailable as exc:
-                _render_failed(ctx, job, render_id, "gpu_busy", str(exc))
-                raise JobError("gpu_busy", str(exc)) from exc
-            except JobCancelled:
-                _render_failed(ctx, job, render_id, "cancelled", "Render cancelled by the user")
-                raise
-            except FFmpegError as exc:
-                _render_failed(ctx, job, render_id, "ffmpeg", str(exc), exc.to_dict())
-                raise JobError("ffmpeg_failed", str(exc), exc.to_dict()) from exc
-            details, final = outcome.details, outcome.path
-            if guidance:
-                details = {**details, "guidance": guidance}
-            if keep and masker is not None:
-                subject, kept = _keep_subject(ctx, manifest, shot, clip, outcome, params, masker)
-                details = {**details, "subject": subject}
-                final = kept or final
-            meta = {"shot_id": shot.shot_id, "attempt": attempt}
-            with ctx.db.transaction() as s:
-                asset = register_asset(s, ctx.store, pid, "render", final,
-                                       {**meta, "subject": "kept"} if final != outcome.path
-                                       else meta)
-                if final != outcome.path:  # the render before the subject went back in
-                    register_asset(s, ctx.store, pid, "render_raw", outcome.path, meta)
-                done_row = s.get(Render, render_id)
-                assert done_row is not None
-                done_row.status, done_row.output_asset_id = "succeeded", asset.id
-                done_row.remote_id, done_row.duration_s = outcome.remote_id, outcome.seconds
-                done_row.finished_at = utcnow()
-                done_row.params = {**done_row.params, "_details": details}
-                if renderer.name != "ffmpeg_preview":
-                    s.add(CostEntry(project_id=pid, job_id=job.id, kind="gpu_minutes",
-                                    amount=outcome.seconds / 60, unit="min"))
-                data: dict[str, Any] = {"shot_id": shot.shot_id, "attempt": attempt,
-                                        "seconds": round(outcome.seconds, 2)}
-                if "subject" in details:
-                    data["subject"] = ("kept" if details["subject"].get("kept")
-                                       else details["subject"].get("reason"))
-                record_event(s, EventType.RENDER_COMPLETED, project_id=pid, actor="render",
-                             job_id=job.id, data=data)
-            rendered.append(shot.shot_id)
-            break
+                    asset = register_asset(s, ctx.store, pid, "render", final,
+                                           {**meta, "subject": "kept"} if final != outcome.path
+                                           else meta)
+                    if final != outcome.path:  # the render before the subject went back in
+                        register_asset(s, ctx.store, pid, "render_raw", outcome.path, meta)
+                    done_row = s.get(Render, render_id)
+                    assert done_row is not None
+                    done_row.status, done_row.output_asset_id = "succeeded", asset.id
+                    done_row.remote_id, done_row.duration_s = outcome.remote_id, outcome.seconds
+                    done_row.finished_at = utcnow()
+                    done_row.params = {**done_row.params, "_details": details}
+                    if renderer.name != "ffmpeg_preview":
+                        s.add(CostEntry(project_id=pid, job_id=job.id, kind="gpu_minutes",
+                                        amount=outcome.seconds / 60, unit="min"))
+                    data: dict[str, Any] = {"shot_id": shot.shot_id, "attempt": attempt,
+                                            "seconds": round(outcome.seconds, 2)}
+                    if "subject" in details:
+                        data["subject"] = ("kept" if details["subject"].get("kept")
+                                           else details["subject"].get("reason"))
+                    record_event(s, EventType.RENDER_COMPLETED, project_id=pid, actor="render",
+                                 job_id=job.id, data=data)
+                rendered.append(shot.shot_id)
+                break
 
     assembled = _assemble(ctx, manifest)
     _finish(ctx, job, S.QUALITY_CHECK, {"assembled": assembled, "rendered": rendered,
@@ -806,13 +812,13 @@ def _stop_at_repair_limit(ctx: StudioContext, job: Job, report: dict[str, Any],
     return {"repaired": False, "reason": reason}
 
 
-STALL_REPORTS = 3  # QC reports compared before giving up on re-renders
-STALL_MIN_GAIN = 0.2  # QC points a failing shot must gain over that window
+STALL_MIN_GAIN = 0.2  # QC points a failing shot must gain over the window
 
 
-def _repairs_stalled(session: Session, project_id: str) -> bool:
-    """True when the last STALL_REPORTS QC reports since a human last granted rounds show
-    no failing shot gaining STALL_MIN_GAIN points: rerolling again is wasted GPU time."""
+def _repairs_stalled(session: Session, project_id: str, window: int) -> bool:
+    """True when the last ``window`` QC reports (``render.stall_reports``) since a human last
+    granted rounds show no failing shot gaining STALL_MIN_GAIN points: rerolling again is
+    wasted GPU time."""
     granted = session.scalar(
         select(func.max(Event.created_at)).where(
             Event.project_id == project_id, Event.type == EventType.REPAIR_BUDGET_EXTENDED))
@@ -821,8 +827,8 @@ def _repairs_stalled(session: Session, project_id: str) -> bool:
     if granted is not None:
         query = query.where(Document.created_at > granted)
     reports = session.scalars(query.order_by(Document.version.desc())
-                              .limit(STALL_REPORTS)).all()
-    if len(reports) < STALL_REPORTS:
+                              .limit(window)).all()
+    if len(reports) < window:
         return False
     oldest = {r["shot_id"]: float(r.get("overall", 0)) for r in reports[-1].get("shots", [])}
     failing = [r for r in reports[0].get("shots", []) if r.get("decision") != "PASS"]
@@ -843,7 +849,7 @@ def repair(ctx: StudioContext, job: Job) -> dict[str, Any]:
     if project.repair_rounds >= budget:
         return _stop_at_repair_limit(ctx, job, report, "repair budget exhausted")
     with ctx.db.session() as s:
-        stalled = _repairs_stalled(s, pid)
+        stalled = _repairs_stalled(s, pid, ctx.settings.render.stall_reports)
     if stalled:
         return _stop_at_repair_limit(ctx, job, report,
                                      "repeated re-renders did not improve QC")

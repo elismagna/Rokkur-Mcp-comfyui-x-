@@ -4,7 +4,7 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-09 by Codex (review-first prompt editing and optional sound-bed mixing).
+Last updated: 2026-10-09 by Claude (render speed pass, docs/speed.md).
 See the [local upgrade findings](upgrade-2026-10-07.md) for implementation details and real
 render observations; the latest Git commit is authoritative.
 
@@ -62,6 +62,7 @@ shot-level repair → encode → metadata/thumbnail → publish.
 | Main subject: keep real or restyle, masks, composite | `pipeline/subject.py` | `docs/subject.md` |
 | Subject lock: one main subject per video in the prompts | `director/subject.py` | `docs/director.md` |
 | Your ratings, redo, taste profile and suggestions | `services/ratings.py`, `services/taste.py` | `docs/ratings.md` |
+| Render speed: where time goes, `timings` command | `services/timings.py`, `gpu/lease.py` | `docs/speed.md` |
 | Rights gate | `domain/rights.py` | `docs/rights.md` |
 | YouTube OAuth, upload, schedule, playlists, approvals | `youtube/`, `services/publishing.py` | `docs/youtube.md` |
 | Use cases shared by API, dashboard and CLI | `services/commands.py` | |
@@ -280,6 +281,18 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   storyboard approval step, series bible, a T2V 1.3B profile from a published workflow.
 - **Speed work** has its own project thread, "Cut render wait times", which owns all wait-time
   optimisation. Don't start a parallel one.
+- **Claude (2026-10-09): render speed, first pass. Untested on the PC.** Map, changes and the
+  A/B plan are in `docs/speed.md`.
+  - Models stay loaded between shots: a render stage runs in one `GpuLeaseManager.heavy_batch`,
+    so Ollama is unloaded once and ComfyUI is freed once per stage, not after every shot (each
+    `/free` also cleared ComfyUI's node cache, so every shot reloaded Wan and umt5 from disk).
+  - Repairs stop after one round in which no failing shot gained 0.2 QC (`render.stall_reports:
+    2`, was a fixed 3); ComfyUI poll 2 s to 1 s.
+  - New `studio.ps1 timings [project]`: per stage, per shot attempt (wall, ComfyUI, other,
+    masks, QC, your rating), repair time and how many repairs you liked.
+  - PC test: `git pull`, `studio.ps1 up`, run `timings` on the last finished project (before),
+    render the same clip again, run `timings` (after). Later shots should be faster than the
+    "(loads models)" one. Then the DRAFT vs QUALITY A/B in `docs/speed.md`.
 - **Claude reviewed Codex a865054** (mobile nav, contrast): sound, no changes needed. Note the PC
   run was "198 passed, 100 skipped": the skipped tests are the database ones, so the PC did not
   run the rating/redo/taste tests; Claude's cloud run covered them.
@@ -426,6 +439,8 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Claude: speed pass (`docs/speed.md`): models kept loaded across a render stage,
+  repairs stop after one non-improving round, 1 s ComfyUI poll, `timings` command.
 - 2026-10-09 Claude: `docs/ROKKUR_ENTERPRISE.md` (vision prompt + honest notes on Elis's
   material); reviewed Codex a865054.
 - 2026-10-09 Codex: reviewed the local dashboard before editing. At phone width, the complete nav

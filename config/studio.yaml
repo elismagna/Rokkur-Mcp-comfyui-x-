@@ -14,7 +14,7 @@ gpu:
   max_heavy_jobs: 1
   lease_seconds: 3600
   unload_ollama_before_heavy: true
-  free_comfyui_after_heavy: true
+  free_comfyui_after_heavy: true     # once per render stage, not per shot (models stay loaded between shots)
   free_comfyui_before_agents: true   # otherwise Ollama falls back to the CPU and crawls
   class_vram_gb:             # estimated VRAM per resource class, used for the lease budget
     GPU_LIGHT: 2
@@ -23,7 +23,7 @@ gpu:
 
 comfyui:
   url: http://127.0.0.1:8188
-  poll_interval_s: 2.0
+  poll_interval_s: 1.0      # a finished shot is noticed within a second (two cheap local GETs per poll)
   timeout_s: 3600
 
 ollama:
@@ -58,6 +58,7 @@ render:
   renderer: ffmpeg_preview   # ffmpeg_preview (non-AI stand-in) | comfyui
   default_profile: RTX3070_QUALITY
   max_retries: 3             # max repair rounds per project
+  stall_reports: 2           # stop repairs (you choose: keep or more rounds) after a round that gained < 0.2 QC
   max_renders_per_project: 40
 
 quality:

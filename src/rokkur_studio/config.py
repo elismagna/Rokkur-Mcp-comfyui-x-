@@ -42,7 +42,7 @@ class GpuSection(BaseModel):
 
 class ComfySection(BaseModel):
     url: str = "http://127.0.0.1:8188"
-    poll_interval_s: float = 2.0
+    poll_interval_s: float = 1.0
     timeout_s: float = 3600
 
 
@@ -132,6 +132,9 @@ class RenderSection(BaseModel):
     default_profile: str = "RTX3070_QUALITY"
     max_retries: int = 3
     max_renders_per_project: int = 40
+    # QC reports compared before automatic repairs stop and ask you (keep or grant rounds).
+    # 2 = stop after one repair round in which no failing shot gained 0.2 QC points.
+    stall_reports: int = Field(default=2, ge=2)
 
 
 class QualitySection(BaseModel):

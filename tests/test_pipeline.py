@@ -388,10 +388,15 @@ def test_comfyui_render_path_with_fake_server(ctx, sample_video):
     ctx.settings.render.renderer = "comfyui"
     ctx.settings.comfyui.poll_interval_s = 0
     ctx.comfy_factory = lambda: ComfyClient("http://comfy:8188", transport=fake.transport())
+    hooks: list[str] = []
+    ctx.gpu.before_heavy = [lambda h: hooks.append("unload_ollama")]
+    ctx.gpu.after_heavy = [lambda h: hooks.append("free_comfyui")]
     pid = create(ctx, sample_video)
     run(ctx)
     assert status(ctx, pid) == "READY_TO_PUBLISH"
     assert len(fake.prompts) == 2  # one ComfyUI prompt per shot
+    # Models stay loaded between the two shots: one unload/free around the render stage.
+    assert hooks == ["unload_ollama", "free_comfyui"]
     wf = next(iter(fake.prompts.values()))
     # Each shot renders with its own compiled prompt: framing first, then subject and look.
     text = wf["5"]["inputs"]["text"]
@@ -447,13 +452,42 @@ def test_repairs_stop_when_rerenders_do_not_improve_qc(ctx, sample_video):
     with ctx.db.session() as s:
         for score in (4.0, 4.1):
             save_document(s, pid, "qc_report", report(score), created_by="test")
-        assert not _repairs_stalled(s, pid)  # too few rounds to judge
+        assert not _repairs_stalled(s, pid, 3)  # too few rounds to judge
         save_document(s, pid, "qc_report", report(4.15), created_by="test")
-        assert _repairs_stalled(s, pid)
+        assert _repairs_stalled(s, pid, 3)
         record_event(s, EventType.REPAIR_BUDGET_EXTENDED, project_id=pid, actor="elis",
                      data={"rounds": 5})
         s.flush()
-        assert not _repairs_stalled(s, pid)  # granted rounds start a fresh window
+        assert not _repairs_stalled(s, pid, 3)  # granted rounds start a fresh window
         for score in (4.2, 5.0, 6.0):
             save_document(s, pid, "qc_report", report(score), created_by="test")
-        assert not _repairs_stalled(s, pid)  # still improving
+        assert not _repairs_stalled(s, pid, 3)  # still improving
+        save_document(s, pid, "qc_report", report(6.1), created_by="test")
+        assert _repairs_stalled(s, pid, 2)  # the default: one round without a gain stops
+        assert not _repairs_stalled(s, pid, 3)
+
+
+def test_timings_report_shows_where_a_render_spent_its_time(ctx, settings, sample_video,
+                                                            monkeypatch, capsys):
+    from rokkur_studio import cli
+    from rokkur_studio.services import timings
+
+    fake = FakeComfyUI()
+    ctx.settings.render.renderer = "comfyui"
+    ctx.settings.comfyui.poll_interval_s = 0
+    ctx.comfy_factory = lambda: ComfyClient("http://comfy:8188", transport=fake.transport())
+    ctx.gpu.after_heavy = []
+    pid = create(ctx, sample_video)
+    run(ctx)
+    with ctx.db.session() as s:
+        data = timings.collect(s, pid)
+    assert data["stages"]["render"]["runs"] == 1 and data["total_seconds"] > 0
+    assert [r["first_in_job"] for r in data["renders"]] == [True, False]
+    assert all(r["qc"] is not None for r in data["renders"])  # QC score per attempt
+    text = timings.report(data)
+    assert "(loads models)" in text and "render" in text and "Shot renders:" in text
+
+    monkeypatch.setattr(cli, "_settings", lambda args: settings)
+    assert cli.main(["timings"]) == 0  # the latest project by default
+    assert pid in capsys.readouterr().out
+    assert cli.main(["timings", "proj_missing"]) == 2

@@ -7,6 +7,7 @@ one consistent view. Acquisition is serialised with a transaction-scoped advisor
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -38,6 +39,7 @@ class GpuLeaseManager:
         self.db, self.cfg = db, cfg
         self.before_heavy = before_heavy or []
         self.after_heavy = after_heavy or []
+        self._batch = threading.local()
 
     def vram_for(self, resource_class: str) -> float:
         if resource_class not in GPU_CLASSES:
@@ -86,7 +88,8 @@ class GpuLeaseManager:
               ) -> Iterator[GpuLease]:
         """Block until the lease is granted; run VRAM hooks around heavy work."""
         deadline = time.monotonic() + timeout_s
-        if resource_class == "GPU_HEAVY":
+        hooks = resource_class == "GPU_HEAVY" and not self._batching()
+        if hooks:
             self._run_hooks(self.before_heavy, holder, "before_heavy")
         while (lease := self.try_acquire(holder, resource_class)) is None:
             if should_abort and should_abort():
@@ -98,7 +101,31 @@ class GpuLeaseManager:
             yield lease
         finally:
             self.release(lease.id)
-            if resource_class == "GPU_HEAVY":
+            if hooks:
+                self._run_hooks(self.after_heavy, holder, "after_heavy")
+
+    def _batching(self) -> bool:
+        return bool(getattr(self._batch, "depth", 0))
+
+    @contextmanager
+    def heavy_batch(self, holder: str) -> Iterator[None]:
+        """Run the heavy VRAM hooks once around a run of heavy leases, not around each one.
+
+        Every shot of a render takes its own lease, but unloading ComfyUI's models after each
+        shot made the next shot load the diffusion model and text encoder from disk again.
+        Inside a batch the models stay loaded from shot to shot; Ollama is still unloaded
+        first and ComfyUI is still freed at the end. Batches nest; only the outermost runs
+        the hooks.
+        """
+        depth = getattr(self._batch, "depth", 0)
+        if depth == 0:
+            self._run_hooks(self.before_heavy, holder, "before_heavy")
+        self._batch.depth = depth + 1
+        try:
+            yield
+        finally:
+            self._batch.depth = depth
+            if depth == 0:
                 self._run_hooks(self.after_heavy, holder, "after_heavy")
 
     @staticmethod

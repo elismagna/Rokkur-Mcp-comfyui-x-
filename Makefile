@@ -2,7 +2,7 @@
 COMPOSE ?= docker compose
 RUN = $(COMPOSE) run --rm api
 
-.PHONY: up down logs test migrate studio worker comfy-check agent-check youtube-auth publish youtube-playlists prompt-schedule taste smoke-test comfy-render render audit lint build
+.PHONY: up down logs test migrate studio worker comfy-check agent-check youtube-auth publish youtube-playlists prompt-schedule taste timings smoke-test comfy-render render audit lint build
 
 build:        ; $(COMPOSE) build migrate
 up:           ; $(COMPOSE) build migrate && $(COMPOSE) up -d
@@ -16,6 +16,7 @@ youtube-auth: ; $(COMPOSE) run --rm -p 127.0.0.1:8401:8401 api rokkur-studio you
 publish: ; $(RUN) rokkur-studio publish $(ARGS)
 prompt-schedule: ; $(RUN) rokkur-studio prompt-schedule $(ARGS)
 taste: ; $(RUN) rokkur-studio taste
+timings: ; $(RUN) rokkur-studio timings $(ARGS)
 youtube-playlists: ; $(RUN) rokkur-studio youtube-playlists
 smoke-test:   ; $(RUN) rokkur-studio smoke-test --inject-fault
 agent-check: ; $(RUN) rokkur-studio agent-check
