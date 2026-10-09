@@ -29,6 +29,7 @@ ComfyUI and Ollama keep running where they run; Studio talks to them over their 
 | Main subject: the app keeps the real subject or restyles it, from the prompt (`docs/subject.md`) | Built and tested here (CPU U²-Net masks, VACE keep workflow, composite); not yet run on the PC |
 | Your ratings (super like to super dislike, per shot and video), redo of picked shots, taste profile and suggestions (`docs/ratings.md`) | Built and tested here; not yet used on the PC |
 | Subject lock: one main subject per video in the prompts (`docs/director.md`) | Built and tested here with fake vision answers; masks still follow the most salient object |
+| Local or cloud rendering: each video renders on this PC or on a cloud ComfyUI server you set up, with cloud minutes and estimated cost (`docs/cloud.md`) | Built and tested here against a fake server; not yet tried on a real cloud GPU |
 | Rökkur Collective / Odysseus integration | Not built: their interfaces could not be inspected (see `docs/current-state.md`) |
 | Discovery, comments, analytics, learning, autonomy loop | Phases 5–10, not started |
 
@@ -122,6 +123,7 @@ names via `scripts\studio.ps1`.
 - `docs/director.md` – how each shot's prompt is built: vocabulary, rules, characters, schedule
 - `docs/subject.md` – keeping the real main subject or restyling it, and how the app decides
 - `docs/ratings.md` – your ratings, redo, and the taste profile built from them
+- `docs/cloud.md` – render a video on a cloud ComfyUI server instead of this PC
 - `docs/ROKKUR_ENTERPRISE.md` – where Rökkur is going: the vision prompt and what works today
 - `docs/research/` – online research behind the workflows (official templates, Civitai)
 - `docs/architecture.md`, `docs/state-machine.md`, `docs/comfyui.md`, `docs/agents.md`,

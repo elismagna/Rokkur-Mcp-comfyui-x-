@@ -13,7 +13,7 @@ from rokkur_studio.agents.providers import (
     RokkurCollectiveProvider,
     RuleBasedProvider,
 )
-from rokkur_studio.comfyui.client import ComfyClient, ComfyError
+from rokkur_studio.comfyui.client import ComfyClient, ComfyError, ComfyUnavailable
 from rokkur_studio.comfyui.compiler import TemplateRegistry
 from rokkur_studio.config import Settings
 from rokkur_studio.db.session import Database
@@ -35,26 +35,40 @@ class StudioContext:
     comfy_factory: Callable[[], ComfyClient]
     extras: dict[str, object] = field(default_factory=dict)
     dp_provider: AgentProvider | None = None  # None: the DP pass uses ``provider``
+    cloud_factory: Callable[[], ComfyClient] | None = None  # None: cloud is not set up
+
+    def comfy_for(self, target: str) -> ComfyClient:
+        """A ComfyUI client for this PC (``local``) or the cloud server (``cloud``)."""
+        if target != "cloud":
+            return self.comfy_factory()
+        if self.cloud_factory is None:
+            raise ComfyUnavailable("cloud_not_configured",
+                                   "This video renders on the cloud server, which is not set "
+                                   "up: set STUDIO_CLOUD__ENABLED and STUDIO_CLOUD__URL.")
+        return self.cloud_factory()
 
 
-def profile_availability(ctx: StudioContext) -> dict[str, str | None]:
+def profile_availability(ctx: StudioContext, target: str = "local", *,
+                         live: bool = True) -> dict[str, str | None]:
     """Check configured profiles against the live ComfyUI when it is reachable.
 
     Keep the static file and VRAM checks useful while ComfyUI is offline. When it responds,
     also catch missing custom nodes before a project can enter the render pipeline.
+    ``target`` picks this PC's ComfyUI or the cloud server; ``live=False`` skips asking it.
     """
     object_info = None
-    if ctx.settings.render.renderer == "comfyui":
+    if live and ctx.settings.render.renderer == "comfyui" and (
+            target != "cloud" or ctx.settings.cloud.ready):
         client = None
         try:
-            client = ctx.comfy_factory()
+            client = ctx.comfy_for(target)
             object_info = client.object_info()
         except (ComfyError, httpx.HTTPError):
             pass
         finally:
             if client is not None:
                 client.close()
-    return {name: ctx.settings.profile_problem(name, object_info=object_info)
+    return {name: ctx.settings.profile_problem(name, object_info=object_info, target=target)
             for name in ctx.settings.profiles}
 
 
@@ -111,6 +125,9 @@ def make_dp_provider(settings: Settings) -> AgentProvider | None:
 def build_context(settings: Settings, db: Database | None = None) -> StudioContext:
     db = db or Database(settings.database.url)
     comfy_factory = lambda: ComfyClient(settings.comfyui.url)  # noqa: E731
+    cloud = settings.cloud
+    cloud_factory = (lambda: ComfyClient(cloud.url, timeout_s=cloud.timeout_s,  # noqa: E731
+                                         headers=cloud.headers())) if cloud.ready else None
 
     def unload_ollama(holder: str) -> None:
         OllamaProvider(settings.ollama.url, settings.ollama.model, timeout_s=10).unload_all()
@@ -138,4 +155,5 @@ def build_context(settings: Settings, db: Database | None = None) -> StudioConte
         provider=make_provider(settings),
         comfy_factory=comfy_factory,
         dp_provider=make_dp_provider(settings),
+        cloud_factory=cloud_factory,
     )

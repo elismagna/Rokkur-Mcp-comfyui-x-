@@ -77,5 +77,7 @@ duration, status, error, retry_count`; every log line inside a job carries the s
 
 `render.max_renders_per_project`, `costs.max_gpu_minutes_per_project` (GPU minutes are
 recorded per render in `cost_entries`), `render.max_retries` (repair rounds) and the OOM
-ladder bound what one project can consume. Cloud GPU (`HYBRID_MAX`) has no implementation
-yet and `costs.max_cloud_gpu_minutes` defaults to 0.
+ladder bound what one project can consume. A video set to render on the cloud ComfyUI server
+records `cloud_gpu_minutes` with an estimated dollar cost instead, bounded by
+`costs.max_cloud_gpu_minutes` (per video) and `costs.max_cost_per_project_usd` (0 = no dollar
+cap); see `docs/cloud.md`. `HYBRID_MAX` still has no `hybrid_quality` workflow.

@@ -26,6 +26,12 @@ comfyui:
   poll_interval_s: 1.0      # a finished shot is noticed within a second (two cheap local GETs per poll)
   timeout_s: 3600
 
+cloud:                       # optional ComfyUI server you rent or run elsewhere (docs/cloud.md)
+  enabled: false             # set STUDIO_CLOUD__ENABLED, __URL and __TOKEN in .env, never here
+  vram_gb: 24                # the cloud GPU's memory, for profile checks
+  price_per_hour_usd: 0      # what the provider charges, for the cost estimate; 0 = unknown
+  default: local             # preselected on the New video page: local | cloud
+
 ollama:
   url: http://127.0.0.1:11434
   model: qwen3.5:9b          # installed on the workstation (audit 2026-10-07); qwen3.5:4b if VRAM is tight
@@ -81,8 +87,8 @@ comments:
 
 costs:
   max_gpu_minutes_per_project: 120
-  max_cloud_gpu_minutes: 0
-  max_cost_per_project_usd: 0
+  max_cloud_gpu_minutes: 60       # per video rendered on the cloud server (docs/cloud.md)
+  max_cost_per_project_usd: 0     # estimated cloud cost cap per video; 0 = no dollar cap
 
 jobs:
   default_max_attempts: 3

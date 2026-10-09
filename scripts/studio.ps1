@@ -32,7 +32,7 @@ switch ($Command) {
   "migrate"      { InApi migrate }
   "studio"       { Compose up -d api }
   "worker"       { Compose up -d worker }
-  "comfy-check"  { InApi comfy-check }
+  "comfy-check"  { InApi comfy-check @Rest }
   "agent-check"  { InApi agent-check @Rest }
   "youtube-auth" {
     # Google sends the browser back to 127.0.0.1:8401, so that port must reach the container.

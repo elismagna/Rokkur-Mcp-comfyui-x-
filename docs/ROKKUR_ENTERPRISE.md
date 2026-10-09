@@ -99,4 +99,5 @@ are from the summary.
 3. A **series bible** document type that seeds the character tracker and every episode's brief.
 4. A **text-to-video profile** from a published Wan 2.1 T2V 1.3B workflow, measured on the PC
    against the restyle path.
-5. Later: local narration (text-to-speech) and an opt-in cloud tier.
+5. Later: local narration (text-to-speech). Rendering on a rented cloud ComfyUI GPU exists
+   since 2026-10-09 (`docs/cloud.md`); cloud video models such as Kling or Veo are not connected.

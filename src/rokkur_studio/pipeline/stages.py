@@ -22,7 +22,7 @@ from rokkur_studio.comfyui.compiler import (
     compile_workflow,
     validate_against_object_info,
 )
-from rokkur_studio.config import RenderProfile
+from rokkur_studio.config import RenderProfile, project_target
 from rokkur_studio.db.models import (
     ApprovalRequest,
     Asset,
@@ -366,12 +366,16 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
 
 
 # -- rendering ----------------------------------------------------------------------------
-def _renderer(ctx: StudioContext, job: Job) -> Renderer:
+def _renderer(ctx: StudioContext, job: Job, target: str = "local") -> Renderer:
     if ctx.settings.render.renderer == "comfyui":
         def cancelled() -> bool:
             with ctx.db.session() as s:
                 return is_cancelled(s, job.id)
-        return ComfyUIRenderer(ctx.comfy_factory(), ctx.registry, ctx.ffmpeg,
+        try:
+            client = ctx.comfy_for(target)
+        except ComfyError as exc:
+            raise PermanentJobError("cloud_not_configured", str(exc)) from exc
+        return ComfyUIRenderer(client, ctx.registry, ctx.ffmpeg,
                                timeout_s=ctx.settings.comfyui.timeout_s,
                                poll_s=ctx.settings.comfyui.poll_interval_s,
                                should_cancel=cancelled)
@@ -407,8 +411,12 @@ def _check_budget(ctx: StudioContext, project_id: str) -> None:
     reason = None
     if used["renders"] >= used["max_renders"]:
         reason = f"render budget exhausted ({used['renders']}/{used['max_renders']})"
-    elif used["exhausted"]:
+    elif used["gpu"] >= used["max_gpu"]:
         reason = f"GPU budget exhausted ({used['gpu']:.1f}/{used['max_gpu']:g} min)"
+    elif used["cloud_exhausted"]:
+        reason = f"cloud GPU budget exhausted ({used['cloud']:.1f}/{used['max_cloud']:g} min)"
+    elif used["exhausted"]:
+        reason = f"cost limit reached (about ${used['usd']:.2f} of ${used['max_usd']:g})"
     if reason:
         with ctx.db.transaction() as s:
             record_event(s, EventType.BUDGET_EXCEEDED, project_id=project_id, actor="cost_guard",
@@ -417,7 +425,7 @@ def _check_budget(ctx: StudioContext, project_id: str) -> None:
 
 
 def _apply_degrade(ctx: StudioContext, manifest: ReconstructionManifest, shot: ShotSpec,
-                   steps: list[str]) -> str | None:
+                   steps: list[str], target: str = "local") -> str | None:
     """Apply the next unused OOM recovery step to the shot. Returns the step or None."""
     raw = str(shot.overrides.get("_oom_steps", ""))
     applied = raw.split(",") if raw else []
@@ -427,7 +435,7 @@ def _apply_degrade(ctx: StudioContext, manifest: ReconstructionManifest, shot: S
         o = shot.overrides
         if step == "clear_cache":
             if ctx.settings.render.renderer == "comfyui":
-                client = ctx.comfy_factory()
+                client = ctx.comfy_for(target)
                 try:
                     client.free()
                 finally:
@@ -460,7 +468,9 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
             transition(s, p, S.RENDERING, actor="render", job_id=job.id)
     manifest, manifest_version = _manifest(ctx, pid)
     base_profile = ctx.settings.profile(manifest.render_profile)
-    renderer = _renderer(ctx, job)
+    target = project_target(project.creative_input)
+    renderer = _renderer(ctx, job, target)
+    cloud = renderer.name == "comfyui" and target == "cloud"
     done = _latest_renders(ctx, pid)
     faults = project.creative_input.get("test_faults") or {}
     keep = manifest.subject.mode == "keep"
@@ -470,7 +480,8 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
 
     # One batch for every shot: ComfyUI keeps the Wan model and text encoder loaded between
     # shots instead of reloading them from disk for each one (docs/speed.md).
-    batch = (ctx.gpu.heavy_batch(job.id) if renderer.name != "ffmpeg_preview"
+    # A cloud render uses the cloud server's GPU, not this PC's: no batch and no lease.
+    batch = (ctx.gpu.heavy_batch(job.id) if renderer.name != "ffmpeg_preview" and not cloud
              else contextlib.nullcontext())
     with batch:
         for shot in manifest.shots:
@@ -497,7 +508,7 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
                 guidance: dict[str, Any] = {}
                 if masker is not None and renderer.name == "comfyui":
                     workflow, guidance = _subject_guidance(ctx, manifest, shot, clip, params,
-                                                           profile, masker)
+                                                           profile, masker, target)
                 out_dir = ctx.store.project_dir(pid, f"renders/{shot.shot_id}")
                 out = out_dir / f"attempt_{attempt:02d}.mp4"
                 with ctx.db.transaction() as s:
@@ -512,7 +523,7 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
                                  job_id=job.id, data={"shot_id": shot.shot_id, "attempt": attempt,
                                                       "renderer": renderer.name})
                 try:
-                    if renderer.name == "ffmpeg_preview":
+                    if renderer.name == "ffmpeg_preview" or cloud:
                         outcome = renderer.render_shot(clip=clip, params=params,
                                                        workflow=workflow, out=out)
                     else:
@@ -520,7 +531,7 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
                             outcome = renderer.render_shot(clip=clip, params=params,
                                                            workflow=workflow, out=out)
                 except RenderOOM as exc:
-                    step = _apply_degrade(ctx, manifest, shot, profile.degrade)
+                    step = _apply_degrade(ctx, manifest, shot, profile.degrade, target)
                     _render_failed(ctx, job, render_id, "oom", str(exc), {"next_step": step})
                     with ctx.db.transaction() as s:
                         record_event(s, EventType.GPU_OOM, project_id=pid, actor="render",
@@ -569,11 +580,19 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
                     done_row.remote_id, done_row.duration_s = outcome.remote_id, outcome.seconds
                     done_row.finished_at = utcnow()
                     done_row.params = {**done_row.params, "_details": details}
-                    if renderer.name != "ffmpeg_preview":
+                    if cloud:  # an estimate: a rented server bills while it is on
+                        minutes = outcome.seconds / 60
+                        s.add(CostEntry(project_id=pid, job_id=job.id, kind="cloud_gpu_minutes",
+                                        amount=minutes, unit="min", usd=round(
+                                            minutes / 60 * ctx.settings.cloud.price_per_hour_usd,
+                                            4)))
+                    elif renderer.name != "ffmpeg_preview":
                         s.add(CostEntry(project_id=pid, job_id=job.id, kind="gpu_minutes",
                                         amount=outcome.seconds / 60, unit="min"))
                     data: dict[str, Any] = {"shot_id": shot.shot_id, "attempt": attempt,
                                             "seconds": round(outcome.seconds, 2)}
+                    if cloud:
+                        data["render_on"] = "cloud"
                     if "subject" in details:
                         data["subject"] = ("kept" if details["subject"].get("kept")
                                            else details["subject"].get("reason"))
@@ -604,7 +623,7 @@ def _mask_cache(ctx: StudioContext, manifest: ReconstructionManifest, shot: Shot
 
 def _subject_guidance(ctx: StudioContext, manifest: ReconstructionManifest, shot: ShotSpec,
                       clip: Path, params: dict[str, Any], profile: RenderProfile,
-                      masker: SubjectMasker) -> tuple[str, dict[str, Any]]:
+                      masker: SubjectMasker, target: str = "local") -> tuple[str, dict[str, Any]]:
     """Use the subject's masks before rendering. Returns the workflow to run and what was done.
 
     When the subject is kept and the profile has a keep workflow, Wan gets the subject's masks
@@ -631,7 +650,7 @@ def _subject_guidance(ctx: StudioContext, manifest: ReconstructionManifest, shot
         if reason := unusable(subject_share(probs), ctx.settings.subject):
             return workflow, {"masks": reason}
         if want_mask and profile.keep_workflow:
-            problem = (_live_problem(ctx, profile.keep_workflow)
+            problem = (_live_problem(ctx, profile.keep_workflow, target)
                        if _accepts(ctx, profile.keep_workflow, "MASK_VIDEO") else None)
             if _accepts(ctx, profile.keep_workflow, "MASK_VIDEO") and not problem:
                 params["MASK_VIDEO"] = str(vace_mask_video(
@@ -659,14 +678,15 @@ def _subject_guidance(ctx: StudioContext, manifest: ReconstructionManifest, shot
     return workflow, info
 
 
-def _live_problem(ctx: StudioContext, workflow: str) -> str | None:
+def _live_problem(ctx: StudioContext, workflow: str, target: str = "local") -> str | None:
     """Why this ComfyUI cannot run ``workflow`` (e.g. a missing node), checked once per worker.
     None when it can, or when ComfyUI cannot be asked: the render itself will tell then."""
-    checked = cast(dict[str, str | None], ctx.extras.setdefault("live_workflow_problems", {}))
+    checked = cast(dict[str, str | None],
+                   ctx.extras.setdefault(f"live_workflow_problems_{target}", {}))
     if workflow not in checked:
         client = None
         try:
-            client = ctx.comfy_factory()
+            client = ctx.comfy_for(target)
             info = client.object_info()
             if not info:
                 return None

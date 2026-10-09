@@ -13,7 +13,7 @@
 
 <div class="row spread" style="align-items:flex-start">
   <div style="min-width:0">
-    <div class="eyebrow">{{ p.target_format|replace('youtube_','')|capitalize }} · {{ p.render_profile|replace('_',' ') }}</div>
+    <div class="eyebrow">{{ p.target_format|replace('youtube_','')|capitalize }} · {{ p.render_profile|replace('_',' ') }}{% if render_on == 'cloud' %} · cloud{% endif %}</div>
     <h1>{{p.name}} {{ status_pill(p.status) }}</h1>
     <p class="sub">{{ p.creative_input.get('theme','') }}{% if p.repair_rounds %} · {{p.repair_rounds}} repair round{{'' if p.repair_rounds==1 else 's'}}{% endif %}</p>
   </div>
@@ -88,7 +88,10 @@
       <div class="facts">
         <div><b>{{ shots|length }}</b><span>shots</span></div>
         <div><b>{{ d.renders|length }}</b><span>renders</span></div>
-        <div><b>{{ '%.1f'|format(gpu_minutes) }}</b><span>GPU minutes</span></div>
+        {% if render_on == 'cloud' or cloud_usage.cloud %}
+        <div><b>{{ '%.1f'|format(cloud_usage.cloud) }}</b><span>cloud GPU minutes</span></div>
+        {% if cloud_usage.usd %}<div><b>${{ '%.2f'|format(cloud_usage.usd) }}</b><span>estimated cost</span></div>{% endif %}
+        {% else %}<div><b>{{ '%.1f'|format(gpu_minutes) }}</b><span>GPU minutes</span></div>{% endif %}
         <div><b>{{ shots|selectattr('rating')|list|length }}/{{ shots|selectattr('render')|list|length }}</b><span>shots rated</span></div>
       </div>
     </div>

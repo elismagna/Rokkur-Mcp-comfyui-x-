@@ -122,10 +122,13 @@ def parse_history_entry(prompt_id: str, entry: dict[str, Any]) -> RenderResult:
 
 class ComfyClient:
     def __init__(self, base_url: str, *, timeout_s: float = 30, client_id: str | None = None,
-                 transport: httpx.BaseTransport | None = None) -> None:
+                 transport: httpx.BaseTransport | None = None,
+                 headers: dict[str, str] | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.client_id = client_id or f"rokkur-{uuid.uuid4().hex[:12]}"
-        self.http = httpx.Client(base_url=self.base_url, timeout=timeout_s, transport=transport)
+        # headers: e.g. the cloud server's access token, sent with every request
+        self.http = httpx.Client(base_url=self.base_url, timeout=timeout_s, transport=transport,
+                                 headers=headers)
 
     def close(self) -> None:
         self.http.close()

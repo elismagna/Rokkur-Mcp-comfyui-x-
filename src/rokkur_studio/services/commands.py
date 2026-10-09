@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rokkur_studio.api.schemas import ProjectCreate
-from rokkur_studio.config import Settings
+from rokkur_studio.config import Settings, project_target
 from rokkur_studio.db.models import ApprovalRequest, Channel, Job, Project, Render, utcnow
 from rokkur_studio.domain.rights import RightsCategory, RightsStatus
 from rokkur_studio.domain.states import TERMINAL, InvalidTransition, ProjectStatus
@@ -37,7 +37,8 @@ def create_project(session: Session, data: ProjectCreate, settings: Settings,
                    actor: str = "api") -> Project:
     profile = data.render_profile or settings.render.default_profile
     settings.profile(profile)  # validate early
-    if problem := settings.profile_problem(profile):
+    target = settings.new_project_target(data.creative.render_on)
+    if problem := settings.profile_problem(profile, target=target):
         raise ValueError(problem)
     if data.creative.audio_bed_path and (
             not data.creative.audio_bed_rights_confirmed
@@ -48,7 +49,8 @@ def create_project(session: Session, data: ProjectCreate, settings: Settings,
         raise LookupError(f"channel {data.channel_id} not found")
     project = Project(name=data.name, status=S.DISCOVERED.value, target_format=data.target_format,
                       render_profile=profile, channel_id=data.channel_id,
-                      creative_input=data.creative.model_dump(exclude_none=True))
+                      creative_input={**data.creative.model_dump(exclude_none=True),
+                                      "render_on": target})
     session.add(project)
     session.flush()
     create_source(session, project, **data.source.model_dump())
@@ -61,7 +63,7 @@ def create_project(session: Session, data: ProjectCreate, settings: Settings,
                   commercial_use=r.commercial_use)
     record_event(session, EventType.PROJECT_CREATED, project_id=project.id, actor=actor,
                  to_state=project.status,
-                 data={"name": project.name, "profile": profile,
+                 data={"name": project.name, "profile": profile, "render_on": target,
                        "rights_category": r.category.value, "source": data.source.platform})
     session.flush()
     session.refresh(project)
@@ -71,7 +73,8 @@ def create_project(session: Session, data: ProjectCreate, settings: Settings,
 
 
 def start(session: Session, project: Project, settings: Settings, actor: str = "api") -> Job | None:
-    if problem := settings.profile_problem(project.render_profile):
+    if problem := settings.profile_problem(project.render_profile,
+                                           target=project_target(project.creative_input)):
         raise ValueError(problem)
     if project.status in (S.DISCOVERED, S.SCORED):
         transition(session, project, S.RIGHTS_PENDING, actor=actor)
@@ -110,7 +113,7 @@ def allow_more_renders(session: Session, project: Project, settings: Settings, *
                        renders: int | None = None) -> Job | None:
     """Raise the render budget of a project stopped at it, and resume it.
 
-    GPU minutes grow in proportion, so whichever of the two budgets stopped it is lifted.
+    GPU minutes (local and cloud) grow in proportion, so whichever budget stopped it is lifted.
     """
     if not at_budget_limit(session, project, settings):
         raise InvalidTransition(S(project.status), S(project.status),
@@ -120,8 +123,10 @@ def allow_more_renders(session: Session, project: Project, settings: Settings, *
     if not 1 <= renders <= base:
         raise ValueError(f"allow between 1 and {base} more renders")
     gpu_minutes = round(renders * settings.costs.max_gpu_minutes_per_project / base, 1)
+    cloud_minutes = round(renders * settings.costs.max_cloud_gpu_minutes / base, 1)
     record_event(session, EventType.BUDGET_EXTENDED, project_id=project.id, actor=actor,
-                 data={"renders": renders, "gpu_minutes": gpu_minutes})
+                 data={"renders": renders, "gpu_minutes": gpu_minutes,
+                       "cloud_minutes": cloud_minutes})
     resume(session, project, actor=actor)
     return advance(session, project, settings, manual=True)
 

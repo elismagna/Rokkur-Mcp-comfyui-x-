@@ -34,6 +34,7 @@ from rokkur_studio.api.routes_system import system as system_info
 from rokkur_studio.api.routes_system import workers as workers_info
 from rokkur_studio.api.routes_youtube import release_overview
 from rokkur_studio.api.schemas import CreativeIn, ProjectCreate, RightsIn, SourceIn
+from rokkur_studio.config import Settings, project_target
 from rokkur_studio.db.models import (
     ApprovalRequest,
     Asset,
@@ -237,11 +238,18 @@ def media_files(ctx: StudioContext) -> list[dict[str, Any]]:
              "mb": round(p.stat().st_size / 1e6, 1)} for p in files[:300]]
 
 
-def _probe(url: str) -> bool:
+def _probe(url: str, headers: dict[str, str] | None = None) -> bool:
     try:
-        return httpx.get(url, timeout=2).is_success
+        return httpx.get(url, timeout=2, headers=headers).is_success
     except httpx.HTTPError:
         return False
+
+
+def _cloud_detail(s: Settings) -> str:
+    """The cloud server's host and price, never its token or full URL (it may hold a secret)."""
+    host = httpx.URL(s.cloud.url).host or "configured"
+    price = s.cloud.price_per_hour_usd
+    return f"{host} · {s.cloud.vram_gb:g} GB" + (f" · ${price:g}/h" if price else "")
 
 
 def services(ctx: StudioContext) -> list[dict[str, Any]]:
@@ -253,6 +261,9 @@ def services(ctx: StudioContext) -> list[dict[str, Any]]:
     return [
         {"name": "ComfyUI", "ok": _probe(f"{s.comfyui.url}/system_stats"),
          "detail": s.comfyui.url, "needed": s.render.renderer == "comfyui"},
+        *([{"name": "Cloud ComfyUI", "ok": _probe(f"{s.cloud.url.rstrip('/')}/system_stats",
+                                                   s.cloud.headers()),
+            "detail": _cloud_detail(s), "needed": False}] if s.cloud.ready else []),
         {"name": "Ollama", "ok": _probe(f"{s.ollama.url}/api/version"),
          "detail": f"{s.ollama.model}", "needed": s.agents.provider == "ollama"},
         {"name": "FFmpeg", "ok": ctx.ffmpeg.available(), "detail": "encode + QC", "needed": True},
@@ -329,9 +340,13 @@ def _tracker(ctx: StudioContext) -> tuple[AssetTracker | None, str | None]:
 def new_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
     tracker, _ = _tracker(ctx)
     profile = taste.build_profile(session)
+    cloud = ctx.settings.cloud
     return _page(request, "new.html", ctx, media=media_files(ctx),
                  suggestions=taste.suggestions(profile), taste=profile,
                  profile_status=profile_availability(ctx),
+                 cloud=cloud if cloud.ready else None,
+                 cloud_status=(profile_availability(ctx, "cloud", live=False)
+                               if cloud.ready else {}),
                  characters=tracker.characters if tracker else {},
                  profiles=ctx.settings.profiles,
                  default_profile=ctx.settings.render.default_profile,
@@ -408,13 +423,15 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                      character_description: Annotated[str, Form()] = "",
                      use_global_look: Annotated[bool, Form()] = False,
                      render_profile: Annotated[str, Form()] = "",
+                     render_on: Annotated[str, Form()] = "",
                      target_format: Annotated[str, Form()] = "youtube_short",
                      autostart: Annotated[bool, Form()] = False) -> RedirectResponse:
     path = ""
     try:
         selected = render_profile or ctx.settings.render.default_profile
         ctx.settings.profile(selected)
-        if problem := profile_availability(ctx)[selected]:
+        target = ctx.settings.new_project_target(render_on or None)
+        if problem := profile_availability(ctx, target)[selected]:
             return _back("/ui/new", err=problem)
     except KeyError as exc:
         return _back("/ui/new", err=str(exc))
@@ -490,6 +507,7 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                                 character_key=character_key or None,
                                 character_description=character_description or None,
                                 use_global_look=use_global_look,
+                                render_on=target,
                                 character_reference_path=character_reference_path or None),
             autostart=autostart)
         project = commands.create_project(session, body, ctx.settings, actor="dashboard")
@@ -591,15 +609,15 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
         (r for r in reversed(verdicts) if r.target == ratings.VIDEO), None)
     source = next((a for a in reversed(detail.assets) if a.kind == "source"), None)
     repair_limit = at_repair_limit(project)
-    gpu_minutes = session.scalar(select(func.coalesce(func.sum(CostEntry.amount), 0.0)).where(
-        CostEntry.project_id == project_id, CostEntry.kind == "gpu_minutes")) or 0.0
+    usage = budget_usage(session, project_id, ctx.settings)
     return _page(request, "project.html", ctx, d=detail, p=project, events=events,
                  shots=shots, subject=subject, keyframes=keyframes, tags=ratings.TAGS,
                  video_asset=video_asset, video_rating=video_rating,
                  earlier_video_rating=earlier_video_rating,
                  source_url=(f"/projects/{project_id}/assets/{source.id}/file" if source else None),
                  can_redo=project.status == S.READY_TO_PUBLISH or repair_limit,
-                 gpu_minutes=float(gpu_minutes),
+                 gpu_minutes=usage["gpu"], cloud_usage=usage,
+                 render_on=project_target(project.creative_input),
                  failure=failure_reason(session, project) if failed else None,
                  repair_limit=repair_limit,
                  budget=_budget_stop(session, ctx, project),

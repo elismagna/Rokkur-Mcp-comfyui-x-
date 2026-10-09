@@ -59,11 +59,15 @@
     {% else %}<p class="hint" style="margin:0">Rate your finished shots and the studio suggests settings here, based only on what you liked.</p>{% endif %}
   </section>
   <section class="card"><div class="section-heading"><span class="step-number">03</span><h2>Output</h2></div>
-    <label for="render_profile">Render quality</label><select id="render_profile" name="render_profile">{% for name, pr in profiles.items() %}<option value="{{name}}" data-fps="{{pr.fps}}" data-steps="{{pr.steps}}" {% if profile_status[name] %}disabled{% endif %} {% if name==default_profile %}selected{% endif %}>{{name|replace('_',' ')}}{% if profile_status[name] %} · unavailable{% endif %}</option>{% endfor %}</select>
+    {% if cloud %}
+    <label for="render_on">Where to render</label><select id="render_on" name="render_on"><option value="local" {% if cloud.default == 'local' %}selected{% endif %}>This PC · free, uses your GPU</option><option value="cloud" {% if cloud.default == 'cloud' %}selected{% endif %}>Cloud server · {{ '%g'|format(cloud.vram_gb) }} GB{% if cloud.price_per_hour_usd %} · about ${{ '%g'|format(cloud.price_per_hour_usd) }} an hour{% endif %}</option></select>
+    <p class="hint">Cloud uploads this video's shots to your cloud ComfyUI server, which needs the same models and nodes. Your PC's GPU stays free while it renders. The server bills for the time it is on.</p>
+    {% endif %}
+    <label for="render_profile">Render quality</label><select id="render_profile" name="render_profile">{% for name, pr in profiles.items() %}{% set here = not profile_status[name] %}{% set there = cloud and not cloud_status[name] %}<option value="{{name}}" data-fps="{{pr.fps}}" data-steps="{{pr.steps}}" {% if not here and not there %}disabled{% endif %} {% if name==default_profile %}selected{% endif %}>{{name|replace('_',' ')}}{% if not here and there %} · cloud only{% elif not here %} · unavailable{% endif %}</option>{% endfor %}</select>
     <p class="hint" id="profile-info"></p>
     <label for="target_format">Delivery format</label><select id="target_format" name="target_format"><option value="youtube_short">Portrait · YouTube Short · 9:16</option><option value="youtube_video">Landscape · YouTube video · 16:9</option></select>
     <p class="hint">Rendering preserves the source framing. The final export fits it inside your selected format with padding.</p>
-    <details><summary>Profile availability</summary>{% for name, pr in profiles.items() %}<p class="hint"><b>{{name}}</b><br>{{profile_status[name] or pr.description}}</p>{% endfor %}</details>
+    <details><summary>Profile availability</summary>{% for name, pr in profiles.items() %}<p class="hint"><b>{{name}}</b><br>{{profile_status[name] or pr.description}}{% if cloud %}<br>Cloud: {{ cloud_status[name] or 'available' }}{% endif %}</p>{% endfor %}</details>
   </section>
   <section class="card"><h2>Sound</h2>
     <label class="check"><input type="checkbox" name="mute_source_audio" value="true"> Mute the original video's sound</label>

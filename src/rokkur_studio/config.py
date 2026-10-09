@@ -6,13 +6,14 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 ResourceClass = Literal["GPU_LIGHT", "GPU_MEDIUM", "GPU_HEAVY"]
+RenderTarget = Literal["local", "cloud"]
 PLAYLIST_ID = re.compile(r"[A-Za-z0-9_-]{10,64}")
 
 
@@ -44,6 +45,34 @@ class ComfySection(BaseModel):
     url: str = "http://127.0.0.1:8188"
     poll_interval_s: float = 1.0
     timeout_s: float = 3600
+
+
+class CloudSection(BaseModel):
+    """A ComfyUI server you rent or run elsewhere, for videos set to render on it (docs/cloud.md).
+
+    Off by default. The URL and token come from ``.env`` (``STUDIO_CLOUD__URL``,
+    ``STUDIO_CLOUD__TOKEN``); the token is never written to config files, logs or pages.
+    """
+
+    enabled: bool = False
+    url: str = ""                      # e.g. http://host.docker.internal:8189 through an SSH tunnel
+    token: SecretStr = SecretStr("")   # sent as "<auth_header>: <auth_scheme> <token>" when set
+    auth_header: str = "Authorization"
+    auth_scheme: str = "Bearer"        # empty: the header carries the token alone
+    vram_gb: float = Field(24, gt=0)   # the cloud GPU's memory, for profile checks
+    price_per_hour_usd: float = Field(0, ge=0)  # for the cost estimate; 0 = unknown
+    default: Literal["local", "cloud"] = "local"  # preselected on the New video page
+    timeout_s: float = Field(120, gt=0)  # per HTTP request: uploads and downloads cross the internet
+
+    @property
+    def ready(self) -> bool:
+        return self.enabled and bool(self.url.strip())
+
+    def headers(self) -> dict[str, str]:
+        token = self.token.get_secret_value().strip()
+        if not token:
+            return {}
+        return {self.auth_header: f"{self.auth_scheme} {token}".strip()}
 
 
 class OllamaSection(BaseModel):
@@ -165,7 +194,7 @@ class CommentsSection(BaseModel):
 
 class CostsSection(BaseModel):
     max_gpu_minutes_per_project: float = 120
-    max_cloud_gpu_minutes: float = 0
+    max_cloud_gpu_minutes: float = 60     # per project, on the cloud ComfyUI server
     max_cost_per_project_usd: float = 0
 
 
@@ -209,6 +238,7 @@ class Settings(BaseModel):
     database: DatabaseSection = DatabaseSection()
     gpu: GpuSection = GpuSection()
     comfyui: ComfySection = ComfySection()
+    cloud: CloudSection = CloudSection()
     ollama: OllamaSection = OllamaSection()
     youtube: YoutubeSection = YoutubeSection()
     agents: AgentsSection = AgentsSection()
@@ -224,14 +254,21 @@ class Settings(BaseModel):
     config_dir: Path = Path("config")
     workflows_dir: Path = Path("workflows")
 
+    def new_project_target(self, choice: str | None) -> RenderTarget:
+        """Where a new project renders: the choice made for it, else the cloud default when
+        the cloud server is set up, else this PC."""
+        if choice in ("local", "cloud"):
+            return cast(RenderTarget, choice)
+        return "cloud" if self.cloud.ready and self.cloud.default == "cloud" else "local"
+
     def profile(self, name: str) -> RenderProfile:
         try:
             return self.profiles[name]
         except KeyError as exc:
             raise KeyError(f"unknown render profile {name!r}; known: {sorted(self.profiles)}") from exc
 
-    def profile_problem(self, name: str, *,
-                        object_info: dict[str, Any] | None = None) -> str | None:
+    def profile_problem(self, name: str, *, object_info: dict[str, Any] | None = None,
+                        target: str = "local") -> str | None:
         from rokkur_studio.comfyui.compiler import (
             TemplateError,
             TemplateRegistry,
@@ -239,13 +276,20 @@ class Settings(BaseModel):
         )
 
         profile = self.profile(name)
+        cloud = target == "cloud"
+        if cloud and not self.cloud.ready:
+            return ("Cloud rendering is not set up: set STUDIO_CLOUD__ENABLED and "
+                    "STUDIO_CLOUD__URL in .env (docs/cloud.md).")
         if self.render.renderer != "comfyui":
-            return None
-        if profile.location == "remote":
-            return "Remote rendering is not configured; choose a local profile."
-        if profile.min_vram_gb > self.gpu.vram_gb:
-            return (f"Needs {profile.min_vram_gb:g} GB VRAM; this studio is configured "
-                    f"for {self.gpu.vram_gb:g} GB.")
+            return "Cloud rendering needs the ComfyUI renderer." if cloud else None
+        if profile.location == "remote" and not cloud:
+            return ("This profile renders on the cloud server; choose Cloud under Where to "
+                    "render." if self.cloud.ready
+                    else "Remote rendering is not configured; choose a local profile.")
+        vram = self.cloud.vram_gb if cloud else self.gpu.vram_gb
+        if profile.min_vram_gb > vram:
+            where = "the cloud server is" if cloud else "this studio is"
+            return f"Needs {profile.min_vram_gb:g} GB VRAM; {where} configured for {vram:g} GB."
         try:
             template = TemplateRegistry(self.workflows_dir).get(profile.workflow)
         except (TemplateError, OSError, ValueError) as exc:
@@ -259,7 +303,13 @@ class Settings(BaseModel):
         return None
 
 
+def project_target(creative: dict[str, Any] | None) -> RenderTarget:
+    """Where an existing project renders. Projects made before cloud mode render locally."""
+    return "cloud" if (creative or {}).get("render_on") == "cloud" else "local"
+
+
 ENV_PREFIX = "STUDIO_"
+_TEXT_KEYS = {"token"}
 
 
 def _deep_set(target: dict[str, Any], keys: list[str], value: Any) -> None:
@@ -283,7 +333,9 @@ def env_overrides(environ: dict[str, str]) -> dict[str, Any]:
         parts = name[len(ENV_PREFIX):].split("__")
         keys = [k if i > 0 and parts[i - 1].lower() == "profiles" else k.lower()
                 for i, k in enumerate(parts)]  # profile names keep their case
-        _deep_set(out, keys, yaml.safe_load(raw) if raw != "" else "")
+        # a token stays text: YAML would turn "1234" into a number and "a: b" into a mapping
+        value = raw if keys[-1] in _TEXT_KEYS or raw == "" else yaml.safe_load(raw)
+        _deep_set(out, keys, value)
     return out
 
 

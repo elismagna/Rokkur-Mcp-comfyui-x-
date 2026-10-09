@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from rokkur_studio.config import project_target
 from rokkur_studio.db.models import (
     CostEntry,
     Document,
@@ -182,14 +183,31 @@ def budget_usage(session: Session, project_id: str, settings: Settings) -> dict[
     ).all()
     renders = session.scalar(select(func.count(Render.id))
                              .where(Render.project_id == project_id)) or 0
-    gpu = session.scalar(select(func.coalesce(func.sum(CostEntry.amount), 0.0)).where(
-        CostEntry.project_id == project_id, CostEntry.kind == "gpu_minutes")) or 0.0
+    spent = dict(session.execute(
+        select(CostEntry.kind, func.sum(CostEntry.amount)).where(
+            CostEntry.project_id == project_id,
+            CostEntry.kind.in_(("gpu_minutes", "cloud_gpu_minutes")))
+        .group_by(CostEntry.kind)).tuples().all())
+    gpu = float(spent.get("gpu_minutes") or 0.0)
+    cloud = float(spent.get("cloud_gpu_minutes") or 0.0)
+    usd = float(session.scalar(select(func.coalesce(func.sum(CostEntry.usd), 0.0)).where(
+        CostEntry.project_id == project_id)) or 0.0)
     max_renders = settings.render.max_renders_per_project + sum(
         int(d.get("renders", 0)) for d in extra)
     max_gpu = settings.costs.max_gpu_minutes_per_project + sum(
         float(d.get("gpu_minutes", 0)) for d in extra)
-    return {"renders": renders, "max_renders": max_renders, "gpu": float(gpu),
-            "max_gpu": max_gpu, "exhausted": renders >= max_renders or gpu >= max_gpu}
+    max_cloud = settings.costs.max_cloud_gpu_minutes + sum(
+        float(d.get("cloud_minutes", 0)) for d in extra)
+    max_usd = settings.costs.max_cost_per_project_usd  # 0: no dollar cap
+    project = session.get(Project, project_id)
+    on_cloud = cloud > 0 or (project is not None
+                             and project_target(project.creative_input) == "cloud")
+    cloud_out = on_cloud and cloud >= max_cloud
+    return {"renders": renders, "max_renders": max_renders, "gpu": gpu, "max_gpu": max_gpu,
+            "cloud": cloud, "max_cloud": max_cloud, "usd": usd, "max_usd": max_usd,
+            "cloud_exhausted": cloud_out,
+            "exhausted": (renders >= max_renders or gpu >= max_gpu or cloud_out
+                          or 0 < max_usd <= usd)}
 
 
 def at_budget_limit(session: Session, project: Project, settings: Settings) -> bool:

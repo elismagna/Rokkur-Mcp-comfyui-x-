@@ -64,6 +64,9 @@ class CreativeIn(BaseModel):
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     made_for_kids: bool = False
+    # Where the shots render: this PC's ComfyUI or the cloud server (docs/cloud.md). Unset:
+    # the configured default (cloud.default when cloud is set up, else local).
+    render_on: Literal["local", "cloud"] | None = None
 
 
 class ProjectCreate(BaseModel):

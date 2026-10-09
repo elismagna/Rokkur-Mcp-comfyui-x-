@@ -81,7 +81,16 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
     )
 
     settings = _settings(args)
-    client = ComfyClient(settings.comfyui.url)
+    url = settings.comfyui.url
+    client = ComfyClient(url)
+    if getattr(args, "cloud", False):
+        if not settings.cloud.ready:
+            print("Cloud rendering is not set up: set STUDIO_CLOUD__ENABLED=true and "
+                  "STUDIO_CLOUD__URL in .env (docs/cloud.md).")
+            return 1
+        url = settings.cloud.url
+        client = ComfyClient(url, timeout_s=settings.cloud.timeout_s,
+                             headers=settings.cloud.headers())
     ok = True
     try:
         stats = client.system_stats()
@@ -89,10 +98,12 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
             print(f"GPU: {dev.get('name')}  VRAM total {dev.get('vram_total', 0) / 2**30:.1f} GB"
                   f"  free {dev.get('vram_free', 0) / 2**30:.1f} GB")
         info = client.object_info()
-        print(f"ComfyUI reachable at {settings.comfyui.url}: {len(info)} node classes")
+        print(f"ComfyUI reachable at {url}: {len(info)} node classes")
     except (ComfyError, httpx.HTTPError) as exc:
-        print(f"ComfyUI NOT reachable at {settings.comfyui.url}: {exc}")
+        print(f"ComfyUI NOT reachable at {url}: {exc}")
         return 1
+    finally:
+        client.close()
     registry = TemplateRegistry(settings.workflows_dir)
     needed = ({p.workflow for p in settings.profiles.values()}
               | {p.keep_workflow for p in settings.profiles.values() if p.keep_workflow})
@@ -658,8 +669,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("worker", help="run a job worker")
     p.add_argument("--kinds", help="comma-separated job kinds to accept")
     p.set_defaults(func=cmd_worker)
-    sub.add_parser("comfy-check", help="validate ComfyUI + templates").set_defaults(
-        func=cmd_comfy_check)
+    p = sub.add_parser("comfy-check", help="validate ComfyUI + templates")
+    p.add_argument("--cloud", action="store_true",
+                   help="check the cloud ComfyUI server (STUDIO_CLOUD__URL) instead of this PC's")
+    p.set_defaults(func=cmd_comfy_check)
     sub.add_parser("audit", help="inspect the local environment").set_defaults(func=cmd_audit)
     p = sub.add_parser("agent-check",
                        help="ask the Ollama agents for a brief, framing and metadata")

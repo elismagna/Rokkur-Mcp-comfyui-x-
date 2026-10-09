@@ -271,12 +271,24 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Claude (2026-10-09): local and cloud rendering (`docs/cloud.md`).** Elis asked for a local
+  mode and a cloud mode. Each video now renders on this PC or on a cloud ComfyUI server
+  (`creative.render_on`, "Where to render" on the New video page, shown only when
+  `STUDIO_CLOUD__ENABLED` and `STUDIO_CLOUD__URL` are set in `.env`; token in
+  `STUDIO_CLOUD__TOKEN`, never in git). Cloud renders skip the local GPU lease, record
+  `cloud_gpu_minutes` with an estimated cost, and stop at `costs.max_cloud_gpu_minutes`
+  (60 per video). Profiles are checked against the cloud GPU's `vram_gb`. `comfy-check --cloud`
+  validates the server. Tested here with a fake cloud server (`tests/test_cloud.py`), full suite,
+  ruff and mypy. **Not tried on a real cloud GPU**: Elis needs a server with the same models and
+  nodes, reached through an SSH tunnel or a token-checking HTTPS address (never an open port).
+
 - **Rökkur Enterprise vision (Elis, 2026-10-09).** Elis wants Rökkur to grow from restyling
   footage into a studio that takes one idea to a finished series (his reference: Cocomelon-style
   nursery-rhyme videos made with a script assistant, an AI video generator, an editor and SEO
   tools). The vision prompt and Claude's honest notes are in `docs/ROKKUR_ENTERPRISE.md`; read it
   before proposing new features. Agreed facts: Rökkur is video-to-video today; text-to-video,
-  songs and a cloud tier are not built; kids' content must be marked made for kids (the API has
+  songs and cloud video models (Kling, Veo) are not built, though a cloud ComfyUI render
+  mode now exists (`docs/cloud.md`); kids' content must be marked made for kids (the API has
   `made_for_kids`, the form doesn't show it yet). Suggested next steps there: made-for-kids switch,
   storyboard approval step, series bible, a T2V 1.3B profile from a published workflow.
 - **Speed work** has its own project thread, "Cut render wait times", which owns all wait-time
@@ -439,6 +451,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Claude: local/cloud render mode (`docs/cloud.md`, `tests/test_cloud.py`).
 - 2026-10-09 Claude: speed pass (`docs/speed.md`): models kept loaded across a render stage,
   repairs stop after one non-improving round, 1 s ComfyUI poll, `timings` command.
 - 2026-10-09 Claude: `docs/ROKKUR_ENTERPRISE.md` (vision prompt + honest notes on Elis's

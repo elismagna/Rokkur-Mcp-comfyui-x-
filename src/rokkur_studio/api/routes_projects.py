@@ -62,7 +62,8 @@ def create_project(body: ProjectCreate, ctx: Ctx, session: Db) -> Project:
     try:
         profile = body.render_profile or ctx.settings.render.default_profile
         ctx.settings.profile(profile)
-        if problem := profile_availability(ctx)[profile]:
+        target = ctx.settings.new_project_target(body.creative.render_on)
+        if problem := profile_availability(ctx, target)[profile]:
             raise ValueError(problem)
         return commands.create_project(session, body, ctx.settings)
     except (KeyError, LookupError, ValueError) as exc:
