@@ -512,6 +512,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Claude: FUTURE_24GB got `max_pixels: 399360`. It renders the same Wan 1.3B workflow, and a 1920x800 source came out 1920 wide, which failed the template's WIDTH max of 1280 (Elis's first cloud render). It now renders at 976x400.
 - 2026-10-09 Claude: local/cloud render mode (`docs/cloud.md`, `tests/test_cloud.py`).
 - 2026-10-09 Claude: speed pass (`docs/speed.md`): models kept loaded across a render stage,
   repairs stop after one non-improving round, 1 s ComfyUI poll, `timings` command.
