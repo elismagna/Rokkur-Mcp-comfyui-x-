@@ -198,7 +198,8 @@ def test_render_budget_stop_is_lifted_only_by_allowing_more_renders(ctx, sample_
     with ctx.db.session() as s:
         ext = s.scalars(select(Event).where(Event.project_id == pid,
                                             Event.type == "BUDGET_EXTENDED")).one()
-        assert ext.data == {"renders": 1, "gpu_minutes": 120.0} and ext.actor == "elis"
+        assert ext.data == {"renders": 1, "gpu_minutes": 120.0, "cloud_minutes": 60.0}
+        assert ext.actor == "elis"
         assert s.scalar(select(func.count(Render.id)).where(Render.project_id == pid)) == 2
     with ctx.db.transaction() as s, pytest.raises(InvalidTransition, match="not stopped"):
         commands.allow_more_renders(s, get_project(s, pid, for_update=True), ctx.settings,
