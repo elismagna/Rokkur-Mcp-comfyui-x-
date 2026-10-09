@@ -49,6 +49,20 @@ CHECKPOINT, OUTPUT_PREFIX`.
   instead of edges. It defaults to the Small depth model, the only size under Apache-2.0
   (Base/Large/Giant are non-commercial). Experiment for fur, hands and the outline look.
 
+### Adding or changing a workflow: start from a proven one
+
+Elis's standing rule (2026-10-08): never build a workflow graph from scratch. Start from the
+closest proven, published workflow, then adapt it to our parameters. Good sources:
+
+- the official ComfyUI and Comfy-Org examples, or docs.comfy.org;
+- a node pack's own `example_workflows`;
+- a well-used community workflow, for example on Civitai.
+
+Write the source URL and its license in the comments of `params.yaml`. Commit a copy of the
+original only when its license allows redistribution. When an adapted workflow works on the
+PC, note that in the handoff log. Leave the rule aside only when adapting would break the
+pipeline, and say why.
+
 ### To add from your installation
 
 `HYBRID_MAX` expects `hybrid_quality`, which depends on your models and custom nodes, so

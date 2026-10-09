@@ -55,6 +55,7 @@ def settings(tmp_path: Path) -> Settings:
         "STUDIO_GPU__FREE_COMFYUI_AFTER_HEAVY": "false",
         "STUDIO_RENDER__DEFAULT_PROFILE": "PREVIEW",
         "STUDIO_AGENTS__PROVIDER": "rule_based",  # no Ollama in CI; roles are tested with fakes
+        "STUDIO_SUBJECT__DOWNLOAD": "false",  # never fetch the mask model in tests
     })
     s.database.url = TEST_DB
     return s

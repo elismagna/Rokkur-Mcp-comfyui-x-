@@ -29,6 +29,14 @@ class IdentitySpec(BaseModel):
     strength: float = Field(0.8, ge=0, le=1)
 
 
+class SubjectSpec(BaseModel):
+    """Whether the real main subject is laid back over the render (pipeline/subject.py)."""
+
+    mode: Literal["keep", "restyle"] = "restyle"
+    reason: str = ""
+    decided_by: Literal["you", "auto"] = "auto"
+
+
 class MotionSpec(BaseModel):
     type: str = "unknown"
     intensity: float = Field(0.0, ge=0, le=1)
@@ -73,6 +81,7 @@ class ReconstructionManifest(BaseModel):
     video: VideoSpec
     style: StyleSpec
     identity: IdentitySpec = IdentitySpec()
+    subject: SubjectSpec = SubjectSpec()  # manifests from before 2026-10-09 restyle everything
     shots: list[ShotSpec] = Field(min_length=1)
     render_profile: str
     target_format: str = "youtube_short"

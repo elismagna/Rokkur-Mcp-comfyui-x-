@@ -53,7 +53,8 @@
   {% if shot_previews %}<section class="card"><h2>Review individual shots</h2><p class="hint">Compare attempts before deciding whether to repair or keep a shot. Automatic refresh pauses while a video plays.</p>
     <div class="shot-grid">{% for sid, asset in shot_previews.items() %}<div class="shot-preview"><div class="row"><b>{{sid|replace('shot_','Shot ')}}</b><span class="pill">Latest #{{asset.meta.attempt}}</span></div>
       <video id="video-{{sid}}" controls preload="none" {% if keyframes.get(sid) %}poster="{{keyframes[sid]}}"{% endif %} src="/projects/{{p.id}}/assets/{{asset.id}}/file"></video>
-      <label for="attempt-{{sid}}">Compare a render attempt</label><select id="attempt-{{sid}}" data-preview-target="video-{{sid}}">{% for item in d.assets if item.kind=='render' and item.meta.shot_id==sid %}<option value="/projects/{{p.id}}/assets/{{item.id}}/file" {% if item.id==asset.id %}selected{% endif %}>Attempt {{item.meta.attempt}}</option>{% endfor %}</select>
+      {% set sj = shot_subject.get(sid) %}{% if sj %}<p class="hint" style="margin:6px 0 0">{% if sj.kept %}Real subject kept ({{ (sj.coverage * 100)|round|int }}% of the frame){% else %}Whole frame restyled: {{ sj.reason }}{% endif %}</p>{% endif %}
+      <label for="attempt-{{sid}}">Compare a render attempt</label><select id="attempt-{{sid}}" data-preview-target="video-{{sid}}">{% for item in d.assets if item.kind in ['render', 'render_raw'] and item.meta.shot_id==sid %}<option value="/projects/{{p.id}}/assets/{{item.id}}/file" {% if item.id==asset.id %}selected{% endif %}>Attempt {{item.meta.attempt}}{% if item.kind == 'render_raw' %} · restyled subject{% elif item.meta.subject == 'kept' %} · real subject{% endif %}</option>{% endfor %}</select>
     </div>{% endfor %}</div></section>{% endif %}
   {% if finals %}
   <div class="card"><h2>Final video</h2>
@@ -69,6 +70,7 @@
     {% if b.character %}<dt>Character</dt><dd>{% if dn.character_key %}<b>{{ dn.character_key }}</b> · {% endif %}{{ b.character }}</dd>{% endif %}
     <dt>Look</dt><dd>{{ b.visual_identity }}</dd><dt>Avoid</dt><dd class="muted">{{ b.negative_prompt }}</dd>
     <dt>Requested guidance</dt><dd>{% if 'reference_mode' in p.creative_input %}source structure {{p.creative_input.get('control_strength',1.0)}} · {{'custom reference' if p.creative_input.get('character_reference_asset') else ('source-frame reference' if p.creative_input.get('reference_mode')=='source' else 'no appearance reference')}}{% else %}Created with earlier settings; see applied render settings below.{% endif %} · motion {{ b.motion_preservation }}</dd>
+    {% if subject %}<dt>Main subject</dt><dd>{{ 'Kept real' if subject.mode == 'keep' else 'Restyled' }}{% if subject.planned %} <span class="muted">(planned)</span>{% endif %} · {{ subject.reason }}</dd>{% endif %}
     {% if dn %}<dt>Framing</dt><dd>by {{ (dn.framing_by or 'rule_based')|replace('_',' ') }}{% if dn.vision %} <span class="pill info">source images used</span>{% endif %}{% if not dn.global_look %} · global look off{% endif %}</dd>{% endif %}
     {% if not dn %}<dt>Prompt</dt><dd>{{ b.prompt }}</dd>{% endif %}</dl>
     {% if dn.warnings %}<div class="note" style="margin:10px 0 0">{{ dn.warnings|join('; ') }}</div>{% endif %}

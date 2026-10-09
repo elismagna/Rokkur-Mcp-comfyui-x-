@@ -4,7 +4,7 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-08 by Claude (review of Codex's `5408dfe`). See the [local upgrade
+Last updated: 2026-10-09 by Claude (automatic main-subject handling). See the [local upgrade
 findings](upgrade-2026-10-07.md) for implementation details and real render observations; the
 latest Git commit is authoritative.
 
@@ -34,6 +34,13 @@ latest Git commit is authoritative.
   person's click (or approval at autonomy level 3+).
 - Don't fake integrations. Unknown interfaces stay unimplemented and say so.
 - Don't change working components until you understand them.
+- **Workflows start from a proven published one** (Elis, 2026-10-08, permanent): adapt the
+  closest official, node-pack or well-used community workflow; never build a graph from
+  scratch. Record the source and license in `params.yaml`; note in the Log when it works.
+  See `docs/comfyui.md`.
+- **The app decides, not the chat** (Elis, 2026-10-08): a short prompt must just work. Choices
+  like keeping the real subject are made by the app (or asked once on the New video form),
+  never asked of Elis mid-run.
 
 ## What exists (detail lives in the linked docs)
 
@@ -52,6 +59,7 @@ shot-level repair → encode → metadata/thumbnail → publish.
 | Render profiles | `config/render_profiles.yaml` | `docs/comfyui.md` |
 | Agents (Ollama + rule-based fallback) | `agents/` | `docs/agents.md` |
 | AI director (vocabulary, DP pass, prompts, characters) | `director/` | `docs/director.md` |
+| Main subject: keep real or restyle, masks, composite | `pipeline/subject.py` | `docs/subject.md` |
 | Rights gate | `domain/rights.py` | `docs/rights.md` |
 | YouTube OAuth, upload, schedule, playlists, approvals | `youtube/`, `services/publishing.py` | `docs/youtube.md` |
 | Use cases shared by API, dashboard and CLI | `services/commands.py` | |
@@ -90,6 +98,10 @@ decision), `docs/milestones.md` (phase status), `docs/setup-windows.md`,
   compares edge maps rather than brightness.
 - **Publishing:** private by default. Public and scheduled uploads need `youtube.allow_public`,
   because `publishAt` makes a video public. `auto_publish` is not used.
+- **Main subject (2026-10-09):** the app keeps the real subject over the render when the prompt
+  changes the place, and restyles it for characters, subject changes or stylized looks
+  (`pipeline/subject.py`, `docs/subject.md`). Keeping is a CPU U²-Net mask plus a composite
+  after the render, not a ComfyUI change, so it works with every workflow and is testable here.
 - **Repair limit:** after `render.max_retries` rounds a person chooses more rounds, re-check, or
   keep. "Keep" writes a QC report version marked PASS with an `override` block.
 
@@ -219,6 +231,36 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Claude (2026-10-09): automatic main-subject handling is pushed; Codex, please test it on
+  the PC.** Elis's render notes so far:
+  - 54 is the best yet.
+  - 55 and 66 are notable for the subject/background split.
+  - 62/63: the room is great, the ape is bad.
+  - 67 has a new style but looks like Blender/CGI 3D.
+
+  Steps:
+  1. `git pull`, rebuild (`studio.ps1 up`; the image now installs onnxruntime), then open
+     System. **Subject masks** should say "u2net, downloads on first use".
+  2. New video with the ape clip, RTX3070_QUALITY, a place-only prompt like render 54/62's.
+     Leave Main subject on **Let the studio decide**; the hint should say it keeps the real
+     subject.
+  3. After the render: compare each shot's attempt with its "restyled subject" version in the
+     attempt picker. Check `work/masks/*.mp4` (mask previews) when an edge looks wrong.
+  4. Report through git as before: `docs/validation/2026-10-09/<project>_<shot>.png` contact
+     sheets of composite, raw and mask (`hstack` of the three), QC scores, the mask timing
+     from the render's `_details.subject.seconds`, and what Elis thought. Tune
+     `subject.grow` / `feather` / `harmonize` in `config/studio.yaml` if halos or colour look
+     off, one change per run.
+  5. Then experiment 5 below in its new form: VACE `control_masks` from these masks, started
+     from a published VACE inpainting workflow (rule above).
+- **Research in progress (2026-10-09):** findings land in `/mnt/project-files/knowledge/` on
+  Claude's side:
+  - Wan workflows from GitHub and docs.comfy.org;
+  - Civitai workflows, now that Elis allowed civitai.com;
+  - a retrospective of our workflows and app against online sources.
+
+  Claude will fold the results into the workflows and this handoff.
+
 - **Claude (2026-10-08):** reviewed Codex's `5408dfe` and pushed the fixes listed in the Log.
   No edit in progress. Next for Elis: rebuild, then on the Ape project press **Allow 20 more
   renders and continue** (or Cancel it). `qc-shots.zip` is no longer needed.
@@ -235,10 +277,10 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
      without lines.
   4. Steps 20 vs 30 at the best setting so far.
   5. Elis (renders 62/63): the room looks great (new tiles, towels) but the ape looks bad.
-     Try keeping the real ape and restyling only the room: per-frame ape mask from SAM 2
-     (segmentation add-on) into WanVaceToVideo's `control_masks` (white = regenerate the
-     room, black = keep the source ape). Waiting on Elis's choice: keep the real ape, or
-     restyle it too (depth guide + styled ape reference + precise subject prompt).
+     The app now keeps the real ape automatically, by compositing it over the render (see
+     Current work). The better-blended next step is to feed the same masks into
+     WanVaceToVideo's `control_masks` (white = regenerate the room, black = keep the source
+     ape), adapted from a published VACE inpainting workflow.
   Later, post only: an upscale model (core node, just a model file) and RIFE interpolation
   (`ComfyUI-Frame-Interpolation`) for 16→32 fps.
   **Report back through git so Claude can see the frames:** for each run commit
@@ -253,6 +295,17 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   source strength improves quality: the real comparison showed the opposite.
 
 ## Log (newest first)
+
+- 2026-10-09 Claude: **Main subject** handling (`docs/subject.md`).
+  - A New video question (Auto, Keep it real, Restyle it too), plus `--subject` and
+    `creative.subject`, with a live hint of what Auto will do.
+  - A rule-based decision recorded in the manifest.
+  - Keep mode: U²-Net masks (onnxruntime on the CPU, model checksum-verified into
+    `data/models`), a grown and feathered edge, a colour shift toward the new room, and a
+    composite after each render. The raw render is kept as `render_raw`.
+  - If masks are unavailable it falls back to the render and says why.
+  - Tested here with a fake mask in the pipeline and the real u2net on synthetic clips. Not yet
+    on the PC.
 
 - 2026-10-08 Claude: `RTX3070_DEPTH` profile and `v2v_3070_depth` workflow (Depth Anything V2
   Small via `comfyui_controlnet_aux` as the VACE guide instead of Canny). Tested here only by

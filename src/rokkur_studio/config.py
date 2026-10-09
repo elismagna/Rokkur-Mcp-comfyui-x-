@@ -138,6 +138,20 @@ class QualitySection(BaseModel):
     pass_threshold: float = 6.5
 
 
+class SubjectSection(BaseModel):
+    """Keeping the real main subject over a restyled render (pipeline/subject.py)."""
+
+    model: Literal["u2net", "isnet-general-use"] = "u2net"
+    model_dir: Path | None = None     # default <data_dir>/models
+    download: bool = True             # fetch the model (checksum-verified) on first use
+    min_coverage: float = Field(0.01, ge=0, le=1)   # less of the frame: no clear subject
+    max_coverage: float = Field(0.75, ge=0, le=1)   # more: the subject is the whole frame
+    grow: float = Field(0.012, ge=0, le=0.1)        # mask growth, share of the short side
+    feather: float = Field(0.012, ge=0, le=0.1)     # soft edge, share of the short side
+    harmonize: float = Field(0.5, ge=0, le=1)       # move the subject's colours toward the new room
+    threads: int = Field(0, ge=0)     # CPU threads for the mask model; 0 = automatic
+
+
 class RightsSection(BaseModel):
     block_unknown: bool = True
 
@@ -193,6 +207,7 @@ class Settings(BaseModel):
     director: DirectorSection = DirectorSection()
     render: RenderSection = RenderSection()
     quality: QualitySection = QualitySection()
+    subject: SubjectSection = SubjectSection()
     rights: RightsSection = RightsSection()
     comments: CommentsSection = CommentsSection()
     costs: CostsSection = CostsSection()

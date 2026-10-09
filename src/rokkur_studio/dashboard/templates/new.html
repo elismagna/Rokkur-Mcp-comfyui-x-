@@ -22,6 +22,8 @@
   <section class="card"><div class="section-heading"><span class="step-number">02</span><div><h2>Creative direction</h2><p class="hint">Describe the finished image, then anchor the character.</p></div></div>
     <label for="theme">Visual style</label><input id="theme" name="theme" required maxlength="2000" placeholder="Warm retro science-fiction animation, solid colors, soft shading">
     <label for="prompt">What matters in this scene?</label><textarea id="prompt" name="prompt" placeholder="Keep the monkey's face, body proportions and original movement. A colorful retro spaceship interior."></textarea>
+    <label for="subject">Main subject</label><select id="subject" name="subject"><option value="auto" selected>Let the studio decide (recommended)</option><option value="keep">Keep it real, restyle everything around it</option><option value="restyle">Restyle it too</option></select>
+    <p class="hint" id="subject-hint">Wan restyles places well but can melt animals and people, so the studio keeps a real subject unless your prompt or character changes it.</p>
     <div class="form-pair"><div><label for="character_key">Saved character</label><select id="character_key" name="character_key"><option value="">Use the source character</option>{% for key, desc in characters.items() %}<option value="{{key}}">{{key}} · {{desc|truncate(50)}}</option>{% endfor %}</select></div>
     <div><label for="character_description">Or describe this character</label><input id="character_description" name="character_description" placeholder="Small brown monkey, tan face, round ears"></div></div>
     <p class="hint">Manage reusable characters in <a href="/ui/director">Director</a>.</p>
@@ -84,6 +86,20 @@
   const info = () => { const op = profile.selectedOptions[0]; document.getElementById('profile-info').textContent =
     op ? op.dataset.fps + ' fps · ' + op.dataset.steps + ' default steps · one shot at a time' : 'No available profile'; };
   profile.addEventListener('change', info); info();
+  const subjectHint = document.getElementById('subject-hint');
+  const subjectFields = ['theme', 'prompt', 'subject', 'character_key', 'character_description'];
+  let subjectTimer;
+  const firstHint = subjectHint.textContent;
+  const explainSubject = () => { clearTimeout(subjectTimer); subjectTimer = setTimeout(async () => {
+    const q = new URLSearchParams(subjectFields.map(id => [id, document.getElementById(id)?.value || '']));
+    if (document.getElementById('reference_file').files.length) q.set('reference', 'true');
+    if (![...q.values()].some(v => v && v !== 'auto')) { subjectHint.textContent = firstHint; return; }
+    try { const r = await fetch('/ui/subject-decision?' + q); if (!r.ok) return; const d = await r.json();
+      subjectHint.textContent = (d.decided_by === 'auto' ? (d.mode === 'keep' ? 'The studio will keep the real subject. '
+        : 'The studio will restyle the subject. ') : '') + d.reason; } catch (err) { /* keep the static hint */ } }, 300); };
+  subjectFields.forEach(id => { const el = document.getElementById(id); el?.addEventListener('input', explainSubject); el?.addEventListener('change', explainSubject); });
+  document.getElementById('reference_file').addEventListener('change', explainSubject);
+  explainSubject();
   form.addEventListener('submit', e => { if (!file.files.length && !media?.value) { e.preventDefault(); file.focus();
     document.getElementById('source-info').textContent = 'Choose a source video before creating the project.'; } });
 })();

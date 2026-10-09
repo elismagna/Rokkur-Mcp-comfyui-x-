@@ -34,7 +34,7 @@ from rokkur_studio.gpu.lease import GpuUnavailable
 from rokkur_studio.jobs.errors import JobCancelled, JobError, PermanentJobError
 from rokkur_studio.jobs.queue import is_cancelled
 from rokkur_studio.manifest.builder import build_manifest, shot_params
-from rokkur_studio.manifest.schema import ReconstructionManifest, ShotSpec
+from rokkur_studio.manifest.schema import ReconstructionManifest, ShotSpec, SubjectSpec
 from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline import qc as qc_mod
 from rokkur_studio.pipeline.analysis import analyze_video
@@ -45,8 +45,16 @@ from rokkur_studio.pipeline.renderers import (
     FFmpegPreviewRenderer,
     Renderer,
     RenderOOM,
+    RenderOutcome,
     RenderRejected,
     RenderUnavailable,
+)
+from rokkur_studio.pipeline.subject import (
+    MaskerUnavailable,
+    OnnxSubjectMasker,
+    SubjectMasker,
+    decide_subject,
+    keep_subject,
 )
 from rokkur_studio.services import publishing
 from rokkur_studio.services.assets import import_file, register_asset
@@ -307,6 +315,7 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
         profile=profile, target_format=project.target_format,
         reference_image=project.creative_input.get("character_reference_asset"))
     manifest.identity.reference_mode = project.creative_input.get("reference_mode", "source")
+    manifest.subject = SubjectSpec(**decide_subject(project.creative_input).to_dict())
     for shot in manifest.shots:
         shot.overrides.update({k: project.creative_input[k]
                                for k in ("control_strength", "steps", "cfg", "seed")
@@ -327,7 +336,9 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
         _write_json(ctx.store.project_dir(pid, "manifests") / f"manifest_v{doc.version}.json",
                     manifest.model_dump())
         record_event(s, EventType.MANIFEST_CREATED, project_id=pid, actor="workflow_planner",
-                     job_id=job.id, data={"version": doc.version, "shots": len(manifest.shots)})
+                     job_id=job.id, data={"version": doc.version, "shots": len(manifest.shots),
+                                          "subject": manifest.subject.mode,
+                                          "subject_reason": manifest.subject.reason})
         if compiled:
             record_event(s, EventType.WORKFLOW_COMPILED, project_id=pid,
                          actor="workflow_compiler", job_id=job.id,
@@ -436,6 +447,7 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
     renderer = _renderer(ctx, job)
     done = _latest_renders(ctx, pid)
     faults = project.creative_input.get("test_faults") or {}
+    masker = _subject_masker(ctx) if manifest.subject.mode == "keep" else None
     rendered: list[str] = []
 
     for shot in manifest.shots:
@@ -509,21 +521,34 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
             except FFmpegError as exc:
                 _render_failed(ctx, job, render_id, "ffmpeg", str(exc), exc.to_dict())
                 raise JobError("ffmpeg_failed", str(exc), exc.to_dict()) from exc
+            details, final = outcome.details, outcome.path
+            if masker is not None:
+                subject, kept = _keep_subject(ctx, manifest, shot, clip, outcome, params, masker)
+                details = {**details, "subject": subject}
+                final = kept or final
+            meta = {"shot_id": shot.shot_id, "attempt": attempt}
             with ctx.db.transaction() as s:
-                asset = register_asset(s, ctx.store, pid, "render", outcome.path,
-                                       {"shot_id": shot.shot_id, "attempt": attempt})
+                asset = register_asset(s, ctx.store, pid, "render", final,
+                                       {**meta, "subject": "kept"} if final != outcome.path
+                                       else meta)
+                if final != outcome.path:  # the render before the subject went back in
+                    register_asset(s, ctx.store, pid, "render_raw", outcome.path, meta)
                 done_row = s.get(Render, render_id)
                 assert done_row is not None
                 done_row.status, done_row.output_asset_id = "succeeded", asset.id
                 done_row.remote_id, done_row.duration_s = outcome.remote_id, outcome.seconds
                 done_row.finished_at = utcnow()
-                done_row.params = {**done_row.params, "_details": outcome.details}
+                done_row.params = {**done_row.params, "_details": details}
                 if renderer.name != "ffmpeg_preview":
                     s.add(CostEntry(project_id=pid, job_id=job.id, kind="gpu_minutes",
                                     amount=outcome.seconds / 60, unit="min"))
+                data: dict[str, Any] = {"shot_id": shot.shot_id, "attempt": attempt,
+                                        "seconds": round(outcome.seconds, 2)}
+                if "subject" in details:
+                    data["subject"] = ("kept" if details["subject"].get("kept")
+                                       else details["subject"].get("reason"))
                 record_event(s, EventType.RENDER_COMPLETED, project_id=pid, actor="render",
-                             job_id=job.id, data={"shot_id": shot.shot_id, "attempt": attempt,
-                                                  "seconds": round(outcome.seconds, 2)})
+                             job_id=job.id, data=data)
             rendered.append(shot.shot_id)
             break
 
@@ -531,6 +556,38 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
     _finish(ctx, job, S.QUALITY_CHECK, {"assembled": assembled, "rendered": rendered,
                                         "manifest_version": manifest_version})
     return {"rendered": rendered, "assembled": assembled}
+
+
+def _subject_masker(ctx: StudioContext) -> SubjectMasker:
+    custom = ctx.extras.get("subject_masker")
+    if custom is not None:
+        return custom  # type: ignore[return-value]
+    return OnnxSubjectMasker(ctx.settings.subject, ctx.settings.studio.data_dir)
+
+
+def _keep_subject(ctx: StudioContext, manifest: ReconstructionManifest, shot: ShotSpec,
+                  clip: Path, outcome: RenderOutcome, params: dict[str, Any],
+                  masker: SubjectMasker) -> tuple[dict[str, Any], Path | None]:
+    """Lay the real subject over a finished render. The composite's path, or None when the raw
+    render stands (no clear subject, or masks could not be made: the reason is recorded)."""
+    out = outcome.path.with_name(f"{outcome.path.stem}_subject.mp4")
+    fps = float(params["FPS"])
+    cache = ctx.store.project_dir(manifest.project_id, "work/masks") / \
+        f"{shot.shot_id}_{fps:g}fps_{params['WIDTH']}x{params['HEIGHT']}"
+    try:
+        result = keep_subject(ctx.ffmpeg, masker, ctx.settings.subject, clip=clip,
+                              render=outcome.path, fps=fps, out=out, cache=cache)
+    except MaskerUnavailable as exc:
+        log.warning("subject not kept", extra={"data": {"shot": shot.shot_id, "error": str(exc)}})
+        return {"kept": False, "reason": f"subject masks unavailable: {exc}"}, None
+    except FFmpegError as exc:
+        return {"kept": False, "reason": f"compositing failed: {exc.summary}"}, None
+    except (OSError, ValueError) as exc:  # disk full, a damaged mask cache: the render stands
+        log.warning("subject not kept", extra={"data": {"shot": shot.shot_id, "error": str(exc)}})
+        return {"kept": False, "reason": f"compositing failed: {exc}"}, None
+    if result.get("mask_video"):
+        result["mask_video"] = ctx.store.rel(Path(result["mask_video"]))
+    return result, out if result.get("kept") else None
 
 
 def _render_failed(ctx: StudioContext, job: Job, render_id: str, code: str, message: str,

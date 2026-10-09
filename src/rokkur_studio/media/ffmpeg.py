@@ -71,11 +71,13 @@ class FFmpeg:
         return bool(shutil.which(self.ffmpeg_bin) and shutil.which(self.ffprobe_bin))
 
     # -- plumbing -------------------------------------------------------------------------
-    def _run(self, cmd: list[str], *, capture_stdout: bool = False) -> subprocess.CompletedProcess[bytes]:
+    def _run(self, cmd: list[str], *, capture_stdout: bool = False,
+             stdin: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
         started = time.monotonic()
         log.info("ffmpeg command", extra={"data": {"cmd": cmd}})
         try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=self.timeout_s, check=False)
+            proc = subprocess.run(cmd, capture_output=True, timeout=self.timeout_s, check=False,
+                                  input=stdin)
         except FileNotFoundError as exc:
             raise FFmpegError(cmd, 127, f"executable not found: {exc}") from exc
         except subprocess.TimeoutExpired as exc:
@@ -140,7 +142,40 @@ class FFmpeg:
         n = len(raw) // frame
         return np.frombuffer(raw[: n * frame], dtype=np.uint8).reshape(n, height, width)
 
+    def read_rgb_frames(self, path: Path, width: int, height: int, *, fps: float | None = None,
+                        frames: int | None = None,
+                        aspect: tuple[int, int] | None = None) -> np.ndarray:
+        """Decode to an ``(n, height, width, 3)`` uint8 RGB array.
+
+        ``aspect`` (w, h) centre-crops to that shape first, as ComfyUI's ImageScale with
+        crop=center does, before scaling to ``width`` x ``height``. ``frames`` pads (repeating
+        the last frame) or trims to exactly that many frames.
+        """
+        vf = [f"fps={fps}"] if fps else []
+        if aspect:
+            aw, ah = aspect
+            vf.append(f"crop='min(iw,ih*{aw}/{ah})':'min(ih,iw*{ah}/{aw})'")
+        vf.append(f"scale={width}:{height}")
+        if frames:
+            vf += ["tpad=stop=-1:stop_mode=clone", f"trim=end_frame={frames}"]
+        cmd = [self.ffmpeg_bin, "-hide_banner", "-nostdin", "-loglevel", "error", "-i", str(path),
+               "-vf", ",".join(vf), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+        raw = self._run(cmd).stdout
+        frame = width * height * 3
+        n = len(raw) // frame
+        return np.frombuffer(raw[: n * frame], dtype=np.uint8).reshape(n, height, width, 3)
+
     # -- transformation -------------------------------------------------------------------
+    def write_frames(self, frames: np.ndarray, out: Path, fps: float) -> Path:
+        """Encode ``(n, h, w, 3)`` RGB or ``(n, h, w)`` grey uint8 frames to H.264."""
+        n, h, w = frames.shape[:3]
+        pix = "rgb24" if frames.ndim == 4 else "gray"
+        self._run(self._ff("-f", "rawvideo", "-pix_fmt", pix, "-s", f"{w}x{h}", "-r", str(fps),
+                           "-i", "-", "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast",
+                           "-crf", "16", "-pix_fmt", "yuv420p", "-an", str(out)),
+                  stdin=np.ascontiguousarray(frames, dtype=np.uint8).tobytes())
+        return out
+
     def extract_frames(self, path: Path, out_dir: Path, *, fps: float | None = None,
                        pattern: str = "frame_%05d.png") -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)

@@ -567,7 +567,7 @@ def cmd_render(args: argparse.Namespace) -> int:
             name=args.name or source.stem, target_format=args.format, render_profile=args.profile,
             source=SourceIn(platform="local", local_path=str(source.resolve())),
             rights=RightsIn(category=RightsCategory(args.rights), permission_evidence=args.evidence),
-            creative=CreativeIn(theme=args.theme, prompt=args.prompt,
+            creative=CreativeIn(theme=args.theme, prompt=args.prompt, subject=args.subject,
                                 character_key=args.character,
                                 use_global_look=not args.no_global_look), autostart=True),
             settings, actor="cli")
@@ -651,6 +651,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--theme", required=True, help="look to apply, e.g. '1970s claymation'")
     p.add_argument("--prompt", help="extra detail for the style prompt")
     p.add_argument("--character", help="character name from the Director page, e.g. NEO")
+    p.add_argument("--subject", choices=["auto", "keep", "restyle"], default="auto",
+                   help="keep the real main subject over the render, restyle it, or let the "
+                   "studio decide from the prompt (default)")
     p.add_argument("--no-global-look", action="store_true",
                    help="skip the global prefix, style modifiers and negative prompt")
     p.add_argument("--rights", required=True,

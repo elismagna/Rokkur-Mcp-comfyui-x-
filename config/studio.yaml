@@ -63,6 +63,15 @@ render:
 quality:
   pass_threshold: 6.5
 
+subject:                     # keeping the real main subject (docs/subject.md)
+  model: u2net               # u2net (fast) | isnet-general-use (finer edges, ~3x slower on the CPU)
+  download: true             # fetch the model into data/models on first use (checksum-verified)
+  min_coverage: 0.01         # a mask smaller than this share of the frame means no clear subject
+  max_coverage: 0.75         # larger: the subject fills the frame, so the shot is fully restyled
+  grow: 0.012                # grow the mask by this share of the short side, to cover edge halos
+  feather: 0.012             # soft edge width, same unit
+  harmonize: 0.5             # 0 keeps the subject's colours; 1 moves them fully toward the new room
+
 rights:
   block_unknown: true
 

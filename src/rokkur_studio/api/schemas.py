@@ -41,6 +41,9 @@ class CreativeIn(BaseModel):
     use_global_look: bool = True          # apply the tracker's prefix, modifiers, negatives
     character_reference_path: str | None = None
     reference_mode: Literal["source", "none"] = "source"
+    # auto: the studio decides from the prompt (pipeline/subject.py); keep: the real subject is
+    # laid back over the render; restyle: the render's own subject is used.
+    subject: Literal["auto", "keep", "restyle"] = "auto"
     control_strength: float = Field(1.0, ge=0, le=2)
     seed: int | None = Field(None, ge=0, le=4294967295)
     steps: int | None = Field(None, ge=8, le=40)

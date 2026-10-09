@@ -54,6 +54,7 @@ from rokkur_studio.director.vocabulary import VOCABULARY
 from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.domain.states import ProjectStatus as S
 from rokkur_studio.pipeline.context import StudioContext
+from rokkur_studio.pipeline.subject import OnnxSubjectMasker, decide_subject
 from rokkur_studio.services import commands, publishing
 from rokkur_studio.services.projects import (
     at_budget_limit,
@@ -190,12 +191,18 @@ def services(ctx: StudioContext) -> list[dict[str, Any]]:
     s = ctx.settings
     yt = s.youtube
     signed_in = yt.token_path.is_file()
+    masker = OnnxSubjectMasker(s.subject, s.studio.data_dir)
+    mask_problem = masker.problem()
     return [
         {"name": "ComfyUI", "ok": _probe(f"{s.comfyui.url}/system_stats"),
          "detail": s.comfyui.url, "needed": s.render.renderer == "comfyui"},
         {"name": "Ollama", "ok": _probe(f"{s.ollama.url}/api/version"),
          "detail": f"{s.ollama.model}", "needed": s.agents.provider == "ollama"},
         {"name": "FFmpeg", "ok": ctx.ffmpeg.available(), "detail": "encode + QC", "needed": True},
+        {"name": "Subject masks", "ok": mask_problem is None,
+         "detail": mask_problem or (f"{s.subject.model} ready" if masker.path.is_file()
+                                    else f"{s.subject.model}, downloads on first use"),
+         "needed": False},
         {"name": "YouTube", "ok": signed_in and yt.enabled,
          "detail": ("signed in, uploads on" if signed_in and yt.enabled else
                     "signed in, uploads off" if signed_in else "not signed in"),
@@ -264,6 +271,17 @@ def new_page(request: Request, ctx: Ctx) -> HTMLResponse:
                              if c.value not in ("UNKNOWN", "REJECTED", "REFERENCE_ONLY")])
 
 
+@router.get("/subject-decision")
+def subject_decision(theme: str = "", prompt: str = "", subject: str = "auto",
+                     character_key: str = "", character_description: str = "",
+                     reference: bool = False) -> dict[str, str]:
+    """What the studio would do with the main subject, for the hint on the New video form."""
+    return decide_subject({"theme": theme, "prompt": prompt, "subject": subject,
+                           "character_key": character_key,
+                           "character_description": character_description,
+                           "character_reference_path": "form" if reference else ""}).to_dict()
+
+
 @router.get("/media/preview")
 def media_preview(ctx: Ctx, path: str) -> FileResponse:
     if path not in {m["path"] for m in media_files(ctx)}:
@@ -280,6 +298,7 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                      source_file: Annotated[UploadFile | None, File()] = None,
                      reference_file: Annotated[UploadFile | None, File()] = None,
                      reference_mode: Annotated[str, Form()] = "source",
+                     subject: Annotated[str, Form()] = "auto",
                      control_strength: Annotated[float, Form()] = 1.0,
                      seed: Annotated[str, Form()] = "",
                      steps: Annotated[str, Form()] = "",
@@ -349,6 +368,7 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                             permission_evidence=permission_evidence or None),
             creative=CreativeIn(theme=theme.strip(), prompt=prompt or None,
                                 reference_mode=reference_mode,  # type: ignore[arg-type]
+                                subject=subject,  # type: ignore[arg-type]
                                 control_strength=control_strength, cfg=cfg,
                                 seed=int(seed) if seed.strip() else None,
                                 steps=int(steps) if steps.strip() else None,
@@ -400,8 +420,15 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
             key = asset.meta["shot_id"]
             if key not in previews or asset.meta.get("attempt", 0) > previews[key].meta.get("attempt", 0):
                 previews[key] = asset
+    manifest = detail.documents.get("manifest")
+    if manifest is not None:  # manifests from before subject handling have none: they restyled
+        subject = manifest["data"].get("subject")
+    else:
+        subject = {**decide_subject(project.creative_input).to_dict(), "planned": True}
+    shot_subject = {r.shot_id: r.params["_details"]["subject"] for r in detail.renders
+                    if r.status == "succeeded" and "subject" in r.params.get("_details", {})}
     return _page(request, "project.html", ctx, d=detail, p=project, events=events,
-                 shot_previews=previews,
+                 shot_previews=previews, subject=subject, shot_subject=shot_subject,
                  keyframes=keyframes,
                  failure=failure_reason(session, project) if failed else None,
                  repair_limit=at_repair_limit(project),
