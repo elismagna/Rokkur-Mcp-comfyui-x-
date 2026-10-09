@@ -456,3 +456,18 @@ def test_render_command_passes_the_comparison_options(ctx, settings, sample_vide
         creative = project.creative_input
     assert creative["reference_mode"] == "cutout" and creative["seed"] == 7
     assert (creative["canny_low"], creative["canny_high"]) == (0.4, 0.8)
+
+
+def test_keep_workflow_with_nodes_missing_from_comfyui_falls_back(ctx, sample_video):
+    fake = _comfy(ctx)
+    plain = ctx.registry.get("v2v_3070_quality").workflow.values()
+    fake.object_info_data = {n["class_type"]: {"input": {"required": {
+        k: ["*"] for k in n["inputs"]}}} for n in plain}  # no ThresholdMask & co.
+    ctx.extras["subject_masker"] = BoxMasker()
+    pid = create_spa(ctx, sample_video)
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+    r = _renders(ctx, pid)[0]
+    assert r.workflow == "v2v_3070_quality"
+    assert "not installed" in r.params["_details"]["guidance"]["keep_workflow"]
+    assert r.params["_details"]["subject"]["kept"]  # the composite still keeps the ape

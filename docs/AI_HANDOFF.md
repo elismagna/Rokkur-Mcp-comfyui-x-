@@ -335,6 +335,9 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Claude: before a kept-subject render, the worker checks the keep workflow
+  against the live ComfyUI (once per worker). If a node is missing, the shot uses the plain
+  workflow plus the composite, and the reason is shown under Applied render settings.
 - 2026-10-09 Codex: live ComfyUI profile preflight checks the actual `/object_info` node list.
   Missing custom nodes disable the affected profile in the New form and reject UI/API/CLI
   project creation before uploads or database records are created. On this PC it disables

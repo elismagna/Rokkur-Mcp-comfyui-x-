@@ -7,14 +7,20 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from rokkur_studio.agents.roles import ChannelManager, RepairPlanner
 from rokkur_studio.agents.schemas import CreativeBrief
-from rokkur_studio.comfyui.compiler import TemplateError, compile_workflow
+from rokkur_studio.comfyui.client import ComfyError
+from rokkur_studio.comfyui.compiler import (
+    TemplateError,
+    compile_workflow,
+    validate_against_object_info,
+)
 from rokkur_studio.config import RenderProfile
 from rokkur_studio.db.models import (
     ApprovalRequest,
@@ -617,14 +623,17 @@ def _subject_guidance(ctx: StudioContext, manifest: ReconstructionManifest, shot
         if reason := unusable(subject_share(probs), ctx.settings.subject):
             return workflow, {"masks": reason}
         if want_mask and profile.keep_workflow:
-            if _accepts(ctx, profile.keep_workflow, "MASK_VIDEO"):
+            problem = (_live_problem(ctx, profile.keep_workflow)
+                       if _accepts(ctx, profile.keep_workflow, "MASK_VIDEO") else None)
+            if _accepts(ctx, profile.keep_workflow, "MASK_VIDEO") and not problem:
                 params["MASK_VIDEO"] = str(vace_mask_video(
                     ctx.ffmpeg, probs, cache.with_name(f"{cache.name}_vace.mp4"),
                     width=width, height=height, fps=fps))
                 workflow = profile.keep_workflow
                 info["keep_workflow"] = workflow
             else:
-                info["keep_workflow"] = f"{profile.keep_workflow} is not available"
+                info["keep_workflow"] = (f"{profile.keep_workflow} is not available"
+                                         + (f": {problem}" if problem else ""))
         if want_cutout and _accepts(ctx, workflow, "REFERENCE_IMAGE"):
             params["REFERENCE_IMAGE"] = str(cutout_reference(
                 ctx.ffmpeg, probs, clip=clip, fps=fps, width=width, height=height,
@@ -640,6 +649,27 @@ def _subject_guidance(ctx: StudioContext, manifest: ReconstructionManifest, shot
         params.pop("MASK_VIDEO", None)
         return profile.workflow, {"masks": f"could not be prepared: {exc}"}
     return workflow, info
+
+
+def _live_problem(ctx: StudioContext, workflow: str) -> str | None:
+    """Why this ComfyUI cannot run ``workflow`` (e.g. a missing node), checked once per worker.
+    None when it can, or when ComfyUI cannot be asked: the render itself will tell then."""
+    checked = cast(dict[str, str | None], ctx.extras.setdefault("live_workflow_problems", {}))
+    if workflow not in checked:
+        client = None
+        try:
+            client = ctx.comfy_factory()
+            info = client.object_info()
+            if not info:
+                return None
+            problems = validate_against_object_info(ctx.registry.get(workflow), info)
+            checked[workflow] = problems[0] if problems else None
+        except (ComfyError, httpx.HTTPError, TemplateError):
+            return None
+        finally:
+            if client is not None:
+                client.close()
+    return checked[workflow]
 
 
 def _accepts(ctx: StudioContext, workflow: str, param: str) -> bool:
