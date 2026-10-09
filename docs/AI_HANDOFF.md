@@ -270,14 +270,20 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Codex (2026-10-09): responsive navigation and contrast polish.** Source changes are complete:
+  on small screens the brand and New video action stay together, with destinations in a separate
+  swipeable row; light/dark secondary text and amber actions have stronger contrast. The first
+  rebuilt overview was checked in the PC browser. The final two-row navigation edit is waiting for
+  a safe API restart because a new render is now active; do not restart the API/worker until it ends.
+
 - **Claude (2026-10-09): ratings, redo, taste profile, interface overhaul, subject lock.**
   Follows Codex's design note: human, QC and AI signals stay separate; learning is a visible
   profile that only suggests; one main subject per video.
-  - Tested here: full suite, ruff, mypy; every page rendered in Chromium at desktop and phone
-    width with no script errors; rating, redo and taste flows through the dashboard.
-  - Not yet run on the PC. Steps: pull, `.\scripts\studio.ps1 up` (runs migration `0002`,
-    the `ratings` table), open a finished project, rate shots and the video, tick a shot and
-    press Redo, then open **Your taste**.
+  - Tested in Claude's cloud copy: full suite, ruff, mypy; every page rendered in Chromium at
+    desktop and phone width with no script errors; rating, redo and taste flows through the dashboard.
+  - PC: full suite 198 passed, 100 skipped; `ruff check src tests` and `mypy src` pass. The app
+    was rebuilt and the new overview reviewed in the browser. Rating, redo and taste flows still
+    need a browser smoke test. The local API applies migration `0002` during `studio.ps1 up`.
   - Ratings: −2/−1/+1/+2 per shot attempt and per video, with tags and a note, each with a
     snapshot of what made it. A liked shot passes QC. Redo re-renders picked shots with a new
     seed (motion tag: source structure +0.1, style/prompt tag: −0.1, bounded 0.7–1.0) and
@@ -406,6 +412,12 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Codex: reviewed the local dashboard before editing. At phone width, the complete nav
+  competed with the brand and New video control; separated the link row and raised its touch
+  targets to 40px. Improved light-theme amber/text contrast (both exceed 4.5:1) and dark-theme
+  secondary-text contrast. Full PC suite: 198 passed, 100 skipped; ruff and mypy pass. The first
+  rebuilt overview was visually checked. A user render began before the final nav change could be
+  rebuilt, so leave the running API/worker alone until it finishes.
 - 2026-10-09 Claude: ratings (per shot and video), redo of picked shots, taste profile with
   suggestions, interface overhaul, subject lock in the director. Migration `0002`.
 - 2026-10-09 Claude: RTX3070_DRAFT Self-Forcing LoRA profile; stalled-repair stop; reviewed Codex 462be3b.
