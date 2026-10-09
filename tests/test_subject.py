@@ -298,6 +298,43 @@ def _comfy(ctx):
     return fake
 
 
+def test_missing_live_custom_nodes_disable_profiles_before_project_creation(ctx, sample_video):
+    object_info = {}
+    for name in ctx.registry.names():
+        for node in ctx.registry.get(name).workflow.values():
+            entry = object_info.setdefault(node["class_type"],
+                                           {"input": {"required": {}, "optional": {}}})
+            entry["input"]["required"].update({key: ["STRING"] for key in node["inputs"]})
+    object_info.pop("DepthAnythingV2Preprocessor", None)
+    fake = FakeComfyUI(object_info=object_info)
+    ctx.settings.render.renderer = "comfyui"
+    ctx.comfy_factory = lambda: ComfyClient("http://comfy:8188", transport=fake.transport())
+    client = TestClient(create_app(ctx=ctx))
+
+    page = client.get("/ui/new").text
+    options = [part.split("</option>", 1)[0] for part in page.split("<option") if "</option>" in part]
+    depth_option = next(option for option in options if 'value="RTX3070_DEPTH"' in option)
+    quality_option = next(option for option in options if 'value="RTX3070_QUALITY"' in option)
+    assert "disabled" in depth_option
+    assert "disabled" not in quality_option
+
+    before = len(client.get("/projects").json())
+    payload = ProjectCreate(name="depth", render_profile="RTX3070_DEPTH",
+        source=SourceIn(platform="local", local_path=str(sample_video)),
+        rights=RightsIn(category=RightsCategory.USER_OWNED, permission_evidence="mine"),
+        creative=CreativeIn(theme=SPA)).model_dump(mode="json")
+    response = client.post("/projects", json=payload)
+    assert response.status_code == 422
+    assert "DepthAnythingV2Preprocessor not installed" in response.json()["detail"]
+    assert len(client.get("/projects").json()) == before
+
+    form = client.post("/ui/projects", data={"theme": SPA, "rights_category": "USER_OWNED",
+        "local_path": str(sample_video), "render_profile": "RTX3070_DEPTH"},
+        follow_redirects=False)
+    assert form.status_code == 303 and "DepthAnythingV2Preprocessor" in form.headers["location"]
+    assert len(client.get("/projects").json()) == before
+
+
 def test_kept_subject_renders_with_the_vace_keep_workflow_and_a_cutout(ctx, sample_video):
     fake = _comfy(ctx)
     masker = BoxMasker()

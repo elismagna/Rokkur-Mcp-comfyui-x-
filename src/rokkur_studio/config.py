@@ -227,8 +227,13 @@ class Settings(BaseModel):
         except KeyError as exc:
             raise KeyError(f"unknown render profile {name!r}; known: {sorted(self.profiles)}") from exc
 
-    def profile_problem(self, name: str) -> str | None:
-        from rokkur_studio.comfyui.compiler import TemplateError, TemplateRegistry
+    def profile_problem(self, name: str, *,
+                        object_info: dict[str, Any] | None = None) -> str | None:
+        from rokkur_studio.comfyui.compiler import (
+            TemplateError,
+            TemplateRegistry,
+            validate_against_object_info,
+        )
 
         profile = self.profile(name)
         if self.render.renderer != "comfyui":
@@ -239,11 +244,15 @@ class Settings(BaseModel):
             return (f"Needs {profile.min_vram_gb:g} GB VRAM; this studio is configured "
                     f"for {self.gpu.vram_gb:g} GB.")
         try:
-            TemplateRegistry(self.workflows_dir).get(profile.workflow)
+            template = TemplateRegistry(self.workflows_dir).get(profile.workflow)
         except (TemplateError, OSError, ValueError) as exc:
             return str(exc)
         except Exception as exc:  # e.g. a YAML typo in params.yaml: report it, don't 500
             return f"workflow {profile.workflow} could not be loaded: {exc}"
+        if object_info is not None:
+            problems = validate_against_object_info(template, object_info)
+            if problems:
+                return f"workflow {profile.workflow} is unavailable: {problems[0]}"
         return None
 
 

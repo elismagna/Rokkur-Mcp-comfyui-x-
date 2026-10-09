@@ -553,7 +553,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     """Render a video you have rights to through the full pipeline (publishing stays a dry run)."""
     from rokkur_studio.api.schemas import CreativeIn, ProjectCreate, RightsIn, SourceIn
     from rokkur_studio.domain.rights import RightsCategory
-    from rokkur_studio.pipeline.context import build_context
+    from rokkur_studio.pipeline.context import build_context, profile_availability
     from rokkur_studio.services import commands
 
     settings = _settings(args)
@@ -563,6 +563,15 @@ def cmd_render(args: argparse.Namespace) -> int:
         print(f"no such file: {source} (inside Docker your media folder is /media)", file=sys.stderr)
         return 2
     ctx = build_context(settings)
+    profile = args.profile or settings.render.default_profile
+    try:
+        settings.profile(profile)
+    except KeyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if problem := profile_availability(ctx)[profile]:
+        print(problem, file=sys.stderr)
+        return 2
     with ctx.db.transaction() as s:
         project = commands.create_project(s, ProjectCreate(
             name=args.name or source.stem, target_format=args.format, render_profile=args.profile,

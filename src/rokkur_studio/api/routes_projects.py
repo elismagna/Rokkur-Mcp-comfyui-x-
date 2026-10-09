@@ -27,7 +27,7 @@ from rokkur_studio.api.schemas import (
 )
 from rokkur_studio.db.models import Asset, Event, Job, Project, Publication, Render
 from rokkur_studio.domain.states import ProjectStatus
-from rokkur_studio.pipeline.context import StudioContext
+from rokkur_studio.pipeline.context import StudioContext, profile_availability
 from rokkur_studio.pipeline.driver import advance, next_job_kind
 from rokkur_studio.services import commands, publishing
 from rokkur_studio.services.assets import import_file, project_assets
@@ -54,6 +54,10 @@ def _project(session: Session, project_id: str, for_update: bool = False) -> Pro
 @router.post("", response_model=ProjectOut, status_code=201)
 def create_project(body: ProjectCreate, ctx: Ctx, session: Db) -> Project:
     try:
+        profile = body.render_profile or ctx.settings.render.default_profile
+        ctx.settings.profile(profile)
+        if problem := profile_availability(ctx)[profile]:
+            raise ValueError(problem)
         return commands.create_project(session, body, ctx.settings)
     except (KeyError, LookupError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc

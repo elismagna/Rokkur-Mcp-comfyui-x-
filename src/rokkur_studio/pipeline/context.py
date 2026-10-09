@@ -5,13 +5,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+import httpx
+
 from rokkur_studio.agents.providers import (
     AgentProvider,
     OllamaProvider,
     RokkurCollectiveProvider,
     RuleBasedProvider,
 )
-from rokkur_studio.comfyui.client import ComfyClient
+from rokkur_studio.comfyui.client import ComfyClient, ComfyError
 from rokkur_studio.comfyui.compiler import TemplateRegistry
 from rokkur_studio.config import Settings
 from rokkur_studio.db.session import Database
@@ -33,6 +35,27 @@ class StudioContext:
     comfy_factory: Callable[[], ComfyClient]
     extras: dict[str, object] = field(default_factory=dict)
     dp_provider: AgentProvider | None = None  # None: the DP pass uses ``provider``
+
+
+def profile_availability(ctx: StudioContext) -> dict[str, str | None]:
+    """Check configured profiles against the live ComfyUI when it is reachable.
+
+    Keep the static file and VRAM checks useful while ComfyUI is offline. When it responds,
+    also catch missing custom nodes before a project can enter the render pipeline.
+    """
+    object_info = None
+    if ctx.settings.render.renderer == "comfyui":
+        client = None
+        try:
+            client = ctx.comfy_factory()
+            object_info = client.object_info()
+        except (ComfyError, httpx.HTTPError):
+            pass
+        finally:
+            if client is not None:
+                client.close()
+    return {name: ctx.settings.profile_problem(name, object_info=object_info)
+            for name in ctx.settings.profiles}
 
 
 def free_idle_comfyui(settings: Settings) -> Callable[[], None]:

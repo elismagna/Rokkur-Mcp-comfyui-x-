@@ -53,7 +53,7 @@ from rokkur_studio.director.prompts import Weights, preview
 from rokkur_studio.director.vocabulary import VOCABULARY
 from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.domain.states import ProjectStatus as S
-from rokkur_studio.pipeline.context import StudioContext
+from rokkur_studio.pipeline.context import StudioContext, profile_availability
 from rokkur_studio.pipeline.subject import OnnxSubjectMasker, decide_subject
 from rokkur_studio.services import commands, publishing
 from rokkur_studio.services.projects import (
@@ -264,6 +264,7 @@ def _tracker(ctx: StudioContext) -> tuple[AssetTracker | None, str | None]:
 def new_page(request: Request, ctx: Ctx) -> HTMLResponse:
     tracker, _ = _tracker(ctx)
     return _page(request, "new.html", ctx, media=media_files(ctx),
+                 profile_status=profile_availability(ctx),
                  characters=tracker.characters if tracker else {},
                  profiles=ctx.settings.profiles,
                  default_profile=ctx.settings.render.default_profile,
@@ -316,7 +317,8 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
     path = ""
     try:
         selected = render_profile or ctx.settings.render.default_profile
-        if problem := ctx.settings.profile_problem(selected):
+        ctx.settings.profile(selected)
+        if problem := profile_availability(ctx)[selected]:
             return _back("/ui/new", err=problem)
     except KeyError as exc:
         return _back("/ui/new", err=str(exc))

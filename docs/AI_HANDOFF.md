@@ -4,9 +4,9 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-09 by Claude (automatic main-subject handling). See the [local upgrade
-findings](upgrade-2026-10-07.md) for implementation details and real render observations; the
-latest Git commit is authoritative.
+Last updated: 2026-10-09 by Codex (local validation of Claude's subject update and profile
+preflight). See the [local upgrade findings](upgrade-2026-10-07.md) for implementation details
+and real render observations; the latest Git commit is authoritative.
 
 ## How we share the work
 
@@ -128,6 +128,11 @@ decision), `docs/milestones.md` (phase status), `docs/setup-windows.md`,
 - Workflows in the repo:
   - `workflows/v2v_3070_quality`: Wan VACE, used by both profiles (PREVIEW at 320x576, 33
     frames, 8 steps; RTX3070_QUALITY at up to 576x1024, 81 frames, 20 steps).
+  - `workflows/v2v_3070_keep`: `comfy-check` passes on the PC. It is the mask-guided path
+    for keeping the original subject.
+  - `v2v_3070_depth` and `v2v_3070_depth_keep` are present but unavailable on this PC because
+    `DepthAnythingV2Preprocessor` is missing. The profile preflight now disables Depth and
+    rejects it before project creation.
   - `workflows/v2v_preview`: needs an SD 1.5 checkpoint that isn't installed, so it's unused.
 - Ollama: the studio uses `qwen3.5:9b` (tools and vision). Also installed: `qwen3.5:4b`,
   `gemma4:12b`, `gemma3:12b`, `qwen2.5-coder:7b`, `deepseek-r1:8b`. `odysseus-vision:9b`,
@@ -170,6 +175,16 @@ Tested directly by Codex on Elis's PC, 2026-10-07/08:
   Its previous outputs are reviewable; plain Resume cannot fix an exhausted render budget.
   Since Claude's review commit the project page offers **Allow 20 more renders and continue**
   (tested in the suite, not yet on the PC).
+- Codex verified the 2026-10-09 changes locally: the full test suite passed (one skipped),
+  `ruff` and `mypy` passed, and the rebuilt app is healthy. Live `comfy-check` confirms
+  `v2v_3070_keep` is available but the Depth Anything node is not. The UI disables the depth
+  profile, and both form and API reject it before creating a project; the normal quality
+  profile remains available.
+- The current user-owned project is using `RTX3070_QUALITY`. Its latest completed QC report
+  scored 7.10/10 and failed shot 001 for temporal flicker and layout drift. Its manifest chose
+  `subject.mode=restyle`, so this is not a test of the new Keep-subject mask workflow. A
+  sampled contact sheet showed changing facial details during the shot; identity and anatomy
+  remain unmeasured by QC. No media was added to git.
 
 Tested on Elis's PC (Elis ran the commands and pasted the output):
 - `up`, `audit` and migrations work. ComfyUI and Ollama are reachable from Docker.
@@ -240,6 +255,14 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Codex perspective on Claude's subject update:** the split between a VACE room-only mask and
+  a final exact-subject composite is a sensible design, with raw renders and mask previews
+  available for diagnosis. The repo's fake/synthetic tests do not establish real mask quality.
+  The active local project chose `restyle`, so it does not verify Keep mode. In that run the
+  QC report still failed shot 001 after six repair rounds; the plan changed only the seed and
+  marked depth unsupported. Next, match repair suggestions to controls available in the
+  selected workflow and stop or ask for review when repeated rerolls do not improve QC.
+
 - **Codex: test the research update on the PC (Claude, 2026-10-09).** Elis's render notes so
   far:
   - 54 is the best yet.
@@ -249,13 +272,15 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
   Steps, one change per run, same shot, same seed (`--seed`):
   1. `git pull`, then `.\scripts\studio.ps1 up` (rebuilds; the image now installs
-     onnxruntime), then `.\scripts\studio.ps1 comfy-check`. `v2v_3070_keep` and
-     `v2v_3070_depth_keep` must show `[ok]`. They add only core nodes (`ImageToMask`,
-     `ThresholdMask`, `InvertMask`, `ImageCompositeMasked`). System should say **Subject
-     masks**: "u2net, downloads on first use".
-  2. Baseline with the new defaults: the ape clip, RTX3070_QUALITY, a place-only prompt like
-     render 54/62's, everything left on "Let the studio decide", `--seed 54`. Expect 832×464,
-     workflow `v2v_3070_keep` and reference "subject cutout" under Applied render settings.
+     onnxruntime), then `.\scripts\studio.ps1 comfy-check`. `v2v_3070_keep` should show
+     `[ok]`. The two Depth workflows currently fail because the required preprocessor is not
+     installed, and `RTX3070_DEPTH` is disabled until that changes. System should say
+     **Subject masks**: "u2net, downloads on first use".
+  2. Baseline with the ape clip, RTX3070_QUALITY, a place-only prompt like render 54/62's,
+     **Keep it real** (`--subject keep`), and `--seed 54`. Expect 832×464, workflow
+     `v2v_3070_keep`, subject cutout reference, mask previews and a composite attempt. Do not
+     use a request for blue hair or a stylized character look for this acceptance test; those
+     correctly select Restyle and bypass the Keep workflow.
      Compare each shot's raw attempt with its "restyled subject" version. 832×464 is about
      twice the pixels of the old 576×320, so expect longer renders. A CUDA OOM steps down
      automatically (a GPU_OOM event); report it if that happens.
@@ -266,12 +291,11 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
      stylized prompt (e.g. claymation, which restyles the ape) with `auto` vs `source`.
   5. Edges: `--canny 0.4 0.8` vs the default 0.2/0.5. If the fur and outline look better,
      tell Claude and the default changes.
-  6. `RTX3070_DEPTH` with the same prompt and seed (it uses `v2v_3070_depth_keep`).
-  7. Report through git: for each run commit `docs/validation/2026-10-09/<run>.png` (contact
-     sheet `ffmpeg -i render.mp4 -vf "fps=2,scale=320:-1,tile=4x3" -frames:v 1 run.png`; for
-     kept subjects an `hstack` of composite, raw and `work/masks/*_preview.mp4`), plus one Log
-     line per run: what changed, render seconds, mask seconds (`_details.subject.seconds`), QC
-     score and what Elis thought. If an edge looks wrong, tune `subject.grow` / `feather` /
+  6. Skip Depth on this PC until `DepthAnythingV2Preprocessor` is installed and
+     `comfy-check` passes; the app now refuses the unavailable profile before project creation.
+  7. Report settings, render/mask seconds (`_details.subject.seconds`), QC score and visual
+     findings in this handoff. Do not commit frames, clips or other media derived from the
+     private Ape source. If a mask edge looks wrong, tune `subject.grow` / `feather` /
      `harmonize` in `config/studio.yaml`, one change per run.
   8. Not yet built, next after these results (each from a proven published workflow, per the
      rule above): a Self-Forcing DMD LoRA "draft" profile (Apache-2.0, 4 steps, cfg 1), SLG and
@@ -300,11 +324,9 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
      ape), adapted from a published VACE inpainting workflow.
   Later, post only: an upscale model (core node, just a model file) and RIFE interpolation
   (`ComfyUI-Frame-Interpolation`) for 16→32 fps.
-  **Report back through git so Claude can see the frames:** for each run commit
-  `docs/validation/2026-10-08/<render>.png` (contact sheet:
-  `ffmpeg -i render.mp4 -vf "fps=2,scale=320:-1,tile=4x3" -frames:v 1 render.png`) and
-  `<render>.json` (settings: `ffprobe -v error -show_entries format_tags -of json render.mp4`),
-  plus one line per run in the Log: what changed, QC score, what Elis thought.
+  **Report back through git:** record the setting changed, QC score, render time and Elis's
+  opinion in the Log. Do not commit contact sheets, frames or clips derived from the private
+  Ape source.
 - **Codex (2026-10-08):** reliability/UI upgrade is implemented, tested and deployed locally.
   This commit releases the previous file ownership; no further edit is in progress. The
   next useful work is real character/hand fidelity, repair comparison strategy, and a clear
@@ -313,6 +335,11 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Codex: live ComfyUI profile preflight checks the actual `/object_info` node list.
+  Missing custom nodes disable the affected profile in the New form and reject UI/API/CLI
+  project creation before uploads or database records are created. On this PC it disables
+  `RTX3070_DEPTH` for missing `DepthAnythingV2Preprocessor`; `RTX3070_QUALITY` remains usable.
+  Full tests, `ruff` and `mypy` pass. Claude's new `v2v_3070_keep` passes live workflow checks.
 - 2026-10-09 Claude: **online research applied** (`docs/research/`, sources in each
   `params.yaml`).
   - New workflows `v2v_3070_keep` and `v2v_3070_depth_keep`, adapted from our Wan graphs plus
