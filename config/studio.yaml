@@ -66,9 +66,15 @@ render:
   max_retries: 3             # max repair rounds per project
   stall_reports: 2           # stop repairs (you choose: keep or more rounds) after a round that gained < 0.2 QC
   max_renders_per_project: 40
+  auto_tune: true            # repairs tune CFG/steps/edges/stabilizer from QC, not only the seed
+  stabilize: auto            # post-render stabilizer: auto (keep only if steadier) | off | light | strong
 
 quality:
   pass_threshold: 6.5
+  min_stability: 0             # re-render shots whose stability score is below this; 0 = off
+  picture_review: auto         # auto: the vision model reviews each shot's contact sheet (advisory) | off
+  vision_model: ""             # empty: director.vision_model, else ollama.model (qwen3.5:9b sees images)
+  contact_sheet_columns: 6
 
 subject:                     # keeping the real main subject (docs/subject.md)
   model: u2net               # u2net (fast) | isnet-general-use (finer edges, ~3x slower on the CPU)

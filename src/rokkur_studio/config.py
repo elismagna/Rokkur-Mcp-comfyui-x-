@@ -164,10 +164,24 @@ class RenderSection(BaseModel):
     # QC reports compared before automatic repairs stop and ask you (keep or grant rounds).
     # 2 = stop after one repair round in which no failing shot gained 0.2 QC points.
     stall_reports: int = Field(default=2, ge=2)
+    # Repairs change settings by what QC measured (CFG, steps, edge thresholds, stabilizer),
+    # not only the seed (agents/roles.py RepairPlanner). A project's "auto_tune" wins.
+    auto_tune: bool = True
+    # Post-render stabilizer: auto tries "light" and keeps it only when QC measures a steadier
+    # shot (pipeline/stabilize.py). A project's "stabilize" wins.
+    stabilize: Literal["auto", "off", "light", "strong"] = "auto"
 
 
 class QualitySection(BaseModel):
     pass_threshold: float = 6.5
+    # Re-render a shot whose motion-compensated stability score is below this (0 = off). A
+    # project's own "min_stability" wins (docs/picture-checker.md).
+    min_stability: float = Field(0.0, ge=0, le=10)
+    # auto: after rendering, a vision model looks at a contact sheet of each shot (source row,
+    # render row) and scores prompt adherence, anatomy, identity and steadiness. Advisory.
+    picture_review: Literal["auto", "off"] = "auto"
+    vision_model: str = ""      # Ollama model for the review; empty: director.vision_model, else ollama.model
+    contact_sheet_columns: int = Field(6, ge=2, le=12)
 
 
 class SubjectSection(BaseModel):
