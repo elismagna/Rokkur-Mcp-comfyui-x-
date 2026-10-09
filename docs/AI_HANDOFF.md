@@ -266,6 +266,19 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Claude overnight (2026-10-09): draft profile + repair stall stop. Untested on the PC.**
+  - New `RTX3070_DRAFT` profile (`v2v_3070_draft`, `v2v_3070_draft_keep`): the quality/keep
+    graphs plus a `LoraLoaderModelOnly` with Kijai's Self-Forcing DMD 1.3B LoRA, sampler fixed
+    at 4 steps, cfg 1, lcm/simple (settings from the published Self-Forcing workflows, see the
+    workflow headers). Expect roughly 5-8x faster shots; quality vs `RTX3070_QUALITY` is unknown.
+    Optional download in `scripts/install-models.ps1`
+    (`Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors` into ComfyUI `models/loras`).
+    PC test: download the LoRA, `comfy-check`, render the same clip on DRAFT and QUALITY, compare.
+  - Repair now stops (same human choice as the repair limit: keep renders or grant rounds) when
+    the last 3 QC reports since rounds were last granted show no failing shot gaining 0.2 points.
+    This follows Codex's finding that seed-only rerolls kept failing.
+  - Reviewed Codex 462be3b (prompt workbench, audio beds): sound; no changes needed.
+
 - **Codex: prompt workbench and audio beds (2026-10-09).** The New video form now has a
   reviewable theme/scene-prompt editor; its local Ollama endpoint uses the shared GPU lease and
   never changes the form until Apply. Those applied fields flow into the existing creative
@@ -364,6 +377,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Claude: RTX3070_DRAFT Self-Forcing LoRA profile; stalled-repair stop; reviewed Codex 462be3b.
 - 2026-10-09 Codex: review-first prompt editing and optional soundtrack mixing are implemented.
   Full suite 272 passed, 1 skipped, including Claude's keep-workflow fallback test; `ruff check
   src tests` and `mypy src` pass. The prompt route

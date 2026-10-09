@@ -1,0 +1,34 @@
+# Draft version of v2v_3070_quality: the same graph plus Kijai's Self-Forcing DMD LoRA for Wan 1.3B
+# (node 7, LoraLoaderModelOnly), sampled at 4 steps, cfg 1, lcm/simple, shift 8. Those sampler
+# settings come from Civitai workflow 1719791 (a native VACE 1.3B graph using Self-Forcing);
+# see docs/research/civitai-wan-workflows.md. About 5x fewer steps than the quality workflow.
+# At cfg 1 the negative prompt has no effect, and STEPS/CFG are fixed here on purpose.
+# Extra model (Apache-2.0 Self-Forcing weights; avoid the non-commercial lym00 merge and CausVid):
+#   loras/Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors
+#   from huggingface.co/Kijai/WanVideo_comfy, LoRAs/Wan2_1_self_forcing_1_3B/
+# Other models as v2v_3070_quality. Quality vs the 20-step workflow is untested: A/B it on the PC.
+name: v2v_3070_draft
+version: 1
+description: Fast draft of v2v_3070_quality (Self-Forcing DMD LoRA, 4 steps, cfg 1)
+resource_class: GPU_HEAVY
+input_kind: video
+output_kinds: [videos, images, gifs]
+parameters:
+  DIFFUSION_MODEL: {node: "1", input: unet_name, type: str, default: wan2.1_vace_1.3B_fp16.safetensors}
+  TEXT_ENCODER: {node: "2", input: clip_name, type: str, default: umt5_xxl_fp8_e4m3fn_scaled.safetensors}
+  LORA: {node: "7", input: lora_name, type: str, default: Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors}
+  LORA_STRENGTH: {node: "7", input: strength_model, type: float, default: 1.0, min: 0, max: 2}
+  VAE: {node: "3", input: vae_name, type: str, default: wan_2.1_vae.safetensors}
+  STYLE_PROMPT: {node: "5", input: text, type: str, required: true}
+  NEGATIVE_PROMPT: {node: "6", input: text, type: str, default: "blurry, deformed, watermark, text"}
+  INPUT_VIDEO: {node: "10", input: file, type: str, required: true}
+  REFERENCE_IMAGE: {node: "20", input: image, type: str, optional_node: true}
+  CANNY_LOW: {node: "13", input: low_threshold, type: float, default: 0.2, min: 0.01, max: 0.99}
+  CANNY_HIGH: {node: "13", input: high_threshold, type: float, default: 0.5, min: 0.01, max: 0.99}
+  WIDTH: {targets: [{node: "12", input: width}, {node: "14", input: width}], type: int, min: 16, max: 1280}
+  HEIGHT: {targets: [{node: "12", input: height}, {node: "14", input: height}], type: int, min: 16, max: 1280}
+  FRAME_COUNT: {node: "14", input: length, type: int, min: 1, max: 161}
+  CONTROL_STRENGTH: {node: "14", input: strength, type: float, default: 1.0, min: 0, max: 2}
+  SEED: {node: "15", input: seed, type: int, default: 0, min: 0}
+  FPS: {node: "18", input: fps, type: float, min: 1, max: 60}
+  OUTPUT_PREFIX: {node: "19", input: filename_prefix, type: str, default: rokkur/render}

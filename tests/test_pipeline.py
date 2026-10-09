@@ -431,3 +431,29 @@ def test_missing_source_file_fails_without_retry_storm(ctx, bad_path):
     pid = create(ctx, Path(bad_path))
     run(ctx)
     assert status(ctx, pid) == "FAILED"
+
+
+def test_repairs_stop_when_rerenders_do_not_improve_qc(ctx, sample_video):
+    from rokkur_studio.pipeline.stages import _repairs_stalled
+    from rokkur_studio.services.events import EventType, record_event
+    from rokkur_studio.services.projects import save_document
+
+    pid = create(ctx, sample_video)
+
+    def report(score: float) -> dict[str, Any]:
+        return {"shots": [{"shot_id": "s1", "decision": "FAIL", "overall": score},
+                          {"shot_id": "s2", "decision": "PASS", "overall": 9.0}]}
+
+    with ctx.db.session() as s:
+        for score in (4.0, 4.1):
+            save_document(s, pid, "qc_report", report(score), created_by="test")
+        assert not _repairs_stalled(s, pid)  # too few rounds to judge
+        save_document(s, pid, "qc_report", report(4.15), created_by="test")
+        assert _repairs_stalled(s, pid)
+        record_event(s, EventType.REPAIR_BUDGET_EXTENDED, project_id=pid, actor="elis",
+                     data={"rounds": 5})
+        s.flush()
+        assert not _repairs_stalled(s, pid)  # granted rounds start a fresh window
+        for score in (4.2, 5.0, 6.0):
+            save_document(s, pid, "qc_report", report(score), created_by="test")
+        assert not _repairs_stalled(s, pid)  # still improving

@@ -26,6 +26,8 @@ from rokkur_studio.db.models import (
     ApprovalRequest,
     Asset,
     CostEntry,
+    Document,
+    Event,
     Job,
     Project,
     Render,
@@ -798,6 +800,31 @@ def _stop_at_repair_limit(ctx: StudioContext, job: Job, report: dict[str, Any],
     return {"repaired": False, "reason": reason}
 
 
+STALL_REPORTS = 3  # QC reports compared before giving up on re-renders
+STALL_MIN_GAIN = 0.2  # QC points a failing shot must gain over that window
+
+
+def _repairs_stalled(session: Session, project_id: str) -> bool:
+    """True when the last STALL_REPORTS QC reports since a human last granted rounds show
+    no failing shot gaining STALL_MIN_GAIN points: rerolling again is wasted GPU time."""
+    granted = session.scalar(
+        select(func.max(Event.created_at)).where(
+            Event.project_id == project_id, Event.type == EventType.REPAIR_BUDGET_EXTENDED))
+    query = select(Document.data).where(Document.project_id == project_id,
+                                        Document.kind == "qc_report")
+    if granted is not None:
+        query = query.where(Document.created_at > granted)
+    reports = session.scalars(query.order_by(Document.version.desc())
+                              .limit(STALL_REPORTS)).all()
+    if len(reports) < STALL_REPORTS:
+        return False
+    oldest = {r["shot_id"]: float(r.get("overall", 0)) for r in reports[-1].get("shots", [])}
+    failing = [r for r in reports[0].get("shots", []) if r.get("decision") != "PASS"]
+    return bool(failing) and all(
+        r["shot_id"] in oldest and float(r.get("overall", 0)) < oldest[r["shot_id"]] + STALL_MIN_GAIN
+        for r in failing)
+
+
 def repair(ctx: StudioContext, job: Job) -> dict[str, Any]:
     project = _enter(ctx, job, {S.QUALITY_FAILED}, None)
     pid = project.id
@@ -809,6 +836,11 @@ def repair(ctx: StudioContext, job: Job) -> dict[str, Any]:
         budget = repair_budget(s, pid, ctx.settings.render.max_retries)
     if project.repair_rounds >= budget:
         return _stop_at_repair_limit(ctx, job, report, "repair budget exhausted")
+    with ctx.db.session() as s:
+        stalled = _repairs_stalled(s, pid)
+    if stalled:
+        return _stop_at_repair_limit(ctx, job, report,
+                                     "repeated re-renders did not improve QC")
 
     round_ = project.repair_rounds + 1
     current = {s.shot_id: {"seed": s.overrides.get("seed", s.seed),

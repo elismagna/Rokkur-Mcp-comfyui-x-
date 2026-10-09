@@ -217,3 +217,24 @@ def test_depth_workflow_reports_a_missing_add_on():
                                     "depth_anything_v2_vitb.pth", "depth_anything_v2_vits.pth"]],
                      "resolution": ["INT", {"default": 512}]}}}
     assert validate_against_object_info(t, info) == []
+
+
+@pytest.mark.parametrize(("draft", "base"), [("v2v_3070_draft", "v2v_3070_quality"),
+                                             ("v2v_3070_draft_keep", "v2v_3070_keep")])
+def test_draft_workflows_add_the_self_forcing_lora_and_fix_the_sampler(draft, base):
+    d, b = TemplateRegistry(WF).get(draft), TemplateRegistry(WF).get(base)
+    assert set(d.workflow) == set(b.workflow) | {"7"}
+    assert d.workflow["7"]["class_type"] == "LoraLoaderModelOnly"
+    assert d.workflow["7"]["inputs"]["model"] == ["1", 0] and d.workflow["4"]["inputs"]["model"] == ["7", 0]
+    ks = d.workflow["15"]["inputs"]
+    assert (ks["steps"], ks["cfg"], ks["sampler_name"], ks["scheduler"]) == (4, 1.0, "lcm", "simple")
+    assert set(d.spec.parameters) == set(b.spec.parameters) - {"STEPS", "CFG"} | {"LORA", "LORA_STRENGTH"}
+    compiled = compile_workflow(d, {"STYLE_PROMPT": "spa", "INPUT_VIDEO": "c.mp4", "MASK_VIDEO": "m.mp4",
+                                    "STEPS": 20, "CFG": 6.0})
+    assert compiled.workflow["15"]["inputs"]["steps"] == 4 and {"STEPS", "CFG"} <= set(compiled.ignored)
+
+
+def test_draft_profile_is_loadable(settings):
+    profile = settings.profile("RTX3070_DRAFT")
+    assert profile.workflow == "v2v_3070_draft" and profile.keep_workflow == "v2v_3070_draft_keep"
+    assert settings.profile_problem("RTX3070_DRAFT") is None

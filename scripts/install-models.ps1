@@ -55,6 +55,19 @@ foreach ($name in $Files.Keys) {
   Move-Item -Path $src.FullName -Destination $dest
   Write-Host "  [moved] $name -> $($Files[$name])\"
 }
+# Optional: the RTX3070_DRAFT profile's Self-Forcing LoRA (Apache-2.0), from
+# huggingface.co/Kijai/WanVideo_comfy -> LoRAs/Wan2_1_self_forcing_1_3B/
+$Optional = [ordered]@{ "Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors" = "loras" }
+foreach ($name in $Optional.Keys) {
+  $dest = Join-Path (Join-Path $ModelsDir $Optional[$name]) $name
+  if (Test-Path $dest) { Write-Host "  [in place] $($Optional[$name])\$name (optional)"; continue }
+  $src = Get-ChildItem -Path $From -Filter $name -Recurse -File -Depth 3 -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+  if (-not $src) { Write-Host "  [optional, not found] $name (only RTX3070_DRAFT needs it)"; continue }
+  New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+  Move-Item -Path $src.FullName -Destination $dest
+  Write-Host "  [moved] $name -> $($Optional[$name])\"
+}
 if ($missing) { Write-Host "$missing file(s) still missing. Download them, then run this again."; exit 1 }
 Write-Host "All three models are in place. Restart ComfyUI (or press R in its browser tab), then run:"
 Write-Host "  .\scripts\studio.ps1 comfy-check"

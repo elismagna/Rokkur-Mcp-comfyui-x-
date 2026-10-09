@@ -1,0 +1,20 @@
+{
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "wan2.1_vace_1.3B_fp16.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan"}},
+  "3": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}},
+  "7": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": "Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors", "strength_model": 1.0}},
+  "4": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["7", 0], "shift": 8.0}},
+  "5": {"class_type": "CLIPTextEncode", "inputs": {"text": "STYLE PROMPT", "clip": ["2", 0]}},
+  "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "blurry, deformed, watermark, text", "clip": ["2", 0]}},
+  "10": {"class_type": "LoadVideo", "inputs": {"file": "input.mp4"}},
+  "11": {"class_type": "GetVideoComponents", "inputs": {"video": ["10", 0]}},
+  "12": {"class_type": "ImageScale", "inputs": {"image": ["11", 0], "upscale_method": "bilinear", "width": 480, "height": 832, "crop": "center"}},
+  "13": {"class_type": "Canny", "inputs": {"image": ["12", 0], "low_threshold": 0.2, "high_threshold": 0.5}},
+  "14": {"class_type": "WanVaceToVideo", "inputs": {"positive": ["5", 0], "negative": ["6", 0], "vae": ["3", 0], "width": 480, "height": 832, "length": 81, "batch_size": 1, "strength": 1.0, "control_video": ["13", 0], "reference_image": ["20", 0]}},
+  "20": {"class_type": "LoadImage", "inputs": {"image": "reference.png"}},
+  "15": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "positive": ["14", 0], "negative": ["14", 1], "latent_image": ["14", 2], "seed": 0, "steps": 4, "cfg": 1.0, "sampler_name": "lcm", "scheduler": "simple", "denoise": 1.0}},
+  "16": {"class_type": "TrimVideoLatent", "inputs": {"samples": ["15", 0], "trim_amount": ["14", 3]}},
+  "17": {"class_type": "VAEDecode", "inputs": {"samples": ["16", 0], "vae": ["3", 0]}},
+  "18": {"class_type": "CreateVideo", "inputs": {"images": ["17", 0], "fps": 16.0}},
+  "19": {"class_type": "SaveVideo", "inputs": {"video": ["18", 0], "filename_prefix": "rokkur/render", "format": "auto"}}
+}
