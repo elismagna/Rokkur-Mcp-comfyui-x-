@@ -77,10 +77,14 @@ def test_a_cloud_video_is_refused_when_cloud_is_not_set_up(ctx, sample_video):
 
 def test_a_cloud_video_renders_on_the_cloud_server_without_the_local_gpu(ctx, sample_video):
     local, remote, auth = with_cloud(ctx)
+    hooks: list[str] = []
+    ctx.gpu.before_heavy = [hooks.append]  # would unload Ollama on this PC
+    ctx.gpu.after_heavy = [hooks.append]   # would free this PC's ComfyUI
     pid = create(ctx, sample_video, render_on="cloud")
     run(ctx)
     assert status(ctx, pid) == "READY_TO_PUBLISH"
     assert len(remote.prompts) == 2 and not local.prompts  # one prompt per shot, all remote
+    assert hooks == []
     assert auth and set(auth) == {"Bearer s3cret"}
     with ctx.db.session() as s:
         assert s.scalars(select(GpuLease)).all() == []  # this PC's GPU was never locked
