@@ -4,7 +4,7 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-09 by Codex (review-first prompt editing and optional sound-bed mixing).
+Last updated: 2026-10-09 by Codex (Rökkur Enterprise product and performance handoff).
 See the [local upgrade findings](upgrade-2026-10-07.md) for implementation details and real
 render observations; the latest Git commit is authoritative.
 
@@ -115,6 +115,58 @@ decision), `docs/milestones.md` (phase status), `docs/setup-windows.md`,
     default.
 - **Repair limit:** after `render.max_retries` rounds a person chooses more rounds, re-check, or
   keep. "Keep" writes a QC report version marked PASS with an `override` block.
+
+## Product direction: Rökkur Enterprise (working title)
+
+Elis's ambition is for Rökkur to feel like a small, high-end creative studio: turn the user's
+intent and footage into directed, coherent, reviewable video with less wasted waiting and fewer
+unnecessary rerenders. The user directs and approves; the app supplies strong defaults, preserves
+successful work, explains decisions, and makes failures easy to diagnose. “Rökkur Enterprise” is
+a working name for this ambition, not a claim of enterprise readiness.
+
+An optional future format is children's animation/nursery rhymes. A guided producer could move
+from series/character/style bible and age-appropriate learning goal to a script in manageable
+parts, scene/shot plan, image and sound directions, individually reviewed clips, timeline,
+captions, metadata and thumbnail/publishing assets. The pasted inspiration is useful for staged
+planning, continuity and review. It does not redefine the whole studio. Kling and Google Flow are
+distinct products; claims in the pasted text about free credits, “Omni Flash,” target ages, and a
+ChatGPT-to-Kling-to-CapCut workflow are unverified and must not drive implementation. The linked
+YouTube video could not be inspected here, so its actual content has not been independently
+assessed. ChatYT MCP is an optional external research tool, not a local rendering dependency; its
+[site](https://chatyt.io/mcp) describes transcript/summary tools and processing outside this PC.
+Any connector requires explicit opt-in, clear data handling, and must not download YouTube video.
+
+Priorities captured in `docs/ROKKUR_ENTERPRISE_OPTIMIZATION_PROMPT.md`:
+
+- Measure end-to-end and per-stage wait before optimizing; compare time, VRAM, and output quality
+  on the same approved test input. Do not destabilize or compete with a live GPU render.
+- Keep what measurably improves the final result or user control. Remove a feature only when its
+  cost and user-visible trade-off are evidenced. Do not cut rights gates, approvals, provenance,
+  continuity, or recovery to game speed measurements.
+- Carry main-subject identity across all shots, not just the first frame; the user's reported
+  bucket hijacking shot 1 is a regression case. Preserve the standout Keep-subject/restyle-room
+  result as a quality target, but the original media/settings are not in git and repeatability is
+  unverified. Preserve scene props (e.g. a picture frame behind the character) unless the plan
+  calls for a change. Reuse rendered shots only with complete dependency keys and safe invalidation.
+- Keep ratings, deterministic QC and AI suggestions separate; suggestions remain evidence-based
+  and user-applied. Do not call a taste profile “self-training.”
+- Local image/music/SFX generation is not verified installed; audio-bed mixing and prompt editing
+  exist. “Satan GGUF” is a user preference for prompt engineering, not a verified integration;
+  current handoff says Satan models belong to Odysseus. Verify ownership, model, licensing, context,
+  quality and GPU impact before proposing a change.
+- Hosted Claude/GPT/video tools may be optional with explicit privacy and cost choices. Do not
+  present unimplemented cloud, image, audio, or video services as working.
+
+## Optimization status
+
+- The latest GitHub `main` was checked through the connected GitHub history on 2026-10-09:
+  `a865054` (“Polish mobile navigation and UI contrast”), matching the local checkout. No newer
+  push was visible at that check. Direct `git ls-remote` was unavailable from this shell, so use
+  GitHub history plus a fresh fetch/pull at the next start to confirm current state.
+- The user asked for a new performance-optimization thread. `docs/ROKKUR_ENTERPRISE_OPTIMIZATION_PROMPT.md`
+  is its kickoff brief; it defines baseline measurement, controlled experiments, quality gates,
+  product intent, and honest boundaries. Do not assume any optimization hypotheses in it are
+  already implemented or verified.
 
 ## Installed on the PC (from audits and Elis's reports, 2026-10-07)
 
@@ -268,7 +320,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 - Plain Resume at the repair limit: it re-entered repair and stopped again at once. It is now
   refused there.
 
-## Current work
+## Previous handoff notes (historical snapshot; verify against current Git before acting)
 
 - **Codex (2026-10-09): responsive navigation and contrast polish.** Source changes are complete:
   on small screens the brand and New video action stay together, with destinations in a separate
@@ -410,7 +462,23 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   user flow for projects stopped at the total render budget. Do not promise that increasing
   source strength improves quality: the real comparison showed the opposite.
 
+## Current work
+
+- **Codex (2026-10-09): product and optimization handoff.** The product direction and an
+  evidence-first performance prompt are recorded above and in
+  `docs/ROKKUR_ENTERPRISE_OPTIMIZATION_PROMPT.md`. No application code, model, or live service was
+  changed. Next: use the new thread to inspect current main/runtime, measure baseline wait times,
+  then rank bottlenecks before making a reversible change. Keep user media private.
+
 ## Log (newest first)
+
+- 2026-10-09 Codex: checked the connected GitHub commit history; latest `main` was `a865054`,
+  matching the local checkout, with no newer Claude/Codex push visible. Added the Rökkur
+  Enterprise product direction and performance optimization prompt. Honest status: linked YouTube
+  content could not be inspected; statements in the pasted description were separated into useful
+  workflow ideas and unverified assumptions. `ruff check src tests` and `mypy src` passed. The full
+  pytest run could not reach the separate `rokkur_test` database at localhost:5432, so no test
+  results are claimed. No app behavior or runtime changed.
 
 - 2026-10-09 Codex: reviewed the local dashboard before editing. At phone width, the complete nav
   competed with the brand and New video control; separated the link row and raised its touch
