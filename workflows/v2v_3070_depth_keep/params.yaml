@@ -1,19 +1,18 @@
-# Wan 2.1 VACE 1.3B video-to-video for an 8 GB RTX 3070, ComfyUI core nodes only.
-# The source clip's Canny edges drive VACE as a control video, so structure and motion follow
-# the source while the prompt sets the look. VACE generates from an empty latent: DENOISE does
-# not apply here and is reported as ignored.
-# Models (ComfyUI Desktop model manager, or Comfy-Org/Wan_2.1_ComfyUI_repackaged):
+# As v2v_3070_keep, but a depth map guides the room instead of Canny edges: the same graph as
+# v2v_3070_depth (node 13 is Depth Anything V2 Small from comfyui_controlnet_aux) with the
+# keep-the-subject mask wiring of v2v_3070_keep (nodes 30-36, sources listed there). Node 37
+# scales the depth map back to the render size, so ImageCompositeMasked lines the source
+# pixels up with it exactly.
+# Needs: custom_nodes/comfyui_controlnet_aux (ComfyUI Manager). Keep the Small depth model: it
+# is the only Depth Anything V2 size under Apache-2.0 (Base/Large/Giant are non-commercial).
+# Models otherwise as v2v_3070_quality:
 #   diffusion_models/wan2.1_vace_1.3B_fp16.safetensors
 #   text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
 #   vae/wan_2.1_vae.safetensors
-# Wan wants WIDTH/HEIGHT in multiples of 16 and FRAME_COUNT of the form 4n+1 (VACE rounds it).
-# CANNY_LOW/CANNY_HIGH: 0.2/0.5 is what our renders so far used. Comfy-Org's VACE v2v template
-# carries the node defaults 0.4/0.8 (its Canny node is bypassed there), which draw fewer fur and
-# texture edges; worth an A/B on the workstation before changing the default.
 # Run `scripts/studio.ps1 comfy-check` to validate node inputs and model files on the workstation.
-name: v2v_3070_quality
-version: 3
-description: Wan 2.1 VACE 1.3B restyle, Canny control from the source clip
+name: v2v_3070_depth_keep
+version: 1
+description: Wan 2.1 VACE 1.3B restyle of the room around the real subject (subject mask + depth)
 resource_class: GPU_HEAVY
 input_kind: video
 output_kinds: [videos, images, gifs]
@@ -24,11 +23,11 @@ parameters:
   STYLE_PROMPT: {node: "5", input: text, type: str, required: true}
   NEGATIVE_PROMPT: {node: "6", input: text, type: str, default: "blurry, deformed, watermark, text"}
   INPUT_VIDEO: {node: "10", input: file, type: str, required: true}
+  MASK_VIDEO: {node: "30", input: file, type: str, required: true}
   REFERENCE_IMAGE: {node: "20", input: image, type: str, optional_node: true}
-  CANNY_LOW: {node: "13", input: low_threshold, type: float, default: 0.2, min: 0.01, max: 0.99}
-  CANNY_HIGH: {node: "13", input: high_threshold, type: float, default: 0.5, min: 0.01, max: 0.99}
-  WIDTH: {targets: [{node: "12", input: width}, {node: "14", input: width}], type: int, min: 16, max: 1280}
-  HEIGHT: {targets: [{node: "12", input: height}, {node: "14", input: height}], type: int, min: 16, max: 1280}
+  DEPTH_MODEL: {node: "13", input: ckpt_name, type: str, default: depth_anything_v2_vits.pth}
+  WIDTH: {targets: [{node: "12", input: width}, {node: "14", input: width}, {node: "32", input: width}, {node: "37", input: width}], type: int, min: 16, max: 1280}
+  HEIGHT: {targets: [{node: "12", input: height}, {node: "14", input: height}, {node: "32", input: height}, {node: "37", input: height}], type: int, min: 16, max: 1280}
   FRAME_COUNT: {node: "14", input: length, type: int, min: 1, max: 161}
   CONTROL_STRENGTH: {node: "14", input: strength, type: float, default: 1.0, min: 0, max: 2}
   SEED: {node: "15", input: seed, type: int, default: 0, min: 0}

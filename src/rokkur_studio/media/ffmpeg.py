@@ -176,6 +176,14 @@ class FFmpeg:
                   stdin=np.ascontiguousarray(frames, dtype=np.uint8).tobytes())
         return out
 
+    def write_image(self, frame: np.ndarray, out: Path) -> Path:
+        """Write one ``(h, w, 3)`` uint8 RGB frame as an image (format from the suffix)."""
+        h, w = frame.shape[:2]
+        self._run(self._ff("-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-i", "-",
+                           "-frames:v", "1", str(out)),
+                  stdin=np.ascontiguousarray(frame, dtype=np.uint8).tobytes())
+        return out
+
     def extract_frames(self, path: Path, out_dir: Path, *, fps: float | None = None,
                        pattern: str = "frame_%05d.png") -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)

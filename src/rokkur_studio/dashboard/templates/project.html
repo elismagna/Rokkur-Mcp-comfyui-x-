@@ -69,7 +69,7 @@
     <dl class="kv"><dt>Style</dt><dd>{{ b.style }}</dd>
     {% if b.character %}<dt>Character</dt><dd>{% if dn.character_key %}<b>{{ dn.character_key }}</b> · {% endif %}{{ b.character }}</dd>{% endif %}
     <dt>Look</dt><dd>{{ b.visual_identity }}</dd><dt>Avoid</dt><dd class="muted">{{ b.negative_prompt }}</dd>
-    <dt>Requested guidance</dt><dd>{% if 'reference_mode' in p.creative_input %}source structure {{p.creative_input.get('control_strength',1.0)}} · {{'custom reference' if p.creative_input.get('character_reference_asset') else ('source-frame reference' if p.creative_input.get('reference_mode')=='source' else 'no appearance reference')}}{% else %}Created with earlier settings; see applied render settings below.{% endif %} · motion {{ b.motion_preservation }}</dd>
+    <dt>Requested guidance</dt><dd>{% if 'reference_mode' in p.creative_input %}source structure {{p.creative_input.get('control_strength',1.0)}} · {{'custom reference' if p.creative_input.get('character_reference_asset') else {'source': 'source-frame reference', 'cutout': 'subject cutout reference', 'auto': 'reference chosen by the studio'}.get(p.creative_input.get('reference_mode'), 'no appearance reference')}}{% else %}Created with earlier settings; see applied render settings below.{% endif %} · motion {{ b.motion_preservation }}</dd>
     {% if subject %}<dt>Main subject</dt><dd>{{ 'Kept real' if subject.mode == 'keep' else 'Restyled' }}{% if subject.planned %} <span class="muted">(planned)</span>{% endif %} · {{ subject.reason }}</dd>{% endif %}
     {% if dn %}<dt>Framing</dt><dd>by {{ (dn.framing_by or 'rule_based')|replace('_',' ') }}{% if dn.vision %} <span class="pill info">source images used</span>{% endif %}{% if not dn.global_look %} · global look off{% endif %}</dd>{% endif %}
     {% if not dn %}<dt>Prompt</dt><dd>{{ b.prompt }}</dd>{% endif %}</dl>
@@ -118,6 +118,9 @@
         <dt>Sampling</dt><dd>{{r.params.get('STEPS')}} steps · guidance {{r.params.get('CFG')}} · seed {{r.params.get('SEED')}}</dd>
         {% if applied.get('CONTROL_STRENGTH') is not none %}<dt>Source structure</dt><dd>{{applied.CONTROL_STRENGTH}}</dd>{% endif %}
         <dt>Appearance</dt><dd>{{used.get('reference','Not recorded by this renderer version')}}</dd>
+        {% if r.workflow %}<dt>Workflow</dt><dd>{{r.workflow}}{% if used.get('subject_mask') %} · Wan kept the real subject and redrew the room{% endif %}</dd>{% endif %}
+        {% if used.get('guidance',{}).get('masks') %}<dt>Subject masks</dt><dd>Not used: {{used.guidance.masks}}</dd>{% endif %}
+        {% if applied.get('CANNY_LOW') is not none %}<dt>Edges</dt><dd>Canny {{applied.CANNY_LOW}} / {{applied.CANNY_HIGH}}</dd>{% endif %}
         {% if used.get('ignored_params') %}<dt>Unavailable</dt><dd>{{used.ignored_params|join(', ')}}</dd>{% endif %}
       </dl>{% endfor %}
     </details>

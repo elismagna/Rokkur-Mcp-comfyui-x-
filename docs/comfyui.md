@@ -31,7 +31,7 @@ the template, and reports parameters the template does not accept (`ignored`) in
 dropping them silently. Application code only uses semantic names: `STYLE_PROMPT,
 NEGATIVE_PROMPT, REFERENCE_IMAGE, INPUT_VIDEO, SEED, WIDTH, HEIGHT, FPS, FRAME_COUNT, STEPS,
 CFG, DENOISE, POSE_STRENGTH, DEPTH_STRENGTH, IDENTITY_STRENGTH, STYLE_STRENGTH, OFFLOAD,
-CHECKPOINT, OUTPUT_PREFIX`.
+CHECKPOINT, OUTPUT_PREFIX, MASK_VIDEO, CANNY_LOW, CANNY_HIGH`.
 
 ### Shipped
 
@@ -48,6 +48,22 @@ CHECKPOINT, OUTPUT_PREFIX`.
   Anything V2 (`DepthAnythingV2Preprocessor`, `comfyui_controlnet_aux` add-on) as the guide
   instead of edges. It defaults to the Small depth model, the only size under Apache-2.0
   (Base/Large/Giant are non-commercial). Experiment for fur, hands and the outline look.
+- `v2v_3070_keep` and `v2v_3070_depth_keep` (each profile's `keep_workflow`): the two graphs
+  above plus a subject mask (`MASK_VIDEO`, core nodes `ImageToMask`, `ThresholdMask`,
+  `InvertMask`, `ImageCompositeMasked`). Wan regenerates the room and keeps the real subject.
+  They run only when a project keeps its subject and its masks exist (`docs/subject.md`).
+  Adapted from Comfy-Org's VACE inpainting template (MIT) and the mask wiring of Civitai
+  workflows 1605242, 1470557 and 1680850; sources are in their `params.yaml`, research notes
+  in `docs/research/`.
+
+`CANNY_LOW` / `CANNY_HIGH` set the Canny thresholds (default 0.2 / 0.5). The CLI takes
+`--canny LOW HIGH` and the API `creative.canny_low` / `canny_high`, for A/B runs against
+0.4 / 0.8, the node defaults kept in Comfy-Org's VACE v2v template.
+
+Profiles cap Wan 1.3B at 480P (`max_pixels: 399360`, 480×832), the size it was trained on, and
+the size box turns with the source, so a landscape clip renders at 832×464 instead of
+576×320. `negative_base` puts Wan's own default negative prompt in front of ours
+(`manifest/builder.py:negative_prompt`).
 
 ### Adding or changing a workflow: start from a proven one
 

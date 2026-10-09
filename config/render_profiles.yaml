@@ -1,11 +1,17 @@
 # Render profiles. The workflow template is chosen per profile; "degrade" is the
 # ordered CUDA-OOM recovery ladder (each step applied once, never retrying identical work).
+# max_width x max_height is a portrait box that turns for landscape sources.
+# negative_base is Wan 2.1's own default negative prompt (wan/configs/shared_config.py, as the
+# Comfy-Org VACE templates use it); the studio drops its "style/artwork/painting/picture" terms
+# for stylized looks and adds anti-CGI terms for photographic ones (manifest/builder.py).
 profiles:
   PREVIEW:
     description: Fast low-resolution preview, minimal controls (Wan VACE 1.3B at small size)
     workflow: v2v_3070_quality   # v2v_preview needs an SD 1.5 checkpoint the workstation does not have
+    keep_workflow: v2v_3070_keep
     max_width: 320
     max_height: 576
+    negative_base: &wan_negative "过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
     fps: 16
     max_frames: 33
     frame_multiple: 4
@@ -19,8 +25,11 @@ profiles:
   RTX3070_QUALITY:
     description: Wan VACE 1.3B with source/reference appearance and edge guidance for 8 GB
     workflow: v2v_3070_quality
+    keep_workflow: v2v_3070_keep
     max_width: 576
     max_height: 1024
+    max_pixels: 399360   # 480x832: Wan 1.3B is trained at 480P and "less stable" above it
+    negative_base: *wan_negative
     fps: 16
     max_frames: 81
     frame_multiple: 4
@@ -34,8 +43,11 @@ profiles:
   RTX3070_DEPTH:
     description: As RTX3070_QUALITY, but a depth map guides Wan instead of edges (needs the comfyui_controlnet_aux add-on)
     workflow: v2v_3070_depth
+    keep_workflow: v2v_3070_depth_keep
     max_width: 576
     max_height: 1024
+    max_pixels: 399360
+    negative_base: *wan_negative
     fps: 16
     max_frames: 81
     frame_multiple: 4
@@ -64,8 +76,10 @@ profiles:
     min_vram_gb: 24
     description: Higher resolution, larger models, less offloading, longer sequences
     workflow: v2v_3070_quality
+    keep_workflow: v2v_3070_keep
     max_width: 1080
     max_height: 1920
+    negative_base: *wan_negative
     fps: 24
     max_frames: 161
     frame_multiple: 4

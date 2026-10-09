@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from rokkur_studio.agents.roles import ChannelManager, RepairPlanner
 from rokkur_studio.agents.schemas import CreativeBrief
 from rokkur_studio.comfyui.compiler import TemplateError, compile_workflow
+from rokkur_studio.config import RenderProfile
 from rokkur_studio.db.models import (
     ApprovalRequest,
     Asset,
@@ -53,8 +54,13 @@ from rokkur_studio.pipeline.subject import (
     MaskerUnavailable,
     OnnxSubjectMasker,
     SubjectMasker,
+    cutout_reference,
     decide_subject,
     keep_subject,
+    shot_masks,
+    subject_share,
+    unusable,
+    vace_mask_video,
 )
 from rokkur_studio.services import publishing
 from rokkur_studio.services.assets import import_file, register_asset
@@ -318,7 +324,8 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
     manifest.subject = SubjectSpec(**decide_subject(project.creative_input).to_dict())
     for shot in manifest.shots:
         shot.overrides.update({k: project.creative_input[k]
-                               for k in ("control_strength", "steps", "cfg", "seed")
+                               for k in ("control_strength", "steps", "cfg", "seed",
+                                         "canny_low", "canny_high")
                                if project.creative_input.get(k) is not None})
     compiled: dict[str, Any] = {}
     if ctx.settings.render.renderer == "comfyui":
@@ -447,7 +454,9 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
     renderer = _renderer(ctx, job)
     done = _latest_renders(ctx, pid)
     faults = project.creative_input.get("test_faults") or {}
-    masker = _subject_masker(ctx) if manifest.subject.mode == "keep" else None
+    keep = manifest.subject.mode == "keep"
+    masker = (_subject_masker(ctx)
+              if keep or manifest.identity.reference_mode == "cutout" else None)
     rendered: list[str] = []
 
     for shot in manifest.shots:
@@ -470,12 +479,17 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
             if fault and attempt in fault.get("attempts", [1]):
                 params["_FAULT"] = fault.get("kind", "black")
             clip = _shot_clip(ctx, manifest, shot, fps=params["FPS"])
+            workflow = profile.workflow
+            guidance: dict[str, Any] = {}
+            if masker is not None and renderer.name == "comfyui":
+                workflow, guidance = _subject_guidance(ctx, manifest, shot, clip, params,
+                                                       profile, masker)
             out_dir = ctx.store.project_dir(pid, f"renders/{shot.shot_id}")
             out = out_dir / f"attempt_{attempt:02d}.mp4"
             with ctx.db.transaction() as s:
                 row = Render(project_id=pid, job_id=job.id, shot_id=shot.shot_id,
                              attempt=attempt, profile=profile.name, renderer=renderer.name,
-                             workflow=profile.workflow if renderer.name == "comfyui" else None,
+                             workflow=workflow if renderer.name == "comfyui" else None,
                              status="running", params={k: v for k, v in params.items()})
                 s.add(row)
                 s.flush()
@@ -486,11 +500,11 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
             try:
                 if renderer.name == "ffmpeg_preview":
                     outcome = renderer.render_shot(clip=clip, params=params,
-                                                   workflow=profile.workflow, out=out)
+                                                   workflow=workflow, out=out)
                 else:
                     with ctx.gpu.lease(job.id, profile.resource_class):
                         outcome = renderer.render_shot(clip=clip, params=params,
-                                                       workflow=profile.workflow, out=out)
+                                                       workflow=workflow, out=out)
             except RenderOOM as exc:
                 step = _apply_degrade(ctx, manifest, shot, profile.degrade)
                 _render_failed(ctx, job, render_id, "oom", str(exc), {"next_step": step})
@@ -522,7 +536,9 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
                 _render_failed(ctx, job, render_id, "ffmpeg", str(exc), exc.to_dict())
                 raise JobError("ffmpeg_failed", str(exc), exc.to_dict()) from exc
             details, final = outcome.details, outcome.path
-            if masker is not None:
+            if guidance:
+                details = {**details, "guidance": guidance}
+            if keep and masker is not None:
                 subject, kept = _keep_subject(ctx, manifest, shot, clip, outcome, params, masker)
                 details = {**details, "subject": subject}
                 final = kept or final
@@ -565,18 +581,84 @@ def _subject_masker(ctx: StudioContext) -> SubjectMasker:
     return OnnxSubjectMasker(ctx.settings.subject, ctx.settings.studio.data_dir)
 
 
+def _mask_cache(ctx: StudioContext, manifest: ReconstructionManifest, shot: ShotSpec,
+                params: dict[str, Any]) -> Path:
+    """Base name of a shot's mask files: one per shot, frame rate and render shape."""
+    return ctx.store.project_dir(manifest.project_id, "work/masks") / \
+        f"{shot.shot_id}_{float(params['FPS']):g}fps_{params['WIDTH']}x{params['HEIGHT']}"
+
+
+def _subject_guidance(ctx: StudioContext, manifest: ReconstructionManifest, shot: ShotSpec,
+                      clip: Path, params: dict[str, Any], profile: RenderProfile,
+                      masker: SubjectMasker) -> tuple[str, dict[str, Any]]:
+    """Use the subject's masks before rendering. Returns the workflow to run and what was done.
+
+    When the subject is kept and the profile has a keep workflow, Wan gets the subject's masks
+    (``MASK_VIDEO``): VACE then keeps the subject's own pixels as context and redraws only the
+    room around it. The reference image becomes a cutout of the subject on white when
+    ``reference_mode`` is ``cutout``, or ``auto`` with the subject kept. Anything that fails
+    leaves the plain workflow and no reference; the render itself still runs.
+    """
+    workflow = profile.workflow
+    keep = manifest.subject.mode == "keep"
+    mode = manifest.identity.reference_mode
+    want_mask = keep and bool(profile.keep_workflow)
+    want_cutout = (not params.get("REFERENCE_IMAGE")
+                   and (mode == "cutout" or (mode == "auto" and keep)))
+    if not (want_mask or want_cutout):
+        return workflow, {}
+    fps, width, height = float(params["FPS"]), int(params["WIDTH"]), int(params["HEIGHT"])
+    cache = _mask_cache(ctx, manifest, shot, params)
+    info: dict[str, Any] = {}
+    try:
+        probs = shot_masks(ctx.ffmpeg, masker, clip=clip, fps=fps,
+                           frames=int(params["FRAME_COUNT"]), aspect=(width, height),
+                           cache=cache)
+        if reason := unusable(subject_share(probs), ctx.settings.subject):
+            return workflow, {"masks": reason}
+        if want_mask and profile.keep_workflow:
+            if _accepts(ctx, profile.keep_workflow, "MASK_VIDEO"):
+                params["MASK_VIDEO"] = str(vace_mask_video(
+                    ctx.ffmpeg, probs, cache.with_name(f"{cache.name}_vace.mp4"),
+                    width=width, height=height, fps=fps))
+                workflow = profile.keep_workflow
+                info["keep_workflow"] = workflow
+            else:
+                info["keep_workflow"] = f"{profile.keep_workflow} is not available"
+        if want_cutout and _accepts(ctx, workflow, "REFERENCE_IMAGE"):
+            params["REFERENCE_IMAGE"] = str(cutout_reference(
+                ctx.ffmpeg, probs, clip=clip, fps=fps, width=width, height=height,
+                out=cache.with_name(f"{cache.name}_cutout.png")))
+            params["_REFERENCE_KIND"] = "subject cutout"
+            info["reference"] = "subject cutout"
+    except MaskerUnavailable as exc:
+        return profile.workflow, {"masks": f"unavailable: {exc}"}
+    except FFmpegError as exc:
+        params.pop("MASK_VIDEO", None)
+        return profile.workflow, {"masks": f"could not be prepared: {exc.summary}"}
+    except (OSError, ValueError) as exc:  # disk full, a damaged mask cache
+        params.pop("MASK_VIDEO", None)
+        return profile.workflow, {"masks": f"could not be prepared: {exc}"}
+    return workflow, info
+
+
+def _accepts(ctx: StudioContext, workflow: str, param: str) -> bool:
+    try:
+        return param in ctx.registry.get(workflow).spec.parameters
+    except TemplateError:
+        return False
+
+
 def _keep_subject(ctx: StudioContext, manifest: ReconstructionManifest, shot: ShotSpec,
                   clip: Path, outcome: RenderOutcome, params: dict[str, Any],
                   masker: SubjectMasker) -> tuple[dict[str, Any], Path | None]:
     """Lay the real subject over a finished render. The composite's path, or None when the raw
     render stands (no clear subject, or masks could not be made: the reason is recorded)."""
     out = outcome.path.with_name(f"{outcome.path.stem}_subject.mp4")
-    fps = float(params["FPS"])
-    cache = ctx.store.project_dir(manifest.project_id, "work/masks") / \
-        f"{shot.shot_id}_{fps:g}fps_{params['WIDTH']}x{params['HEIGHT']}"
     try:
         result = keep_subject(ctx.ffmpeg, masker, ctx.settings.subject, clip=clip,
-                              render=outcome.path, fps=fps, out=out, cache=cache)
+                              render=outcome.path, fps=float(params["FPS"]), out=out,
+                              cache=_mask_cache(ctx, manifest, shot, params))
     except MaskerUnavailable as exc:
         log.warning("subject not kept", extra={"data": {"shot": shot.shot_id, "error": str(exc)}})
         return {"kept": False, "reason": f"subject masks unavailable: {exc}"}, None

@@ -40,11 +40,15 @@ class CreativeIn(BaseModel):
     character_key: str | None = None      # a character from the director's asset tracker
     use_global_look: bool = True          # apply the tracker's prefix, modifiers, negatives
     character_reference_path: str | None = None
-    reference_mode: Literal["source", "none"] = "source"
+    # When no character reference is uploaded (manifest/schema.py IdentitySpec): "auto" gives
+    # Wan a cutout of the real subject when it is kept, and no reference otherwise.
+    reference_mode: Literal["auto", "cutout", "source", "none"] = "auto"
     # auto: the studio decides from the prompt (pipeline/subject.py); keep: the real subject is
     # laid back over the render; restyle: the render's own subject is used.
     subject: Literal["auto", "keep", "restyle"] = "auto"
     control_strength: float = Field(1.0, ge=0, le=2)
+    canny_low: float | None = Field(None, gt=0, lt=1)   # edge thresholds; the workflow's
+    canny_high: float | None = Field(None, gt=0, lt=1)  # defaults (0.2/0.5) when unset
     seed: int | None = Field(None, ge=0, le=4294967295)
     steps: int | None = Field(None, ge=8, le=40)
     cfg: float = Field(6.0, ge=1, le=12)

@@ -62,6 +62,11 @@ _STYLIZED = re.compile(
     r"animation|animated|video game|unreal engine)\b", re.I)
 
 
+def is_stylized(text: str) -> bool:
+    """Whether a look asks for a drawn, animated or otherwise non-photographic style."""
+    return bool(_STYLIZED.search(text))
+
+
 @dataclass(frozen=True)
 class SubjectDecision:
     mode: SubjectMode
@@ -331,13 +336,74 @@ def colour_shift(source: np.ndarray, rendered: np.ndarray, alphas: list[np.ndarr
     return np.clip(shift, -40, 40).astype(np.float32)
 
 
+def shot_masks(ffmpeg: FFmpeg, masker: SubjectMasker, *, clip: Path, fps: float, frames: int,
+               aspect: tuple[int, int], cache: Path) -> np.ndarray:
+    """Subject probability for each of the shot's first ``frames`` frames, ``(frames, s, s)``.
+
+    The source is centre-cropped to ``aspect`` (the render's shape) first. The result is kept
+    in ``<cache>_<model>.npy``, so the VACE mask, the cutout reference, the composite and later
+    repair rounds all reuse one pass of the model.
+    """
+    masks_file = cache.with_name(f"{cache.name}_{masker.name}.npy")
+    if masks_file.is_file():
+        loaded = np.load(masks_file)
+        if (loaded.ndim == 3 and loaded.shape[0] >= frames
+                and loaded.shape[1:] == (masker.size, masker.size)):
+            return loaded[:frames].astype(np.float32) / 255
+    small = ffmpeg.read_rgb_frames(clip, masker.size, masker.size, fps=fps, frames=frames,
+                                   aspect=aspect)
+    probs = smooth_in_time(masker.predict(small))
+    masks_file.parent.mkdir(parents=True, exist_ok=True)
+    np.save(masks_file, np.round(probs * 255).astype(np.uint8))
+    return probs
+
+
+def subject_share(probs: np.ndarray) -> float:
+    """Median share of the frame the subject covers."""
+    return float(np.median((probs > 0.5).mean(axis=(1, 2))))
+
+
+def unusable(share: float, settings: SubjectSection) -> str | None:
+    """Why masks with this coverage should not be used, or None."""
+    if share < settings.min_coverage:
+        return "no clear subject in this shot"
+    if share > settings.max_coverage:
+        return "the subject fills most of the frame"
+    return None
+
+
+def vace_mask_video(ffmpeg: FFmpeg, probs: np.ndarray, out: Path, *, width: int, height: int,
+                    fps: float) -> Path:
+    """The subject in white on black at render size, for WanVaceToVideo's ``control_masks``
+    (the keep workflow inverts it, so the room is regenerated and the subject is kept)."""
+    frames = np.stack([np.round(np.clip((resize(p, height, width) - 0.3) / 0.4, 0, 1) * 255)
+                       .astype(np.uint8) for p in probs])
+    return ffmpeg.write_frames(frames, out, fps)
+
+
+def cutout_reference(ffmpeg: FFmpeg, probs: np.ndarray, *, clip: Path, fps: float, width: int,
+                     height: int, out: Path) -> Path:
+    """The subject from the source on plain white, as VACE expects a reference image.
+
+    VACE was trained on object or background references, not on scenes (Comfy-Org's ref2v
+    template note), so a whole source frame drags the real room and lighting into the restyle.
+    Uses the first frame unless the subject is barely in it, then the frame showing most of it.
+    """
+    shares = (probs > 0.5).mean(axis=(1, 2))
+    i = 0 if shares[0] >= 0.5 * float(np.median(shares)) else int(np.argmax(shares))
+    frame = ffmpeg.read_rgb_frames(clip, width, height, fps=fps, frames=i + 1,
+                                   aspect=(width, height))[i]
+    a = subject_alpha(probs[i], height, width, grow_px=0, feather_px=2)[..., None]
+    return ffmpeg.write_image(np.round(a * frame + (1 - a) * 255).astype(np.uint8), out)
+
+
 def keep_subject(ffmpeg: FFmpeg, masker: SubjectMasker, settings: SubjectSection, *,
                  clip: Path, render: Path, fps: float, out: Path, cache: Path) -> dict[str, Any]:
     """Lay the source shot's main subject over its render, written to ``out``.
 
-    ``cache`` holds the shot's masks (``.npy``) and a mask preview video (``.mp4``) so repair
-    rounds reuse them. Returns what was done; ``kept`` is False when the shot has no clear
-    subject or the subject fills the frame, and ``out`` is then not written.
+    ``cache`` names the shot's mask files (see ``shot_masks``); a mask preview video is written
+    next to them. Returns what was done; ``kept`` is False when the shot has no clear subject or
+    the subject fills the frame, and ``out`` is then not written.
     """
     started = time.monotonic()
     info = ffmpeg.probe(render)
@@ -347,25 +413,11 @@ def keep_subject(ffmpeg: FFmpeg, masker: SubjectMasker, settings: SubjectSection
     if n == 0:
         return {"kept": False, "reason": "the render has no frames"}
     aspect = (width, height)
-    masks_file = cache.with_name(f"{cache.name}_{masker.name}_{n}f.npy")
-    probs: np.ndarray | None = None
-    if masks_file.is_file():
-        loaded = np.load(masks_file)
-        if loaded.shape == (n, masker.size, masker.size):
-            probs = loaded.astype(np.float32) / 255
-    if probs is None:
-        small = ffmpeg.read_rgb_frames(clip, masker.size, masker.size, fps=fps, frames=n,
-                                       aspect=aspect)
-        probs = smooth_in_time(masker.predict(small))
-        masks_file.parent.mkdir(parents=True, exist_ok=True)
-        np.save(masks_file, np.round(probs * 255).astype(np.uint8))
-    coverage = (probs > 0.5).mean(axis=(1, 2))
-    share = float(np.median(coverage))
+    probs = shot_masks(ffmpeg, masker, clip=clip, fps=fps, frames=n, aspect=aspect, cache=cache)
+    share = subject_share(probs)
     result: dict[str, Any] = {"model": masker.name, "coverage": round(share, 3)}
-    if share < settings.min_coverage:
-        return {**result, "kept": False, "reason": "no clear subject in this shot"}
-    if share > settings.max_coverage:
-        return {**result, "kept": False, "reason": "the subject fills most of the frame"}
+    if reason := unusable(share, settings):
+        return {**result, "kept": False, "reason": reason}
 
     source = ffmpeg.read_rgb_frames(clip, width, height, fps=fps, frames=n, aspect=aspect)
     short = min(width, height)
@@ -386,7 +438,7 @@ def keep_subject(ffmpeg: FFmpeg, masker: SubjectMasker, settings: SubjectSection
         subject = np.clip(source[i].astype(np.float32) + shift, 0, 255)
         composite[i] = np.round(a[..., None] * subject + (1 - a[..., None]) * rendered[i])
     ffmpeg.write_frames(composite, out, fps)
-    preview = masks_file.with_suffix(".mp4")
+    preview = cache.with_name(f"{cache.name}_{masker.name}_preview.mp4")
     if not preview.is_file():
         ffmpeg.write_frames(mask_frames, preview, fps)
     return {**result, "kept": True, "colour_shift": [round(float(v), 1) for v in shift],

@@ -1,0 +1,47 @@
+# Wan 2.1 VACE 1.3B for an 8 GB RTX 3070: keeps the real main subject and restyles the room
+# around it. Used instead of v2v_3070_quality when a project keeps its subject and the studio
+# could mask it (docs/subject.md).
+# Built from proven graphs, not from scratch:
+#   - our v2v_3070_quality (nodes 1-20 unchanged: Canny control, uni_pc 20 steps, cfg 6, shift 8);
+#   - the mask wiring of Comfy-Org's "Wan2.1 VACE inpainting" template (MIT,
+#     github.com/Comfy-Org/workflow_templates, video_wan_vace_inpainting.json): a mask into
+#     WanVaceToVideo's control_masks (white = regenerate, black = keep) and the frames composited
+#     with ImageCompositeMasked into control_video;
+#   - Civitai 1605242 and 1470557, which wire a subject mask the same way, and the "background
+#     change = invert the mask" recipe Civitai 1680850 describes. Only the wiring is reused; no
+#     node or file is copied from them (notes: docs/research/civitai-wan-workflows.md).
+# Changes from the template: the mask comes from the studio (U2-Net, nodes 30-34) instead of
+# SAM3; it is inverted (35) so the room is regenerated and the subject kept; and the control
+# video keeps the source pixels on the subject and Canny edges elsewhere (36), so the room
+# follows the source layout instead of being invented.
+# Models as v2v_3070_quality:
+#   diffusion_models/wan2.1_vace_1.3B_fp16.safetensors
+#   text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+#   vae/wan_2.1_vae.safetensors
+# Run `scripts/studio.ps1 comfy-check` to validate node inputs and model files on the workstation.
+name: v2v_3070_keep
+version: 1
+description: Wan 2.1 VACE 1.3B restyle of the room around the real subject (subject mask + Canny)
+resource_class: GPU_HEAVY
+input_kind: video
+output_kinds: [videos, images, gifs]
+parameters:
+  DIFFUSION_MODEL: {node: "1", input: unet_name, type: str, default: wan2.1_vace_1.3B_fp16.safetensors}
+  TEXT_ENCODER: {node: "2", input: clip_name, type: str, default: umt5_xxl_fp8_e4m3fn_scaled.safetensors}
+  VAE: {node: "3", input: vae_name, type: str, default: wan_2.1_vae.safetensors}
+  STYLE_PROMPT: {node: "5", input: text, type: str, required: true}
+  NEGATIVE_PROMPT: {node: "6", input: text, type: str, default: "blurry, deformed, watermark, text"}
+  INPUT_VIDEO: {node: "10", input: file, type: str, required: true}
+  MASK_VIDEO: {node: "30", input: file, type: str, required: true}
+  REFERENCE_IMAGE: {node: "20", input: image, type: str, optional_node: true}
+  CANNY_LOW: {node: "13", input: low_threshold, type: float, default: 0.2, min: 0.01, max: 0.99}
+  CANNY_HIGH: {node: "13", input: high_threshold, type: float, default: 0.5, min: 0.01, max: 0.99}
+  WIDTH: {targets: [{node: "12", input: width}, {node: "14", input: width}, {node: "32", input: width}], type: int, min: 16, max: 1280}
+  HEIGHT: {targets: [{node: "12", input: height}, {node: "14", input: height}, {node: "32", input: height}], type: int, min: 16, max: 1280}
+  FRAME_COUNT: {node: "14", input: length, type: int, min: 1, max: 161}
+  CONTROL_STRENGTH: {node: "14", input: strength, type: float, default: 1.0, min: 0, max: 2}
+  SEED: {node: "15", input: seed, type: int, default: 0, min: 0}
+  STEPS: {node: "15", input: steps, type: int, min: 1, max: 60}
+  CFG: {node: "15", input: cfg, type: float, min: 0, max: 15}
+  FPS: {node: "18", input: fps, type: float, min: 1, max: 60}
+  OUTPUT_PREFIX: {node: "19", input: filename_prefix, type: str, default: rokkur/render}

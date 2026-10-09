@@ -26,7 +26,7 @@ ComfyUI and Ollama keep running where they run; Studio talks to them over their 
 | YouTube publish (OAuth, resumable upload, thumbnail, quota ledger; private by default; scheduled public release, playlists, upload approvals at autonomy level 3) | Built and tested against a fake Google; waiting for the first real sign-in (`docs/youtube.md`) |
 | Ollama agents (Creative Director, Channel Manager) | Working on the workstation's GPU (qwen3.5:9b, checked with `agent-check`) |
 | AI director: source vision, cinematography, per-shot prompts, character tracker, Batch Prompt Schedule export (`docs/director.md`) | Both vision passes verified locally on qwen3.5:9b; observations still need review |
-| Main subject: the app keeps the real subject over the render or restyles it, from the prompt (`docs/subject.md`) | Built and tested here (CPU U²-Net masks + composite); not yet run on the PC |
+| Main subject: the app keeps the real subject or restyles it, from the prompt (`docs/subject.md`) | Built and tested here (CPU U²-Net masks, VACE keep workflow, composite); not yet run on the PC |
 | Rökkur Collective / Odysseus integration | Not built: their interfaces could not be inspected (see `docs/current-state.md`) |
 | Discovery, comments, analytics, learning, autonomy loop | Phases 5–10, not started |
 
@@ -116,6 +116,7 @@ names via `scripts\studio.ps1`.
 - `docs/milestones.md` – phase plan and status
 - `docs/director.md` – how each shot's prompt is built: vocabulary, rules, characters, schedule
 - `docs/subject.md` – keeping the real main subject or restyling it, and how the app decides
+- `docs/research/` – online research behind the workflows (official templates, Civitai)
 - `docs/architecture.md`, `docs/state-machine.md`, `docs/comfyui.md`, `docs/agents.md`,
   `docs/rights.md`, `docs/youtube.md`, `docs/setup-windows.md`, `docs/setup-docker.md`,
   `docs/troubleshooting.md`

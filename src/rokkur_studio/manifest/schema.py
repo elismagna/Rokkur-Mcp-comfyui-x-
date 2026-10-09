@@ -25,7 +25,9 @@ class StyleSpec(BaseModel):
 
 class IdentitySpec(BaseModel):
     reference_image: str | None = None  # store-relative path
-    reference_mode: Literal["source", "none"] = "source"
+    # auto: a cutout of the real subject when it is kept, else none. cutout: the subject from the
+    # source on white. source: the first source frame. none: no reference image.
+    reference_mode: Literal["auto", "cutout", "source", "none"] = "source"
     strength: float = Field(0.8, ge=0, le=1)
 
 

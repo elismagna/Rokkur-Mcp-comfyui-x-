@@ -98,9 +98,12 @@ class ComfyUIRenderer:
         work.mkdir(parents=True, exist_ok=True)
         values = {k: v for k, v in params.items() if not k.startswith("_")}
         reference = values.get("REFERENCE_IMAGE")
-        reference_kind = "uploaded" if reference else "none"
+        reference_kind = str(params.get("_REFERENCE_KIND") or "uploaded") if reference else "none"
         if reference and "REFERENCE_IMAGE" not in template.spec.parameters:
             raise RenderRejected("This workflow cannot use a character reference image")
+        mask = values.pop("MASK_VIDEO", None)
+        if mask and "MASK_VIDEO" not in template.spec.parameters:
+            raise RenderRejected(f"Workflow {workflow} cannot use a subject mask")
         if ("REFERENCE_IMAGE" in template.spec.parameters and not reference
                 and params.get("_REFERENCE_MODE", "source") == "source"):
             reference = str(self.ffmpeg.thumbnail(clip, work / "reference.png", at=0,
@@ -108,12 +111,17 @@ class ComfyUIRenderer:
             reference_kind = "source first frame"
         prepared = clip
         if any(n["class_type"] == "WanVaceToVideo" for n in template.workflow.values()):
-            prepared = self.ffmpeg.filter_video(clip, work / "control.mp4",
-                f"fps={params['FPS']},tpad=stop=-1:stop_mode=clone,"
-                f"trim=end_frame={params['FRAME_COUNT']},setpts=PTS-STARTPTS", fps=params["FPS"])
+            prepared = self._frames(clip, work / "control.mp4", params)
         try:
             folder = f"rokkur/{self.client.client_id}/{out.stem}"
             uploaded = self.client.upload_input(prepared, subfolder=folder)
+            if mask:
+                # Same frame timing as the control video, so mask frame i covers source frame i.
+                mask_path = Path(mask)
+                if not mask_path.is_file():
+                    raise RenderRejected(f"Subject mask is not readable by the worker: {mask}")
+                values["MASK_VIDEO"] = self.client.upload_input(
+                    self._frames(mask_path, work / "subject_mask.mp4", params), subfolder=folder)
             if reference:
                 ref_path = Path(reference)
                 if not ref_path.is_file():
@@ -161,5 +169,12 @@ class ComfyUIRenderer:
             "workflow_version": compiled.template_version, "applied": compiled.applied,
             "ignored_params": sorted(compiled.ignored),
             "reference": reference_kind,
+            "subject_mask": bool(mask),
             "output_frames": self.ffmpeg.probe(out).frame_count,
             "execution_seconds": result.execution_seconds})
+
+    def _frames(self, video: Path, out: Path, params: dict[str, Any]) -> Path:
+        """``video`` at the render's fps and exactly FRAME_COUNT frames (the last one held)."""
+        return self.ffmpeg.filter_video(video, out,
+            f"fps={params['FPS']},tpad=stop=-1:stop_mode=clone,"
+            f"trim=end_frame={params['FRAME_COUNT']},setpts=PTS-STARTPTS", fps=params["FPS"])

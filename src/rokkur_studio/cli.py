@@ -94,7 +94,8 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
         print(f"ComfyUI NOT reachable at {settings.comfyui.url}: {exc}")
         return 1
     registry = TemplateRegistry(settings.workflows_dir)
-    needed = {p.workflow for p in settings.profiles.values()}
+    needed = ({p.workflow for p in settings.profiles.values()}
+              | {p.keep_workflow for p in settings.profiles.values() if p.keep_workflow})
     for name in sorted(set(registry.names()) | needed):
         try:
             template = registry.get(name)
@@ -568,7 +569,10 @@ def cmd_render(args: argparse.Namespace) -> int:
             source=SourceIn(platform="local", local_path=str(source.resolve())),
             rights=RightsIn(category=RightsCategory(args.rights), permission_evidence=args.evidence),
             creative=CreativeIn(theme=args.theme, prompt=args.prompt, subject=args.subject,
-                                character_key=args.character,
+                                reference_mode=args.reference, character_key=args.character,
+                                seed=args.seed,
+                                canny_low=args.canny[0] if args.canny else None,
+                                canny_high=args.canny[1] if args.canny else None,
                                 use_global_look=not args.no_global_look), autostart=True),
             settings, actor="cli")
         pid = project.id
@@ -654,6 +658,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--subject", choices=["auto", "keep", "restyle"], default="auto",
                    help="keep the real main subject over the render, restyle it, or let the "
                    "studio decide from the prompt (default)")
+    p.add_argument("--reference", choices=["auto", "cutout", "source", "none"], default="auto",
+                   help="image Wan gets as a reference: a cutout of the real subject when it is "
+                   "kept (auto, default), always a cutout, the first source frame, or none")
+    p.add_argument("--canny", nargs=2, type=float, metavar=("LOW", "HIGH"),
+                   help="edge thresholds for the Canny workflows (default 0.2 0.5)")
+    p.add_argument("--seed", type=int, help="one seed for every shot, to compare settings")
     p.add_argument("--no-global-look", action="store_true",
                    help="skip the global prefix, style modifiers and negative prompt")
     p.add_argument("--rights", required=True,

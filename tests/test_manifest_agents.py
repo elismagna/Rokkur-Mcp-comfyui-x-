@@ -13,7 +13,7 @@ from rokkur_studio.agents.providers import (
 from rokkur_studio.agents.roles import CreativeDirector, RepairPlanner
 from rokkur_studio.agents.schemas import CreativeBrief
 from rokkur_studio.config import RenderProfile
-from rokkur_studio.manifest.builder import build_manifest, fit_within, shot_params
+from rokkur_studio.manifest.builder import build_manifest, fit_within, negative_prompt, shot_params
 from rokkur_studio.manifest.schema import ReconstructionManifest
 from tests.fakes import ollama_transport
 
@@ -62,7 +62,15 @@ def test_manifest_rejects_overlapping_or_inverted_shots():
 def test_fit_within_keeps_aspect_and_multiple_of_8():
     assert fit_within(1080, 1920, 576, 1024) == (576, 1024)
     w, h = fit_within(1920, 1080, 576, 1024)
-    assert w <= 576 and w % 8 == 0 and h % 8 == 0
+    assert w <= 1024 and h <= 576 and w % 8 == 0 and h % 8 == 0
+
+
+def test_fit_within_turns_the_box_and_caps_the_area_at_480p():
+    # The ape clip is 1920x1080: the portrait box used to squeeze it to 576x320.
+    assert fit_within(1920, 1080, 576, 1024) == (1024, 576)
+    assert fit_within(1920, 1080, 576, 1024, max_pixels=480 * 832) == (832, 464)
+    assert fit_within(1080, 1920, 576, 1024, max_pixels=480 * 832) == (464, 832)
+    assert fit_within(320, 240, 576, 1024, max_pixels=480 * 832) == (320, 240)  # no upscaling
 
 
 def test_shot_params_apply_overrides():
@@ -262,3 +270,28 @@ def test_ollama_http_error_includes_body():
     provider = OllamaProvider("http://o", "m", transport=httpx.MockTransport(handle))
     with pytest.raises(AgentUnavailable, match="bad grammar"):
         provider.generate("r", "x", {}, CreativeBrief)
+
+
+def test_negative_prompt_starts_from_wans_own_and_fits_the_look():
+    base = "过曝，静态，风格，作品，画作，画面，最差质量"
+    m = build_manifest(project_id="p", source_asset="s", analysis=ANALYSIS, brief=brief(),
+                       profile=PROFILE, target_format="youtube_short")
+    m.style.negative_prompt = "watermark"
+    assert negative_prompt("", m) == "watermark"  # profiles without a base are unchanged
+    m.style.theme, m.style.prompt = "luxury spa bathroom", "marble, warm light"
+    photo = negative_prompt(base, m)
+    assert photo.startswith(base) and "3d render, cgi" in photo and photo.endswith("watermark")
+    m.style.theme = "1970s claymation"
+    stylized = negative_prompt(base, m)
+    # "style, artwork, painting, picture" would fight a stylized look; CGI may be the look.
+    assert stylized == "过曝，静态，最差质量, watermark"
+
+
+def test_quality_profile_renders_landscape_at_480p(settings):
+    profile = settings.profile("RTX3070_QUALITY")
+    analysis = {**ANALYSIS, "width": 1920, "height": 1080}
+    m = build_manifest(project_id="p", source_asset="s", analysis=analysis, brief=brief(),
+                       profile=profile, target_format="youtube_video")
+    p = shot_params(m, m.shots[0], profile)
+    assert (p["WIDTH"], p["HEIGHT"]) == (832, 464)
+    assert p["NEGATIVE_PROMPT"].startswith("过曝，静态")

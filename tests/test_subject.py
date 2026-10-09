@@ -14,24 +14,29 @@ from sqlalchemy import select
 
 from rokkur_studio.api.app import create_app
 from rokkur_studio.api.schemas import CreativeIn, ProjectCreate, RightsIn, SourceIn
+from rokkur_studio.comfyui.client import ComfyClient
 from rokkur_studio.config import SubjectSection
-from rokkur_studio.db.models import Asset, Event, Render
+from rokkur_studio.db.models import Asset, Event, Project, Render
 from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.pipeline import subject as subject_mod
 from rokkur_studio.pipeline.subject import (
     MaskerUnavailable,
     MaskModel,
     OnnxSubjectMasker,
+    cutout_reference,
     decide_subject,
     feather,
     fetch_model,
     grow,
     keep_subject,
     resize,
+    shot_masks,
     smooth_in_time,
+    vace_mask_video,
 )
 from rokkur_studio.services import commands
 from rokkur_studio.services.projects import get_project, latest_document
+from tests.fakes import FakeComfyUI
 from tests.test_pipeline import create, run, status
 
 SPA = "luxury spa bathroom, marble, warm light"
@@ -144,6 +149,27 @@ def test_colour_shift_moves_the_subject_toward_the_new_room(tmp_path, ffmpeg, sh
                           render=darker, fps=16, out=tmp_path / "out.mp4",
                           cache=tmp_path / "masks" / "s")
     assert all(v < -15 for v in result["colour_shift"])
+
+
+def test_vace_mask_and_cutout_reference_follow_the_subject(tmp_path, ffmpeg, shot):
+    clip, _ = shot
+    masker = BoxMasker()
+    probs = shot_masks(ffmpeg, masker, clip=clip, fps=16, frames=17, aspect=(160, 288),
+                       cache=tmp_path / "masks" / "s")
+    assert probs.shape == (17, 64, 64)
+    mask = ffmpeg.read_gray_frames(vace_mask_video(ffmpeg, probs, tmp_path / "vace.mp4",
+                                                   width=160, height=288, fps=16), 160, 288)
+    assert len(mask) == 17
+    assert mask[:, 100:188, 60:100].mean() > 230 and mask[:, 0:40, 0:20].mean() < 25
+    ref = cutout_reference(ffmpeg, probs, clip=clip, fps=16, width=160, height=288,
+                           out=tmp_path / "cutout.png")
+    got = ffmpeg.read_rgb_frames(ref, 160, 288)[0].astype(int)
+    src = ffmpeg.read_rgb_frames(clip, 160, 288, fps=16, frames=1)[0].astype(int)
+    assert got[0:40, 0:20].min() > 245  # plain white around the subject
+    assert np.abs(got[100:188, 60:100] - src[100:188, 60:100]).mean() < 12
+    assert masker.calls == 1 and shot_masks(  # read back from the cache, also for fewer frames
+        ffmpeg, masker, clip=clip, fps=16, frames=9, aspect=(160, 288),
+        cache=tmp_path / "masks" / "s").shape[0] == 9 and masker.calls == 1
 
 
 @pytest.mark.parametrize(("value", "reason"), [(0.0, "no clear subject"),
@@ -264,6 +290,70 @@ def test_stylized_projects_restyle_the_subject_without_masks(ctx, sample_video):
     assert all("subject" not in r.params["_details"] for r in _renders(ctx, pid))
 
 
+def _comfy(ctx):
+    fake = FakeComfyUI()
+    ctx.settings.render.renderer = "comfyui"
+    ctx.settings.comfyui.poll_interval_s = 0
+    ctx.comfy_factory = lambda: ComfyClient("http://comfy:8188", transport=fake.transport())
+    return fake
+
+
+def test_kept_subject_renders_with_the_vace_keep_workflow_and_a_cutout(ctx, sample_video):
+    fake = _comfy(ctx)
+    masker = BoxMasker()
+    ctx.extras["subject_masker"] = masker
+    pid = create_spa(ctx, sample_video)
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+    renders = _renders(ctx, pid)
+    assert len(fake.prompts) == len(renders) == 2
+    for wf in fake.prompts.values():
+        assert wf["14"]["inputs"]["control_masks"] == ["35", 0]
+        assert wf["14"]["inputs"]["control_video"] == ["36", 0]
+        assert wf["30"]["inputs"]["file"] in fake.uploads  # the subject mask video
+        assert fake.uploads[wf["20"]["inputs"]["image"]].startswith(b"\x89PNG")  # the cutout
+    for r in renders:
+        details = r.params["_details"]
+        assert r.workflow == "v2v_3070_keep" and details["subject_mask"]
+        assert details["reference"] == "subject cutout"
+        assert details["guidance"] == {"keep_workflow": "v2v_3070_keep",
+                                       "reference": "subject cutout"}
+        assert details["subject"]["kept"]  # the exact subject still goes back over the render
+    assert masker.calls == 2  # one mask pass per shot, shared by Wan and the composite
+    page = TestClient(create_app(ctx=ctx)).get(f"/ui/projects/{pid}").text
+    assert "v2v_3070_keep · Wan kept the real subject and redrew the room" in page
+    assert "subject cutout" in page and "Canny 0.2 / 0.5" in page
+
+
+def test_unusable_masks_leave_the_plain_workflow_and_no_reference(ctx, sample_video):
+    fake = _comfy(ctx)
+    ctx.extras["subject_masker"] = BoxMasker(0.0)
+    pid = create_spa(ctx, sample_video)
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+    for wf in fake.prompts.values():
+        assert "30" not in wf and "control_masks" not in wf["14"]["inputs"]
+        assert "reference_image" not in wf["14"]["inputs"]
+    for r in _renders(ctx, pid):
+        assert r.workflow == "v2v_3070_quality"
+        assert r.params["_details"]["guidance"] == {"masks": "no clear subject in this shot"}
+        assert r.params["_details"]["reference"] == "none"
+
+
+def test_a_missing_keep_workflow_still_renders_with_the_cutout(ctx, sample_video):
+    fake = _comfy(ctx)
+    ctx.extras["subject_masker"] = BoxMasker()
+    for profile in ctx.settings.profiles.values():
+        profile.keep_workflow = "no_such_workflow"
+    pid = create_spa(ctx, sample_video)
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+    assert all("30" not in wf and "20" in wf for wf in fake.prompts.values())
+    r = _renders(ctx, pid)[0]
+    assert r.workflow == ctx.settings.profile(r.profile).workflow
+    assert r.params["_details"]["guidance"]["keep_workflow"] == "no_such_workflow is not available"
+
+
 def test_repair_rounds_reuse_the_shot_masks(ctx, sample_video):
     masker = BoxMasker()
     ctx.extras["subject_masker"] = masker
@@ -313,3 +403,19 @@ def test_project_page_shows_the_subject_plan_and_each_shot(ctx, sample_video):
     page = c.get(f"/ui/projects/{pid}").text
     assert "Kept real" in page and "(planned)" not in page
     assert "Real subject kept (25% of the frame)" in page and "restyled subject" in page
+
+
+def test_render_command_passes_the_comparison_options(ctx, settings, sample_video, monkeypatch):
+    from rokkur_studio import cli
+
+    monkeypatch.setattr(cli, "_settings", lambda args: settings)
+    monkeypatch.setattr("rokkur_studio.pipeline.context.build_context", lambda s: ctx)
+    monkeypatch.setattr(cli, "_drive", lambda *args, **kwargs: 0)
+    assert cli.main(["render", str(sample_video), "--theme", SPA, "--rights", "USER_OWNED",
+                     "--evidence", "mine", "--renderer", "ffmpeg_preview", "--reference",
+                     "cutout", "--canny", "0.4", "0.8", "--seed", "7"]) == 0
+    with ctx.db.session() as s:
+        project = s.scalars(select(Project)).one()
+        creative = project.creative_input
+    assert creative["reference_mode"] == "cutout" and creative["seed"] == 7
+    assert (creative["canny_low"], creative["canny_high"]) == (0.4, 0.8)

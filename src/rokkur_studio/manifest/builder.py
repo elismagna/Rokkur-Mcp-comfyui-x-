@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from typing import Any
 
 from rokkur_studio.agents.schemas import CreativeBrief
@@ -18,15 +19,25 @@ from rokkur_studio.manifest.schema import (
     StyleSpec,
     VideoSpec,
 )
+from rokkur_studio.pipeline.subject import is_stylized
 
 
-def fit_within(width: int, height: int, max_w: int, max_h: int, multiple: int = 16) -> tuple[int, int]:
-    """Scale (w, h) to fit (max_w, max_h) keeping aspect; round down to ``multiple``.
+def fit_within(width: int, height: int, max_w: int, max_h: int, multiple: int = 16, *,
+               max_pixels: int | None = None) -> tuple[int, int]:
+    """Scale (w, h) to fit the (max_w, max_h) box keeping aspect; round down to ``multiple``.
+
+    The box turns with the source, so a landscape clip in a 576x1024 box may be 1024 wide (it
+    used to come out 576x320). ``max_pixels`` also caps the area: Wan 1.3B is trained at
+    480x832 and is "less stable" above it (Wan 2.1 README).
 
     16 because video diffusion models (Wan, LTX, Hunyuan) patchify the 8x latent in 2x2 tiles:
     a 568-pixel side gives mismatched token counts and the sampler fails.
     """
+    if (width > height) != (max_w > max_h):
+        max_w, max_h = max_h, max_w
     scale = min(1.0, max_w / width, max_h / height)
+    if max_pixels:
+        scale = min(scale, math.sqrt(max_pixels / (width * height)))
     w = max(multiple, int(width * scale) // multiple * multiple)
     h = max(multiple, int(height * scale) // multiple * multiple)
     return w, h
@@ -40,7 +51,7 @@ def build_manifest(*, project_id: str, source_asset: str, analysis: dict[str, An
                    brief: CreativeBrief, profile: RenderProfile, target_format: str,
                    reference_image: str | None = None) -> ReconstructionManifest:
     width, height = fit_within(analysis["width"], analysis["height"], profile.max_width,
-                               profile.max_height)
+                               profile.max_height, max_pixels=profile.max_pixels)
     fps = float(min(analysis["fps"] or profile.fps, profile.fps))
     motion_by_id = {s["shot_id"]: s for s in analysis["shots"]}
     shots = []
@@ -71,6 +82,25 @@ def build_manifest(*, project_id: str, source_asset: str, analysis: dict[str, An
     )
 
 
+# Wan's default negative (wan/configs/shared_config.py) carries "style, artwork, painting,
+# picture", which push toward photographs; a stylized look must not be steered away from itself.
+_STYLE_TERMS = ("风格", "作品", "画作", "画面")
+# Community practice against the plastic CGI look (Civitai research, 2026-10-09).
+_ANTI_CGI = "3d render, cgi, plastic, waxy skin"
+
+
+def negative_prompt(base: str, manifest: ReconstructionManifest) -> str:
+    """The shot's negative prompt: the profile's base (Wan's own default), then the director's."""
+    ours = manifest.style.negative_prompt
+    if not base:
+        return ours
+    stylized = is_stylized(f"{manifest.style.theme} {manifest.style.prompt}")
+    terms = [t.strip() for t in re.split(r"[，,]", base)
+             if t.strip() and not (stylized and t.strip() in _STYLE_TERMS)]
+    parts = ["，".join(terms), "" if stylized else _ANTI_CGI, ours]
+    return ", ".join(part for part in parts if part)
+
+
 def shot_params(manifest: ReconstructionManifest, shot: ShotSpec,
                 profile: RenderProfile) -> dict[str, Any]:
     """Semantic parameters for the workflow compiler (never node IDs)."""
@@ -79,10 +109,10 @@ def shot_params(manifest: ReconstructionManifest, shot: ShotSpec,
     identity = float(o.get("identity_strength", manifest.identity.strength))
     scale = float(o.get("resolution_scale", 1.0))
     fps = float(o.get("fps", manifest.video.fps))
+    box_w, box_h = fit_within(manifest.video.width, manifest.video.height, profile.max_width,
+                              profile.max_height, max_pixels=profile.max_pixels)
     width, height = fit_within(int(manifest.video.width * scale),
-                               int(manifest.video.height * scale),
-                               min(manifest.video.width, profile.max_width),
-                               min(manifest.video.height, profile.max_height))
+                               int(manifest.video.height * scale), box_w, box_h)
     # A degraded profile must preserve the whole shot, not silently truncate its tail.
     limit = (profile.max_frames - 1) // profile.frame_multiple * profile.frame_multiple + 1
     fps = min(fps, float(profile.fps), limit / shot.duration)
@@ -91,7 +121,7 @@ def shot_params(manifest: ReconstructionManifest, shot: ShotSpec,
                  * profile.frame_multiple + 1)
     params: dict[str, Any] = {
         "STYLE_PROMPT": shot.prompt or manifest.style.prompt,
-        "NEGATIVE_PROMPT": manifest.style.negative_prompt,
+        "NEGATIVE_PROMPT": negative_prompt(profile.negative_base, manifest),
         "SEED": int(o.get("seed", shot.seed)),
         "WIDTH": width,
         "HEIGHT": height,
@@ -109,6 +139,9 @@ def shot_params(manifest: ReconstructionManifest, shot: ShotSpec,
         "DEPTH_STRENGTH": 1.0 if o.get("depth", shot.controls.depth) else 0.0,
         "OFFLOAD": bool(o.get("offload", profile.offload)),
     }
+    for key in ("canny_low", "canny_high"):
+        if o.get(key) is not None:
+            params[key.upper()] = float(o[key])
     if manifest.identity.reference_image:
         params["REFERENCE_IMAGE"] = manifest.identity.reference_image
     return params

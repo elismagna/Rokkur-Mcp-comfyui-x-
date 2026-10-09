@@ -30,8 +30,8 @@
     <label for="reference_file">Appearance reference <span class="muted">optional</span></label>
     <input id="reference_file" type="file" name="reference_file" accept="image/png,image/jpeg,image/webp">
     <img id="reference-preview" alt="Your selected character reference" hidden>
-    <label for="reference_mode">When no reference is uploaded</label><select id="reference_mode" name="reference_mode"><option value="source">Use the first frame of each shot as an appearance guide</option><option value="none">Use the prompt and motion guide only</option></select>
-    <p class="hint">A custom reference guides the new appearance. Source frames help preserve the existing one.</p>
+    <label for="reference_mode">When no reference is uploaded</label><select id="reference_mode" name="reference_mode"><option value="auto" selected>Let the studio decide</option><option value="cutout">A cutout of the main subject on white</option><option value="source">The first frame of each shot</option><option value="none">No reference, only the prompt and motion guide</option></select>
+    <p class="hint">A custom reference guides the new appearance. When the studio decides, a kept subject is shown to Wan as a cutout, and otherwise Wan gets no reference: a whole source frame pulls the old room and light into the new look.</p>
     <label class="check"><input type="checkbox" name="use_global_look" value="true" checked> Apply my saved global look</label>
     <p class="hint">Includes the prefix, style modifiers and negatives from Director.</p>
     <details><summary>Negative prompt and advanced controls</summary>

@@ -8,14 +8,14 @@ from rokkur_studio.agents.providers import OllamaProvider, RuleBasedProvider
 from rokkur_studio.agents.roles import CreativeDirector, DirectorOfPhotography, RepairPlanner
 from rokkur_studio.agents.schemas import ShotFraming
 from rokkur_studio.comfyui.client import ComfyClient, ComfyError
-from rokkur_studio.comfyui.compiler import TemplateRegistry, compile_workflow
+from rokkur_studio.comfyui.compiler import TemplateError, TemplateRegistry, compile_workflow
 from rokkur_studio.config import DirectorSection
 from rokkur_studio.director.assets import AssetTracker
 from rokkur_studio.director.passes import direct
 from rokkur_studio.jobs.errors import JobCancelled
 from rokkur_studio.manifest.builder import build_manifest, shot_params
 from rokkur_studio.pipeline.qc import score_shot
-from rokkur_studio.pipeline.renderers import ComfyUIRenderer
+from rokkur_studio.pipeline.renderers import ComfyUIRenderer, RenderRejected
 from rokkur_studio.services.projects import get_project
 from tests.fakes import FakeComfyUI, ollama_transport
 from tests.test_dashboard import client_for
@@ -83,6 +83,67 @@ def test_renderer_uploads_appearance_reference_and_trims_padding(
         assert image in fake.uploads
         assert fake.uploads[image].startswith(b"\x89PNG")
         assert workflow["14"]["inputs"]["reference_image"] == ["20", 0]
+
+
+@pytest.mark.parametrize(("name", "control"), [("v2v_3070_keep", "13"),
+                                               ("v2v_3070_depth_keep", "37")])
+def test_keep_workflows_regenerate_the_room_and_keep_the_subject(name, control):
+    template = TemplateRegistry(ROOT / "workflows").get(name)
+    wf = compile_workflow(template, {"STYLE_PROMPT": "spa", "INPUT_VIDEO": "clip.mp4",
+                                     "MASK_VIDEO": "mask.mp4", "WIDTH": 832,
+                                     "HEIGHT": 464}).workflow
+    vace = wf["14"]["inputs"]
+    # WanVaceToVideo regenerates where control_masks is 1: the inverted subject mask.
+    assert vace["control_masks"] == ["35", 0] and wf["35"]["inputs"]["mask"] == ["34", 0]
+    assert wf["34"]["class_type"] == "ThresholdMask" and wf["30"]["inputs"]["file"] == "mask.mp4"
+    # The control video holds the source pixels on the subject and the guide elsewhere.
+    assert vace["control_video"] == ["36", 0]
+    assert wf["36"]["inputs"] | {} == {"destination": [control, 0], "source": ["12", 0], "x": 0,
+                                       "y": 0, "resize_source": True, "mask": ["34", 0]}
+    for node in ("12", "14", "32"):
+        assert (wf[node]["inputs"]["width"], wf[node]["inputs"]["height"]) == (832, 464)
+    with pytest.raises(TemplateError, match="MASK_VIDEO"):
+        compile_workflow(template, {"STYLE_PROMPT": "spa", "INPUT_VIDEO": "clip.mp4"})
+
+
+def test_canny_thresholds_default_and_override(settings):
+    template = TemplateRegistry(ROOT / "workflows").get("v2v_3070_quality")
+    values = {"STYLE_PROMPT": "spa", "INPUT_VIDEO": "clip.mp4"}
+    canny = compile_workflow(template, values).workflow["13"]["inputs"]
+    assert (canny["low_threshold"], canny["high_threshold"]) == (0.2, 0.5)
+    profile = settings.profile("RTX3070_QUALITY")
+    manifest = build_manifest(project_id="test", source_asset="source", analysis=ANALYSIS,
+                              brief=brief(), profile=profile, target_format="youtube_video")
+    shot = manifest.shots[0]
+    assert "CANNY_LOW" not in shot_params(manifest, shot, profile)
+    shot.overrides.update(canny_low=0.4, canny_high=0.8)
+    canny = compile_workflow(template, {**values, **shot_params(manifest, shot, profile)}
+                             ).workflow["13"]["inputs"]
+    assert (canny["low_threshold"], canny["high_threshold"]) == (0.4, 0.8)
+
+
+def test_renderer_uploads_the_subject_mask_with_the_control_timing(ffmpeg, sample_video,
+                                                                  tmp_path):
+    fake = FakeComfyUI()
+    client = ComfyClient("http://comfy", transport=fake.transport())
+    mask = ffmpeg.filter_video(sample_video, tmp_path / "mask.mp4", "fps=16,format=gray", fps=16)
+    params = {"STYLE_PROMPT": "spa", "WIDTH": 320, "HEIGHT": 560, "FPS": 16,
+              "FRAME_COUNT": 41, "_OUTPUT_FRAMES": 39, "_REFERENCE_MODE": "auto",
+              "MASK_VIDEO": str(mask)}
+    renderer = ComfyUIRenderer(client, TemplateRegistry(ROOT / "workflows"), ffmpeg,
+                               timeout_s=10, poll_s=0)
+    out = renderer.render_shot(clip=sample_video, params=dict(params), workflow="v2v_3070_keep",
+                               out=tmp_path / "out.mp4")
+    workflow = next(iter(fake.prompts.values()))
+    uploaded = tmp_path / "uploaded_mask.mp4"
+    uploaded.write_bytes(fake.uploads[workflow["30"]["inputs"]["file"]])
+    control = tmp_path / "uploaded_control.mp4"
+    control.write_bytes(fake.uploads[workflow["10"]["inputs"]["file"]])
+    assert ffmpeg.probe(uploaded).frame_count == ffmpeg.probe(control).frame_count == 41
+    assert out.details["subject_mask"] and out.details["reference"] == "none"
+    with pytest.raises(RenderRejected, match="subject mask"):
+        renderer.render_shot(clip=sample_video, params=dict(params),
+                             workflow="v2v_3070_quality", out=tmp_path / "plain.mp4")
 
 
 def test_cancelled_comfy_render_is_a_cancelled_job(ffmpeg, sample_video, tmp_path, monkeypatch):

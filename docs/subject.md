@@ -40,24 +40,48 @@ as a subject change, so it keeps the subject. Pick **Restyle it too** for that.
 
 ## How the subject is kept
 
-This runs after each shot renders, on the CPU, outside the GPU lease.
+The subject is kept twice: Wan draws the new room around the real subject, and then the
+subject's exact pixels go back over the render.
 
-1. **Mask.** U²-Net, a salient-object model, finds the main subject in every frame of the
-   source shot:
+1. **Mask.** Before each shot renders, U²-Net, a salient-object model, finds the main subject
+   in every frame of the source shot. This runs on the CPU, outside the GPU lease.
    - It uses rembg's ONNX export of the Apache-2.0 weights, run with onnxruntime.
    - The source is cropped to the render's aspect, the way ComfyUI's ImageScale crops.
    - The masks are averaged over neighbouring frames so the edge does not shimmer.
-   - Masks are cached per shot in `work/masks/`, so repair rounds reuse them. A grey mask
-     preview video sits next to the cache.
-2. **Edge.** The mask is grown by `subject.grow` (1.2% of the short side) to cover Wan's halo
+   - Masks are cached per shot in `work/masks/`, so repair rounds and the composite reuse
+     them. A grey mask preview video sits next to the cache.
+2. **Wan keeps the subject.** The profile's `keep_workflow` runs instead of its usual workflow
+   (`v2v_3070_keep`, or `v2v_3070_depth_keep` for RTX3070_DEPTH). It gets the masks as a
+   video, `MASK_VIDEO`, and:
+   - inverts them into WanVaceToVideo's `control_masks`, so Wan regenerates the room (white)
+     and keeps the subject (black);
+   - builds the control video from the source pixels on the subject and the usual Canny
+     edges (or depth) everywhere else, so the room still follows the source layout.
+
+   The wiring comes from Comfy-Org's VACE inpainting template and the Civitai workflows
+   listed in `workflows/v2v_3070_keep/params.yaml`, per the workflow rule in
+   `docs/comfyui.md`.
+3. **Reference.** With the reference set to **Let the studio decide** (`reference_mode:
+   auto`), Wan also gets the subject cut out on white as its reference image. VACE was trained
+   on object or background references, not on scenes (Comfy-Org ref2v template note). The old
+   default, the whole first source frame, probably pulled the real room and light into the
+   restyle; that is inferred from renders 62, 63 and 67, not tested yet.
+   A restyled subject gets no reference in `auto`. `cutout`, `source` and `none` force a
+   choice; an uploaded character reference always wins.
+4. **Edge.** The mask is grown by `subject.grow` (1.2% of the short side) to cover Wan's halo
    around the subject. It is then feathered by `subject.feather`.
-3. **Colour.** The subject's colours move part of the way toward the new room
+5. **Colour.** The subject's colours move part of the way toward the new room
    (`subject.harmonize`, 0.5). The offset comes from a ring just outside the subject, and it
    is one value per shot, so it does not flicker.
-4. **Composite.** The result is written to `renders/shot_NNN/attempt_NN_subject.mp4` and
-   becomes the shot's render, so QC, repair and assembly use it.
+6. **Composite.** After the render, the result is written to
+   `renders/shot_NNN/attempt_NN_subject.mp4` and becomes the shot's render, so QC, repair and
+   assembly use it.
    - The untouched render stays as a `render_raw` asset.
    - The attempt picker on the project page lists it as "restyled subject".
+
+Steps 4 to 6 run on the CPU after each render. If the keep workflow is missing or fails to
+load, the shot renders with the profile's usual workflow and only the composite keeps the
+subject. The project page lists the workflow each attempt used under Applied render settings.
 
 The full frame is restyled instead, with the reason shown under the shot preview, when:
 
@@ -86,7 +110,7 @@ about 25–35 s for an 81-frame shot, including the composite.
   when a result looks odd.
 - If Wan moved the subject's outline by more than the growth margin, bits of Wan's own
   subject can show around the edge.
-- The better-blended version is VACE inpainting: the same masks go into WanVaceToVideo's
-  `control_masks` (white regenerates the room, black keeps the source). Wan then draws the
-  room around the real subject itself. Per the workflow rule in `docs/comfyui.md`, start that
-  from a published VACE inpainting workflow. It is an experiment for the PC.
+- The keep workflows have only been checked here by compile tests and a fake ComfyUI. Their
+  first real renders on the PC decide whether they stay the default for kept subjects.
+- The mask is binary inside Wan (ThresholdMask at 0.5), as in the Comfy-Org template. If Wan
+  leaves a seam at the subject's edge, try growing the mask a little before it goes to Wan.

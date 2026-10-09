@@ -98,10 +98,19 @@ decision), `docs/milestones.md` (phase status), `docs/setup-windows.md`,
   compares edge maps rather than brightness.
 - **Publishing:** private by default. Public and scheduled uploads need `youtube.allow_public`,
   because `publishAt` makes a video public. `auto_publish` is not used.
-- **Main subject (2026-10-09):** the app keeps the real subject over the render when the prompt
-  changes the place, and restyles it for characters, subject changes or stylized looks
-  (`pipeline/subject.py`, `docs/subject.md`). Keeping is a CPU U²-Net mask plus a composite
-  after the render, not a ComfyUI change, so it works with every workflow and is testable here.
+- **Main subject (2026-10-09):** the app keeps the real subject when the prompt changes the
+  place, and restyles it for characters, subject changes or stylized looks
+  (`pipeline/subject.py`, `docs/subject.md`). Keeping uses CPU U²-Net masks twice: the
+  profile's `keep_workflow` (VACE `control_masks`) makes Wan redraw only the room, and a
+  composite after the render puts the exact subject back. Without the keep workflow, the
+  composite alone still keeps the subject.
+- **Online research applied (2026-10-09, `docs/research/`):**
+  - Wan 1.3B renders at 480P at most (`max_pixels`), and the size box turns for landscape.
+  - Wan's own negative prompt is the base (`negative_base`); stylized looks drop its "style,
+    artwork" terms, and photographic looks add anti-CGI terms.
+  - The reference image defaults to `auto`: a cutout of a kept subject, else none. VACE only
+    learned object or background references, so a whole source frame is no longer the
+    default.
 - **Repair limit:** after `render.max_retries` rounds a person chooses more rounds, re-check, or
   keep. "Keep" writes a QC report version marked PASS with an `override` block.
 
@@ -231,36 +240,43 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
-- **Claude (2026-10-09): automatic main-subject handling is pushed; Codex, please test it on
-  the PC.** Elis's render notes so far:
+- **Codex: test the research update on the PC (Claude, 2026-10-09).** Elis's render notes so
+  far:
   - 54 is the best yet.
   - 55 and 66 are notable for the subject/background split.
   - 62/63: the room is great, the ape is bad.
   - 67 has a new style but looks like Blender/CGI 3D.
 
-  Steps:
-  1. `git pull`, rebuild (`studio.ps1 up`; the image now installs onnxruntime), then open
-     System. **Subject masks** should say "u2net, downloads on first use".
-  2. New video with the ape clip, RTX3070_QUALITY, a place-only prompt like render 54/62's.
-     Leave Main subject on **Let the studio decide**; the hint should say it keeps the real
-     subject.
-  3. After the render: compare each shot's attempt with its "restyled subject" version in the
-     attempt picker. Check `work/masks/*.mp4` (mask previews) when an edge looks wrong.
-  4. Report through git as before: `docs/validation/2026-10-09/<project>_<shot>.png` contact
-     sheets of composite, raw and mask (`hstack` of the three), QC scores, the mask timing
-     from the render's `_details.subject.seconds`, and what Elis thought. Tune
-     `subject.grow` / `feather` / `harmonize` in `config/studio.yaml` if halos or colour look
-     off, one change per run.
-  5. Then experiment 5 below in its new form: VACE `control_masks` from these masks, started
-     from a published VACE inpainting workflow (rule above).
-- **Research in progress (2026-10-09):** findings land in `/mnt/project-files/knowledge/` on
-  Claude's side:
-  - Wan workflows from GitHub and docs.comfy.org;
-  - Civitai workflows, now that Elis allowed civitai.com;
-  - a retrospective of our workflows and app against online sources.
-
-  Claude will fold the results into the workflows and this handoff.
-
+  Steps, one change per run, same shot, same seed (`--seed`):
+  1. `git pull`, then `.\scripts\studio.ps1 up` (rebuilds; the image now installs
+     onnxruntime), then `.\scripts\studio.ps1 comfy-check`. `v2v_3070_keep` and
+     `v2v_3070_depth_keep` must show `[ok]`. They add only core nodes (`ImageToMask`,
+     `ThresholdMask`, `InvertMask`, `ImageCompositeMasked`). System should say **Subject
+     masks**: "u2net, downloads on first use".
+  2. Baseline with the new defaults: the ape clip, RTX3070_QUALITY, a place-only prompt like
+     render 54/62's, everything left on "Let the studio decide", `--seed 54`. Expect 832×464,
+     workflow `v2v_3070_keep` and reference "subject cutout" under Applied render settings.
+     Compare each shot's raw attempt with its "restyled subject" version. 832×464 is about
+     twice the pixels of the old 576×320, so expect longer renders. A CUDA OOM steps down
+     automatically (a GPU_OOM event); report it if that happens.
+  3. Keep workflow off: remove `keep_workflow` from RTX3070_QUALITY in
+     `config/render_profiles.yaml` locally (don't commit), same prompt and seed. Only the
+     composite keeps the ape. Put it back afterwards.
+  4. Reference: `--reference source` (the old default) and `--reference none`, then a
+     stylized prompt (e.g. claymation, which restyles the ape) with `auto` vs `source`.
+  5. Edges: `--canny 0.4 0.8` vs the default 0.2/0.5. If the fur and outline look better,
+     tell Claude and the default changes.
+  6. `RTX3070_DEPTH` with the same prompt and seed (it uses `v2v_3070_depth_keep`).
+  7. Report through git: for each run commit `docs/validation/2026-10-09/<run>.png` (contact
+     sheet `ffmpeg -i render.mp4 -vf "fps=2,scale=320:-1,tile=4x3" -frames:v 1 run.png`; for
+     kept subjects an `hstack` of composite, raw and `work/masks/*_preview.mp4`), plus one Log
+     line per run: what changed, render seconds, mask seconds (`_details.subject.seconds`), QC
+     score and what Elis thought. If an edge looks wrong, tune `subject.grow` / `feather` /
+     `harmonize` in `config/studio.yaml`, one change per run.
+  8. Not yet built, next after these results (each from a proven published workflow, per the
+     rule above): a Self-Forcing DMD LoRA "draft" profile (Apache-2.0, 4 steps, cfg 1), SLG and
+     CFGZeroStar guidance, Video Depth Anything, VBench-style QC (DINOv2 subject and CLIP
+     background consistency). Ranked list with sources: `docs/research/online-review-2026-10-09.md`.
 - **Claude (2026-10-08):** reviewed Codex's `5408dfe` and pushed the fixes listed in the Log.
   No edit in progress. Next for Elis: rebuild, then on the Ape project press **Allow 20 more
   renders and continue** (or Cancel it). `qc-shots.zip` is no longer needed.
@@ -268,6 +284,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   the PC because Claude cannot reach it).** Elis says ComfyUI `render_00054_` was the best so far
   and wants renders 61+ improved before adding much. Start from the 00054 graph (drag it into
   ComfyUI), keep its seed, change one thing per run, same shot each time:
+  (Items 1, 2, 3 and 5 are now built into the app; the test plan above replaces them.)
   1. Resolution: 832×480 (Wan 1.3B's training size) vs our 576×320.
   2. Reference: none vs source first frame vs one image already in the target style.
   3. Control: Canny 0.2/0.5 (now) vs softer edges (thresholds 0.3/0.7, or a slight blur first),
@@ -296,6 +313,16 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-09 Claude: **online research applied** (`docs/research/`, sources in each
+  `params.yaml`).
+  - New workflows `v2v_3070_keep` and `v2v_3070_depth_keep`, adapted from our Wan graphs plus
+    Comfy-Org's VACE inpainting template and Civitai mask wiring. A kept subject now uses
+    them automatically.
+  - Reference `auto` (subject cutout on white, or none), plus `--reference`, `--canny` and
+    `--seed` on `render`.
+  - 480P cap and a turning size box (landscape 1920×1080 renders at 832×464, not 576×320).
+  - Wan's default negative prompt as the base.
+  - Tested here with compile tests, a fake ComfyUI and a fake mask; not yet run on the PC.
 - 2026-10-09 Claude: **Main subject** handling (`docs/subject.md`).
   - A New video question (Auto, Keep it real, Restyle it too), plus `--subject` and
     `creative.subject`, with a live hint of what Auto will do.

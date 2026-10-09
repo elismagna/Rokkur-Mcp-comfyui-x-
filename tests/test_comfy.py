@@ -171,7 +171,8 @@ def test_validate_skips_inputs_filled_at_render_time():
 def test_depth_workflow_matches_the_canny_one_except_the_control_node():
     canny = TemplateRegistry(WF).get("v2v_3070_quality")
     depth = TemplateRegistry(WF).get("v2v_3070_depth")
-    assert set(depth.spec.parameters) == set(canny.spec.parameters) | {"DEPTH_MODEL"}
+    assert set(depth.spec.parameters) == \
+        set(canny.spec.parameters) - {"CANNY_LOW", "CANNY_HIGH"} | {"DEPTH_MODEL"}
     assert {k: v for k, v in depth.workflow.items() if k != "13"} == \
         {k: v for k, v in canny.workflow.items() if k != "13"}
     node = depth.workflow["13"]
@@ -183,6 +184,24 @@ def test_depth_workflow_matches_the_canny_one_except_the_control_node():
                                         "FPS": 16.0, "STEPS": 20, "SEED": 7})
     assert compiled.workflow["14"]["inputs"]["control_video"] == ["13", 0]
     assert compiled.workflow["12"]["inputs"]["width"] == 576
+
+
+@pytest.mark.parametrize(("keep", "base", "extra"), [
+    ("v2v_3070_keep", "v2v_3070_quality", set()),
+    ("v2v_3070_depth_keep", "v2v_3070_depth", {"37"}),
+])
+def test_keep_workflows_are_their_base_plus_the_subject_mask(keep, base, extra):
+    k, b = TemplateRegistry(WF).get(keep), TemplateRegistry(WF).get(base)
+    assert set(k.spec.parameters) == set(b.spec.parameters) | {"MASK_VIDEO"}
+    mask_nodes = {"30", "31", "32", "33", "34", "35", "36"} | extra
+    assert set(k.workflow) == set(b.workflow) | mask_nodes
+    for node, spec in b.workflow.items():
+        if node != "14":
+            assert k.workflow[node] == spec
+    vace = dict(k.workflow["14"]["inputs"])
+    assert vace.pop("control_video") == ["36", 0] and vace.pop("control_masks") == ["35", 0]
+    assert {**vace, "control_video": b.workflow["14"]["inputs"]["control_video"]} == \
+        b.workflow["14"]["inputs"]
 
 
 def test_depth_workflow_reports_a_missing_add_on():
