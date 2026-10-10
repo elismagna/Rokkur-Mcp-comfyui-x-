@@ -13,7 +13,7 @@ import io
 import json
 import shutil
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote
@@ -84,6 +84,7 @@ from rokkur_studio.services.projects import (
     latest_document,
     save_document,
 )
+from rokkur_studio.services.runpod import PodStatusCache, RunPodError, last_cloud_use
 from rokkur_studio.youtube.client import YouTubeError, video_url
 from rokkur_studio.youtube.oauth import OAuthError
 
@@ -227,13 +228,37 @@ def running_now(session: Session) -> list[dict[str, Any]]:
     return out
 
 
+def pod_cache(ctx: StudioContext) -> PodStatusCache | None:
+    """The RunPod pod's last known state, refreshed in the background (None: no pod control)."""
+    if ctx.runpod_factory is None:
+        return None
+    cache = ctx.extras.get("runpod_status")
+    if not isinstance(cache, PodStatusCache):
+        def fetch() -> Any:
+            client = ctx.runpod()
+            if client is None:
+                raise RunPodError("RunPod start/stop is not set up.")
+            try:
+                return client.state()
+            finally:
+                client.close()
+        cache = ctx.extras["runpod_status"] = PodStatusCache(fetch)
+    return cache
+
+
 @router.get("/status")
-def live_status(session: Db) -> dict[str, Any]:
-    """The rail's live line: cheap database reads only, polled by every page."""
+def live_status(ctx: Ctx, session: Db) -> dict[str, Any]:
+    """The rail's live line: cheap database reads only, polled by every page.
+
+    The cloud GPU line comes from a cache that refreshes in the background, never from RunPod
+    during the request."""
+    cache = pod_cache(ctx)
+    pod = cache.get()[0] if cache else None
     return {"running": running_now(session),
             "queued": session.scalar(select(func.count(Job.id)).where(Job.status == "QUEUED")) or 0,
             "approvals": session.scalar(select(func.count(ApprovalRequest.id))
-                                        .where(ApprovalRequest.status == "pending")) or 0}
+                                        .where(ApprovalRequest.status == "pending")) or 0,
+            "cloud_gpu": {"on": pod.running, "label": pod.label()} if pod else None}
 
 
 def media_files(ctx: StudioContext) -> list[dict[str, Any]]:
@@ -1051,6 +1076,33 @@ def director_character_delete(key: str, ctx: Ctx) -> RedirectResponse:
 # -- system --------------------------------------------------------------------------------
 @router.get("/system", response_class=HTMLResponse)
 def system_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
+    cache = pod_cache(ctx)
+    pod, pod_error = cache.get(wait=True) if cache else (None, "")
     return _page(request, "system.html", ctx, info=system_info(ctx, session),
                  services=services(ctx), gpu=gpu_info(ctx, session),
-                 workers=workers_info(session), profiles=ctx.settings.profiles)
+                 workers=workers_info(session), profiles=ctx.settings.profiles,
+                 pod_control=cache is not None, pod=pod, pod_error=pod_error)
+
+
+@router.post("/cloud-gpu/stop")
+def cloud_gpu_stop(ctx: Ctx, session: Db) -> RedirectResponse:
+    """Stop the RunPod pod, unless something is rendering on it right now."""
+    back = "/ui/system#cloud-gpu"
+    now = datetime.now(UTC)
+    if last_cloud_use(session, now, timedelta(0)) == now:
+        return _back(back, err="Something is rendering on the cloud GPU right now. Stop it once "
+                               "that render finishes, or cancel it first.")
+    client = ctx.runpod()
+    if client is None:
+        return _back(back, err="RunPod start/stop is not set up (docs/cloud.md).")
+    try:
+        client.stop()
+    except RunPodError as exc:
+        return _back(back, err=str(exc))
+    finally:
+        client.close()
+    cache = pod_cache(ctx)
+    if cache is not None:
+        cache.invalidate()
+    return _back(back, msg="Stopping the cloud GPU. RunPod stops charging its hourly rate once "
+                           "it has stopped.")

@@ -73,7 +73,7 @@ def test_taste_page_suggestions_and_live_status(ctx, sample_video):
     new = c.get("/ui/new").text
     assert 'data-apply data-field="theme" data-action="append" data-value="claymation"' in new
     live = c.get("/ui/status").json()
-    assert live == {"running": [], "queued": 0, "approvals": live["approvals"]}
+    assert live == {"running": [], "queued": 0, "approvals": live["approvals"], "cloud_gpu": None}
     css = c.get("/ui/static/studio.css")
     assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")
     assert "/ui/static/studio.js?v=" in c.get("/ui").text

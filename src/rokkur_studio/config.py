@@ -7,6 +7,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
@@ -63,10 +64,33 @@ class CloudSection(BaseModel):
     price_per_hour_usd: float = Field(0, ge=0)  # for the cost estimate; 0 = unknown
     default: Literal["local", "cloud"] = "local"  # preselected on the New video page
     timeout_s: float = Field(120, gt=0)  # per HTTP request: uploads and downloads cross the internet
+    # Starting and stopping a RunPod pod (docs/cloud.md, "Start the cloud GPU with the studio").
+    # The key and pod id come from .env; the rest is read by scripts/launch.ps1 on Windows.
+    runpod_api_key: SecretStr = SecretStr("")
+    runpod_pod_id: str = ""
+    ask_on_launch: bool = True         # the desktop icon asks whether to start the pod
+    auto_stop_idle_minutes: float = Field(30, ge=0)  # stop the pod after this long idle; 0 = never
+    ssh_user: str = "root"
+    ssh_key: str = ""                  # private key on this PC; empty = ~/.ssh/id_ed25519
+    remote_comfy_dir: str = "/workspace/ComfyUI"
+    remote_comfy_port: int = Field(8188, gt=0, lt=65536)
 
     @property
     def ready(self) -> bool:
         return self.enabled and bool(self.url.strip())
+
+    @property
+    def pod_control(self) -> bool:
+        """The studio can start and stop the RunPod pod (API key and pod id are set)."""
+        return bool(self.runpod_api_key.get_secret_value().strip() and self.runpod_pod_id.strip())
+
+    @property
+    def local_port(self) -> int:
+        """This PC's end of the SSH tunnel: the port in ``url`` (8189 by default)."""
+        try:
+            return urlsplit(self.url.strip()).port or 8189
+        except ValueError:  # a port that is not a number
+            return 8189
 
     def headers(self) -> dict[str, str]:
         token = self.token.get_secret_value().strip()
@@ -326,7 +350,7 @@ def project_target(creative: dict[str, Any] | None) -> RenderTarget:
 
 
 ENV_PREFIX = "STUDIO_"
-_TEXT_KEYS = {"token"}
+_TEXT_KEYS = {"token", "runpod_api_key", "runpod_pod_id", "ssh_key"}
 
 
 def _deep_set(target: dict[str, Any], keys: list[str], value: Any) -> None:
