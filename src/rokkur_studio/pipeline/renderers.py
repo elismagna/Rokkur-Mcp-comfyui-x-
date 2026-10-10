@@ -20,6 +20,7 @@ from rokkur_studio.comfyui.client import (
 from rokkur_studio.comfyui.compiler import TemplateRegistry, compile_workflow
 from rokkur_studio.jobs.errors import JobCancelled
 from rokkur_studio.media.ffmpeg import FFmpeg
+from rokkur_studio.pipeline.stabilize import control_smoothing_filter
 
 log = logging.getLogger(__name__)
 
@@ -109,9 +110,18 @@ class ComfyUIRenderer:
             reference = str(self.ffmpeg.thumbnail(clip, work / "reference.png", at=0,
                                                   width=int(params["WIDTH"])))
             reference_kind = "source first frame"
-        prepared = clip
+        try:
+            amount = float(params.get("_SMOOTH_CONTROL") or 0.0)
+            smoothing = control_smoothing_filter(amount)
+        except (TypeError, ValueError) as exc:
+            raise RenderRejected(f"smooth_control must be a number from 0 to 1: {exc}") from exc
+        prepared, smoothed = clip, None
         if any(n["class_type"] == "WanVaceToVideo" for n in template.workflow.values()):
-            prepared = self._frames(clip, work / "control.mp4", params)
+            # The source becomes VACE's Canny/depth guide inside the workflow. Smoothing it in
+            # time first stops edges drawn from grain switching on and off between frames, a
+            # main cause of shimmer (docs/stability.md). The subject mask is never smoothed.
+            prepared = self._frames(clip, work / "control.mp4", params, smooth=smoothing)
+            smoothed = smoothing
         try:
             folder = f"rokkur/{self.client.client_id}/{out.stem}"
             uploaded = self.client.upload_input(prepared, subfolder=folder)
@@ -170,11 +180,16 @@ class ComfyUIRenderer:
             "ignored_params": sorted(compiled.ignored),
             "reference": reference_kind,
             "subject_mask": bool(mask),
+            "control_smoothing": ({"amount": min(1.0, amount), "filter": smoothed}
+                                  if smoothed else None),
             "output_frames": self.ffmpeg.probe(out).frame_count,
             "execution_seconds": result.execution_seconds})
 
-    def _frames(self, video: Path, out: Path, params: dict[str, Any]) -> Path:
-        """``video`` at the render's fps and exactly FRAME_COUNT frames (the last one held)."""
-        return self.ffmpeg.filter_video(video, out,
-            f"fps={params['FPS']},tpad=stop=-1:stop_mode=clone,"
-            f"trim=end_frame={params['FRAME_COUNT']},setpts=PTS-STARTPTS", fps=params["FPS"])
+    def _frames(self, video: Path, out: Path, params: dict[str, Any], *,
+                smooth: str | None = None) -> Path:
+        """``video`` at the render's fps and exactly FRAME_COUNT frames (the last one held),
+        optionally through a temporal ``smooth`` filter, which keeps every frame's timing."""
+        steps = [f"fps={params['FPS']}", *([smooth] if smooth else []),
+                 "tpad=stop=-1:stop_mode=clone", f"trim=end_frame={params['FRAME_COUNT']}",
+                 "setpts=PTS-STARTPTS"]
+        return self.ffmpeg.filter_video(video, out, ",".join(steps), fps=params["FPS"])

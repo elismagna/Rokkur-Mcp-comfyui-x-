@@ -139,6 +139,8 @@ class RightsAssessment(BaseModel):
 QcRecommendation = Literal[
     "PASS", "RERENDER_SHOT", "REDUCE_STYLE_STRENGTH", "INCREASE_IDENTITY", "CHANGE_SEED",
     "ADD_POSE_CONTROL", "ADD_DEPTH_CONTROL", "REPAIR_FRAMES", "ADJUST_CONTROL_STRENGTH",
+    # Auto-tuning (docs/stability.md): steadiness, guide edges and the AI picture review.
+    "STABILIZE", "DEFLICKER", "CALM_EDGES", "FOLLOW_PROMPT", "FIX_ANATOMY", "MORE_DETAIL",
 ]
 
 
@@ -148,6 +150,7 @@ class RepairAction(BaseModel):
     changes: dict[str, float | int | str | bool]
     reason: str
     unsupported: list[str] = Field(default_factory=list)
+    tuning: list[str] = Field(default_factory=list)  # each auto-tuning rule that fired, and why
 
 
 class RepairPlan(BaseModel):
