@@ -73,6 +73,7 @@ from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.domain.states import ProjectStatus as S
 from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline.context import StudioContext, profile_availability, supported_controls
+from rokkur_studio.pipeline.extend import ExtendRequest, latest_extension, request_extension
 from rokkur_studio.pipeline.stages import _subject_masker
 from rokkur_studio.pipeline.subject import (
     MaskerUnavailable,
@@ -187,12 +188,13 @@ def _page(request: Request, name: str, ctx: StudioContext, **data: Any) -> HTMLR
 
 
 def _back(url: str, *, msg: str | None = None, err: str | None = None) -> RedirectResponse:
-    sep = "&" if "?" in url else "?"
+    base, hash_sign, fragment = url.partition("#")
+    sep = "&" if "?" in base else "?"
     if msg:
-        url += f"{sep}msg={quote(msg)}"
+        base += f"{sep}msg={quote(msg)}"
     elif err:
-        url += f"{sep}err={quote(err)}"
-    return RedirectResponse(url, status_code=303)
+        base += f"{sep}err={quote(err)}"
+    return RedirectResponse(base + hash_sign + fragment, status_code=303)
 
 
 def _thumbs(session: Session, project_ids: list[str]) -> dict[str, str]:
@@ -556,6 +558,7 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                      character_key: Annotated[str, Form()] = "",
                      character_description: Annotated[str, Form()] = "",
                      use_global_look: Annotated[bool, Form()] = False,
+                     stable: Annotated[bool, Form()] = False,
                      render_profile: Annotated[str, Form()] = "",
                      render_on: Annotated[str, Form()] = "",
                      target_format: Annotated[str, Form()] = "youtube_short",
@@ -640,7 +643,7 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                                 audio_bed_rights_evidence=audio_bed_rights_evidence or None,
                                 character_key=character_key or None,
                                 character_description=character_description or None,
-                                use_global_look=use_global_look,
+                                use_global_look=use_global_look, stable=stable,
                                 render_on=target,
                                 character_reference_path=character_reference_path or None),
             autostart=autostart)
@@ -747,6 +750,16 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
     return _page(request, "project.html", ctx, d=detail, p=project, events=events,
                  shots=shots, subject=subject, keyframes=keyframes, tags=ratings.TAGS,
                  storyboard=_storyboard(session, project_id),
+                 adjustable=project.status in commands.ADJUSTABLE,
+                 extendable=(project.status in (S.READY_TO_PUBLISH, S.PUBLISHED, S.MONITORING)
+                             and ctx.settings.render.renderer == "comfyui"),
+                 extension=latest_extension(session, project),
+                 extend_jobs=list(session.scalars(select(Job).where(
+                     Job.project_id == project_id, Job.kind == "extend",
+                     Job.status.in_(("QUEUED", "RUNNING", "RETRY_WAIT"))))),
+                 rendered_shot_ids=sorted(commands.rendered_shots(session, project_id)),
+                 library_pictures=[i for i in image_svc.list_images(session, limit=40)
+                                   if i.status == "done" and i.rel_path],
                  can_storyboard=detail.documents.get("creative_brief") is not None
                  and not image_availability(ctx).get(ctx.settings.images.default_profile),
                  video_asset=video_asset, video_rating=video_rating,
@@ -877,6 +890,93 @@ def redo_from_ui(project_id: str, ctx: Ctx, session: Db,
     names = ", ".join(s.replace("shot_", "") for s in shots or [])
     return _back(url, msg=f"Redoing shot{'s' if len(shots or []) > 1 else ''} {names}; "
                           "the other shots stay as they are")
+
+
+def _reference_from_library(ctx: StudioContext, session: Session, project: Project,
+                            image_id: str) -> str:
+    """Copy a library picture into the project's references; returns its store path."""
+    picture = _image_or_404(session, image_id)
+    if not picture.rel_path:
+        raise ValueError("that picture has no file yet")
+    asset = import_file(session, ctx.store, project.id, "reference", "references",
+                        _images(ctx).path_for(picture.rel_path),
+                        name=f"reference_{picture.id}.png", meta={"image_id": picture.id})
+    return asset.rel_path
+
+
+@router.post("/projects/{project_id}/extend")
+def extend_from_ui(project_id: str, ctx: Ctx, session: Db,
+                   seconds: Annotated[float, Form()] = 3.0,
+                   prompt: Annotated[str, Form()] = "",
+                   reference_image_id: Annotated[str, Form()] = "") -> RedirectResponse:
+    """Continue the finished video past its last frame (docs/video-tools.md)."""
+    reference = None
+    if reference_image_id:
+        picture = _image_or_404(session, reference_image_id)
+        reference = str(_images(ctx).path_for(picture.rel_path)) if picture.rel_path else None
+    try:
+        job = request_extension(session, ctx.settings, ExtendRequest(
+            project_id=project_id, seconds=seconds, prompt=prompt,
+            reference_image_path=reference), actor="dashboard")
+    except (ValueError, LookupError) as exc:
+        return _back(f"/ui/projects/{project_id}#extend", err=str(exc))
+    return _back(f"/ui/projects/{project_id}#extend",
+                 msg=f"Extension of {seconds:g} s queued (job {job.id[-8:]}); the longer cut "
+                     "appears as the latest final video when it is done")
+
+
+@router.post("/new/extend")
+def extend_clip_from_ui(ctx: Ctx, session: Db, media_file: Annotated[str, Form()],
+                        prompt: Annotated[str, Form()],
+                        seconds: Annotated[float, Form()] = 3.0,
+                        rights_confirmed: Annotated[bool, Form()] = False,
+                        rights_evidence: Annotated[str, Form()] = "") -> RedirectResponse:
+    """Extend a clip in the media folder before making a video from it."""
+    if media_file not in {m["path"] for m in media_files(ctx)}:
+        return _back("/ui/new", err="that file is not in the media folder")
+    try:
+        job = request_extension(session, ctx.settings, ExtendRequest(
+            source_path=media_file, seconds=seconds, prompt=prompt,
+            rights_confirmed=rights_confirmed, rights_evidence=rights_evidence), actor="dashboard")
+    except (ValueError, LookupError) as exc:
+        return _back("/ui/new", err=str(exc))
+    return _back("/ui/new", msg=f"Extending {Path(media_file).name} by {seconds:g} s (job "
+                               f"{job.id[-8:]}); the longer clip appears in the media folder "
+                               "list when it is done")
+
+
+@router.post("/projects/{project_id}/adjust")
+def adjust_from_ui(project_id: str, ctx: Ctx, session: Db,
+                   prompt_extra: Annotated[str, Form()] = "",
+                   seed: Annotated[str, Form()] = "", steps: Annotated[str, Form()] = "",
+                   cfg: Annotated[str, Form()] = "",
+                   control_strength: Annotated[str, Form()] = "",
+                   canny_low: Annotated[str, Form()] = "", canny_high: Annotated[str, Form()] = "",
+                   reference_image_id: Annotated[str, Form()] = "",
+                   clear_reference: Annotated[bool, Form()] = False) -> RedirectResponse:
+    try:
+        project = get_project(session, project_id, for_update=True)
+    except LookupError as exc:
+        raise HTTPException(404) from exc
+    back = f"/ui/projects/{project_id}#adjust"
+    try:
+        changes = {"prompt_extra": prompt_extra.strip() or None,
+                   "seed": int(seed) if seed.strip() else None,
+                   "steps": int(steps) if steps.strip() else None,
+                   "cfg": float(cfg) if cfg.strip() else None,
+                   "control_strength": float(control_strength) if control_strength.strip() else None,
+                   "canny_low": float(canny_low) if canny_low.strip() else None,
+                   "canny_high": float(canny_high) if canny_high.strip() else None}
+        reference = (_reference_from_library(ctx, session, project, reference_image_id)
+                     if reference_image_id and not clear_reference else None)
+        result = commands.adjust_remaining_shots(session, project, changes=changes,
+                                                 actor="dashboard", reference_image=reference,
+                                                 clear_reference=clear_reference)
+    except (ValueError, LookupError) as exc:
+        return _back(back, err=str(exc))
+    n = len(result["shots"])
+    return _back(back, msg=f"Applied to the {n} shot{'s' if n != 1 else ''} still to render; "
+                           f"{len(result['rendered_untouched'])} finished shot(s) untouched")
 
 
 @router.post("/projects/{project_id}/{action}")

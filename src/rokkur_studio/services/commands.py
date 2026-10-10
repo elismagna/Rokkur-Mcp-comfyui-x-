@@ -268,6 +268,62 @@ def redo_shots(session: Session, project: Project, settings: Settings, *, shot_i
     return advance(session, project, settings, manual=True)
 
 
+ADJUSTABLE = frozenset({"WORKFLOW_READY", "RENDER_QUEUED", "RENDERING", "QUALITY_CHECK",
+                        "QUALITY_FAILED", "REPAIRING"})
+SAFE_KEYS = ("prompt_extra", "seed", "steps", "cfg", "control_strength", "canny_low", "canny_high")
+
+
+def rendered_shots(session: Session, project_id: str) -> set[str]:
+    """Shots with a finished render, or one in progress whose settings are already fixed."""
+    return set(session.scalars(select(Render.shot_id).where(
+        Render.project_id == project_id, Render.status.in_(("succeeded", "running")))))
+
+
+def adjust_remaining_shots(session: Session, project: Project, *, changes: dict[str, Any],
+                           actor: str, reference_image: str | None = None,
+                           clear_reference: bool = False) -> dict[str, Any]:
+    """Change what is safe while a video renders: only shots without a finished render take
+    the new values, and the render loop picks the new manifest up before its next shot.
+
+    ``changes`` holds any of SAFE_KEYS; ``reference_image`` is a store-relative path for the
+    appearance reference (every remaining shot then gets it; rendered shots keep theirs).
+    """
+    if project.status not in ADJUSTABLE:
+        raise InvalidTransition(S(project.status), S.RENDERING,
+                                "adjustments apply while the shots render; a finished video "
+                                "takes a redo instead")
+    applied = {k: v for k, v in changes.items() if k in SAFE_KEYS and v is not None}
+    if "prompt_extra" in applied and not str(applied["prompt_extra"]).strip():
+        applied.pop("prompt_extra")
+    if "canny_low" in applied and "canny_high" in applied and applied["canny_low"] >= applied["canny_high"]:
+        raise ValueError("the low edge threshold must be below the high one")
+    if not applied and reference_image is None and not clear_reference:
+        raise ValueError("nothing to change")
+    mdoc = latest_document(session, project.id, "manifest")
+    if mdoc is None:
+        raise ValueError("the shots are not planned yet; adjustments start once the workflow "
+                         "is ready")
+    manifest = ReconstructionManifest.model_validate(mdoc.data)
+    done = rendered_shots(session, project.id)
+    remaining = [s.shot_id for s in manifest.shots if s.shot_id not in done]
+    if not remaining:
+        raise ValueError("every shot has rendered; use Redo on the shots you want changed")
+    for shot in manifest.shots:
+        if shot.shot_id in remaining:
+            shot.overrides.update(applied)
+    if clear_reference:
+        manifest.identity.reference_image = None
+        manifest.identity.reference_mode = "none"
+    elif reference_image is not None:
+        manifest.identity.reference_image = reference_image
+    doc = save_document(session, project.id, "manifest", manifest.model_dump(), created_by=actor)
+    record_event(session, EventType.SHOTS_ADJUSTED, project_id=project.id, actor=actor,
+                 data={"shots": remaining, "changes": applied, "manifest_version": doc.version,
+                       "reference": reference_image, "clear_reference": clear_reference})
+    return {"shots": remaining, "changes": applied, "manifest_version": doc.version,
+            "rendered_untouched": sorted(done)}
+
+
 def decide_rights(session: Session, project: Project, settings: Settings, *, approve: bool,
                   decided_by: str, fields: dict[str, Any], note: str | None = None) -> Project:
     """A human rights decision: the only way UNKNOWN/ambiguous sources get unblocked."""

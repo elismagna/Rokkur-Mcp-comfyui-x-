@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% from "_macros.html" import status_pill, pipeline, rate_form, score with context %}{% from "_icons.html" import icon, verdict_badge %}
 {% block title %}{{p.name}} · Rökkur Studio{% endblock %}
 {% block crumb %}<a href="/ui/projects">Projects</a> / {{ p.name }}{% endblock %}
-{% block head %}{% if p.status in working %}<meta name="studio-refresh" content="8">{% endif %}{% endblock %}
+{% block head %}{% if p.status in working or extend_jobs %}<meta name="studio-refresh" content="8">{% endif %}{% endblock %}
 {% block body %}
 {% set docs = d.documents %}
 {% set finals = d.assets|selectattr('kind','equalto','final')|list %}
@@ -142,6 +142,38 @@
     <div><b id="redo-count">Pick shots to redo</b><div class="hint" style="margin:2px 0 0">New seed for each; motion complaints firm up the source guide, style or prompt complaints loosen it. The other shots stay exactly as they are.</div></div>
     <button class="ember" id="redo-submit">{{ icon('redo') }} Redo</button>
   </form>{% endif %}
+</section>
+{% endif %}
+
+{% if extendable or extension or extend_jobs %}
+<section class="section" id="extend">
+  <div class="section-title"><h2>Extend the video</h2>{% if extension %}<span class="pill ok">extended by {{ '%g'|format(extension.meta.seconds) }} s</span>{% endif %}</div>
+  <p class="hint" style="margin:-6px 0 14px">Wan continues the finished video past its last frame from the frames it already has, in the same look. The longer cut becomes the latest final video; the previous one stays in Renders. Describe what the continuation shows, or leave it to the brief's scene prompt.</p>
+  {% if extend_jobs %}<div class="callout" style="margin-bottom:14px"><span class="pulse on"></span><div><p>Extending now ({{ extend_jobs|length }} job{{ '' if extend_jobs|length == 1 else 's' }}). This page refreshes on its own.</p></div></div>{% endif %}
+  {% if extendable %}<form class="card" method="post" action="/ui/projects/{{p.id}}/extend">
+    <div class="form-pair"><div><label for="ext_seconds">Seconds to add</label><input id="ext_seconds" name="seconds" type="number" min="0.5" max="8" step="0.5" value="3"></div>
+    <div><label for="ext_ref">Appearance reference from Pictures <span class="muted">optional</span></label><select id="ext_ref" name="reference_image_id"><option value="">the clip's last frame</option>{% for i in library_pictures %}<option value="{{ i.id }}">{{ i.title or i.prompt|truncate(50) or i.kind }}</option>{% endfor %}</select></div></div>
+    <label for="ext_prompt">What happens next</label><textarea id="ext_prompt" name="prompt" rows="2" maxlength="2000" placeholder="Leave empty to continue with the brief's scene prompt"></textarea>
+    <p style="margin:14px 0 0"><button class="secondary">Extend</button></p>
+  </form>{% endif %}
+</section>
+{% endif %}
+
+{% if adjustable %}
+<section class="section" id="adjust">
+  <div class="section-title"><h2>Adjust the remaining shots</h2><span class="hint">{{ rendered_shot_ids|length }} shot{{ '' if rendered_shot_ids|length == 1 else 's' }} already rendered and kept as they are</span></div>
+  <p class="hint" style="margin:-6px 0 14px">Only settings that cannot break a shot in progress: they apply to every shot that has not rendered yet, from its next render on. Finished shots never change here (use Redo on the finished video for those).</p>
+  <form class="card" method="post" action="/ui/projects/{{p.id}}/adjust">
+    <label for="adj_prompt">Add a direction to the remaining shots' prompts</label>
+    <input id="adj_prompt" name="prompt_extra" maxlength="500" placeholder="warmer evening light, less fog">
+    <div class="form-pair" style="margin-top:10px"><div><label for="adj_seed">Seed</label><input id="adj_seed" name="seed" type="number" min="0" placeholder="unchanged"></div><div><label for="adj_steps">Steps</label><input id="adj_steps" name="steps" type="number" min="4" max="60" placeholder="unchanged"></div></div>
+    <div class="form-pair"><div><label for="adj_control">Follow source structure</label><input id="adj_control" name="control_strength" type="number" min="0" max="2" step="0.05" placeholder="unchanged"></div><div><label for="adj_cfg">Prompt guidance</label><input id="adj_cfg" name="cfg" type="number" min="1" max="12" step="0.5" placeholder="unchanged"></div></div>
+    <div class="form-pair"><div><label for="adj_clow">Edge threshold low</label><input id="adj_clow" name="canny_low" type="number" min="0.01" max="0.99" step="0.05" placeholder="unchanged"></div><div><label for="adj_chigh">Edge threshold high</label><input id="adj_chigh" name="canny_high" type="number" min="0.01" max="0.99" step="0.05" placeholder="unchanged"></div></div>
+    <label for="adj_ref">Appearance reference from Pictures</label>
+    <select id="adj_ref" name="reference_image_id"><option value="">unchanged</option>{% for i in library_pictures %}<option value="{{ i.id }}">{{ i.title or i.prompt|truncate(50) or i.kind }}</option>{% endfor %}</select>
+    <label class="check" style="margin-top:8px"><input type="checkbox" name="clear_reference" value="true"> Use no reference for the remaining shots</label>
+    <p style="margin:14px 0 0"><button class="secondary">Apply to the remaining shots</button></p>
+  </form>
 </section>
 {% endif %}
 

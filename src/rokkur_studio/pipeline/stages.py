@@ -43,13 +43,14 @@ from rokkur_studio.domain.states import ProjectStatus
 from rokkur_studio.gpu.lease import GpuUnavailable
 from rokkur_studio.jobs.errors import JobCancelled, JobError, PermanentJobError
 from rokkur_studio.jobs.queue import is_cancelled
-from rokkur_studio.manifest.builder import build_manifest, shot_params
+from rokkur_studio.manifest.builder import build_manifest, shot_params, shot_seed
 from rokkur_studio.manifest.schema import ReconstructionManifest, ShotSpec, SubjectSpec
 from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline import qc as qc_mod
 from rokkur_studio.pipeline.analysis import analyze_video
 from rokkur_studio.pipeline.context import StudioContext
 from rokkur_studio.pipeline.driver import autonomy_level
+from rokkur_studio.pipeline.extend import extend_job
 from rokkur_studio.pipeline.images import image_job
 from rokkur_studio.pipeline.renderers import (
     ComfyUIRenderer,
@@ -283,8 +284,13 @@ def creative_plan(ctx: StudioContext, job: Job) -> dict[str, Any]:
         raise PermanentJobError("asset_tracker_invalid",
                                 f"{exc}. Fix it on the Director page or delete the file.") from exc
     keyframes = _keyframes(ctx, project.id, data)
+    director_settings = ctx.settings.director
+    if project.creative_input.get("stable"):
+        # Stable mode: no per-shot framing or lighting changes; every shot renders the brief's
+        # one prompt, so the look cannot drift from shot to shot (docs/stability.md).
+        director_settings = director_settings.model_copy(update={"enabled": False})
     brief, by = direct(ctx.provider, project.creative_input, data, project.target_format,
-                       tracker=tracker, settings=ctx.settings.director,
+                       tracker=tracker, settings=director_settings,
                        dp_provider=ctx.dp_provider, keyframes=keyframes)
     d = ctx.settings.director
     schedule = None
@@ -337,6 +343,13 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
                                for k in ("control_strength", "steps", "cfg", "seed",
                                          "canny_low", "canny_high")
                                if project.creative_input.get(k) is not None})
+    if project.creative_input.get("stable"):
+        stable = stable_overrides(project, profile)
+        for shot in manifest.shots:
+            shot.overrides.update({k: v for k, v in stable.items() if k not in shot.overrides
+                                   or k == "seed" and project.creative_input.get("seed") is None})
+        if manifest.identity.reference_mode == "auto" and not manifest.identity.reference_image:
+            manifest.identity.reference_mode = "cutout"  # the same subject reference for every shot
     compiled: dict[str, Any] = {}
     if ctx.settings.render.renderer == "comfyui":
         try:
@@ -364,6 +377,14 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
         transition(s, p, S.WORKFLOW_READY, actor="workflow_planner", job_id=job.id)
     return {"manifest_version": doc.version, "shots": len(manifest.shots),
             "renderer": ctx.settings.render.renderer}
+
+
+def stable_overrides(project: Project, profile: RenderProfile) -> dict[str, Any]:
+    """What Stable mode fixes for every shot: one seed, the profile's full steps (at least
+    20), the source guide at 1.0. Values you set yourself on New video win."""
+    return {"seed": int(project.creative_input.get("seed")
+                        or shot_seed(project.id, "stable")),
+            "steps": max(int(profile.steps), 20), "control_strength": 1.0}
 
 
 # -- rendering ----------------------------------------------------------------------------
@@ -485,7 +506,8 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
     batch = (ctx.gpu.heavy_batch(job.id) if renderer.name != "ffmpeg_preview" and not cloud
              else contextlib.nullcontext())
     with batch:
-        for shot in manifest.shots:
+        for position in range(len(manifest.shots)):
+            shot = manifest.shots[position]
             if shot.shot_id in done:
                 continue
             while True:
@@ -493,6 +515,12 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
                     if is_cancelled(s, job.id):
                         raise JobCancelled()
                 _check_budget(ctx, pid)
+                newer, newer_version = _manifest(ctx, pid)
+                if newer_version != manifest_version:  # adjusted while rendering
+                    manifest, manifest_version = newer, newer_version
+                    shot = manifest.shots[position]
+                    log.info("manifest reloaded before a shot", extra={"data": {
+                        "shot": shot.shot_id, "version": manifest_version}})
                 profile = ctx.settings.profile(str(shot.overrides.get("profile",
                                                                        base_profile.name)))
                 params = shot_params(manifest, shot, profile)
@@ -782,6 +810,8 @@ def quality_check(ctx: StudioContext, job: Job) -> dict[str, Any]:
     manifest, _ = _manifest(ctx, pid)
     latest = _latest_renders(ctx, pid)
     threshold = ctx.settings.quality.pass_threshold
+    if project.creative_input.get("stable"):
+        threshold = min(9.0, threshold + 1.0)  # artifacts fail and get repaired, not accepted
     fps = manifest.video.fps
     shots = []
     offset = 0
@@ -1003,6 +1033,7 @@ def _propose_upload(s: Session, p: Project, ctx: StudioContext, job: Job) -> Non
 
 HANDLERS: dict[str, Handler] = {
     "image": image_job,
+    "extend": extend_job,
     "rights_check": rights_check,
     "ingest": ingest,
     "analyze": analyze,

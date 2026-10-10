@@ -257,11 +257,16 @@ class FFmpeg:
         return out
 
     def attach_audio(self, video: Path, audio_source: Path, out: Path, *,
-                     normalize: bool = True) -> Path:
+                     normalize: bool = True, pad: bool = False) -> Path:
+        """Put ``audio_source``'s sound under ``video``. ``pad`` keeps the whole video when the
+        sound is shorter (silence after it); otherwise the output stops with the shorter one."""
         args = ["-i", str(video), "-i", str(audio_source), "-map", "0:v:0", "-map", "1:a:0?",
                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest"]
-        if normalize:
-            args += ["-af", "loudnorm=I=-14:TP=-1.5:LRA=11"]
+        filters = ["loudnorm=I=-14:TP=-1.5:LRA=11"] if normalize else []
+        if pad:
+            filters.append("apad")
+        if filters:
+            args += ["-af", ",".join(filters)]
         self._run(self._ff(*args, str(out)))
         return out
 

@@ -119,8 +119,12 @@ def shot_params(manifest: ReconstructionManifest, shot: ShotSpec,
     output_frames = max(1, round(shot.duration * fps))
     frames = min(limit, math.ceil((output_frames - 1) / profile.frame_multiple)
                  * profile.frame_multiple + 1)
+    prompt = shot.prompt or manifest.style.prompt
+    extra = str(o.get("prompt_extra", "")).strip()
+    if extra:  # a direction added while the video renders (commands.adjust_remaining_shots)
+        prompt = f"{prompt}, {extra}" if prompt else extra
     params: dict[str, Any] = {
-        "STYLE_PROMPT": shot.prompt or manifest.style.prompt,
+        "STYLE_PROMPT": prompt,
         "NEGATIVE_PROMPT": negative_prompt(profile.negative_base, manifest),
         "SEED": int(o.get("seed", shot.seed)),
         "WIDTH": width,

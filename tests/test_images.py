@@ -262,7 +262,8 @@ def test_pictures_page_api_and_cli_cover_the_whole_flow(ctx, tmp_path, sample_vi
                                    "size": "short", "count": "2", "seed": "9"},
                follow_redirects=False)
     assert r.status_code == 303 and "image=img_" in r.headers["location"]
-    first = r.headers["location"].split("image=")[1].split("#")[0]
+    first = r.headers["location"].split("image=")[1].split("&")[0].split("#")[0]
+    assert "msg=2%20pictures%20queued" in r.headers["location"]
     assert "queued" in c.get(f"/ui/images?image={first}").text
     run(ctx)
     page = c.get(f"/ui/images?image={first}").text
@@ -289,7 +290,7 @@ def test_pictures_page_api_and_cli_cover_the_whole_flow(ctx, tmp_path, sample_vi
     assert r.status_code == 303 and "image=img_" in r.headers["location"]
     r = c.post("/ui/images", data={"operation": "inpaint", "prompt": "x", "source_id": first},
                follow_redirects=False)
-    assert "Paint+the+area" in r.headers["location"] or "Paint%20the%20area" in r.headers["location"]
+    assert "Paint%20the%20area" in r.headers["location"]
     # the reference hand-off to New video and the thumbnail hand-off to a finished video
     assert "Appearance reference from Pictures" in c.get(f"/ui/new?reference_image={first}").text
     pid = create_project(ctx, sample_video)

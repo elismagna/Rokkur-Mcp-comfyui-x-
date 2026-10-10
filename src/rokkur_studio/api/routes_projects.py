@@ -13,8 +13,10 @@ from sqlalchemy.orm import Session
 
 from rokkur_studio.api.deps import get_ctx, get_session
 from rokkur_studio.api.schemas import (
+    AdjustIn,
     AssetOut,
     EventOut,
+    ExtendIn,
     JobOut,
     ProjectCreate,
     ProjectDetail,
@@ -174,6 +176,43 @@ def redo(project_id: str, body: RedoIn, ctx: Ctx, session: Db) -> Project:
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return project
+
+
+@router.post("/{project_id}/adjust", tags=["render"],
+             summary="Change safe settings for the shots that have not rendered yet")
+def adjust(project_id: str, body: AdjustIn, ctx: Ctx, session: Db) -> dict[str, object]:
+    from rokkur_studio.services.images import ImageStore, get_image
+
+    project = _project(session, project_id, for_update=True)
+    reference = None
+    try:
+        if body.reference_image_id and not body.clear_reference:
+            picture = get_image(session, body.reference_image_id)
+            if not picture.rel_path:
+                raise ValueError("that picture has no file yet")
+            asset = import_file(session, ctx.store, project.id, "reference", "references",
+                                ImageStore(ctx.settings.studio.data_dir).path_for(picture.rel_path),
+                                name=f"reference_{picture.id}.png", meta={"image_id": picture.id})
+            reference = asset.rel_path
+        return commands.adjust_remaining_shots(
+            session, project, actor="api", reference_image=reference,
+            clear_reference=body.clear_reference,
+            changes=body.model_dump(exclude={"reference_image_id", "clear_reference"}))
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/{project_id}/extend", response_model=JobOut, status_code=202, tags=["render"],
+             summary="Continue the finished video past its last frame with Wan VACE")
+def extend_video(project_id: str, body: ExtendIn, ctx: Ctx, session: Db) -> Job:
+    from rokkur_studio.pipeline.extend import ExtendRequest, request_extension
+
+    _project(session, project_id)
+    try:
+        return request_extension(session, ctx.settings, ExtendRequest(
+            project_id=project_id, **body.model_dump()), actor="api")
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post("/{project_id}/repair-more", response_model=ProjectOut,

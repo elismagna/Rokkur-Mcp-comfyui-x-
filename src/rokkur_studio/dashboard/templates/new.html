@@ -20,6 +20,13 @@
     <p class="hint" id="source-info">Your original stays intact. The studio works on a copy.</p>
     <div class="row" style="margin-top:12px"><button type="button" class="secondary" id="find-characters">{{ icon('agent') }} Find the characters in this clip</button><span class="hint" id="characters-status">Cutouts of the subjects the studio sees, before you write the prompt.</span></div>
     <div id="characters" class="characters" hidden></div>
+    {% if media and settings.render.renderer == 'comfyui' %}<details id="extend-clip"><summary>Extend this clip first (Wan continues it)</summary>
+      <p class="hint">Makes a longer copy of a clip from the media folder next to the original; pick the copy here afterwards. The continuation is generated, so the footage is yours plus Wan's.</p>
+      <label for="ext_prompt_new">What happens next</label><input id="ext_prompt_new" form="extend-form" name="prompt" maxlength="2000" placeholder="the camera keeps drifting right over the harbour">
+      <div class="form-pair"><div><label for="ext_seconds_new">Seconds to add</label><input id="ext_seconds_new" form="extend-form" name="seconds" type="number" min="0.5" max="8" step="0.5" value="3"></div><div><label for="ext_rights_new">Why may you use this clip?</label><input id="ext_rights_new" form="extend-form" name="rights_evidence" maxlength="1000" placeholder="I filmed it"></div></div>
+      <label class="check"><input form="extend-form" type="checkbox" name="rights_confirmed" value="true"> I may use and transform this clip</label>
+      <p style="margin:10px 0 0"><button form="extend-form" class="secondary small">Extend the selected clip</button></p>
+    </details>{% endif %}
     <label for="name">Project name</label><input id="name" name="name" placeholder="Defaults to your video's name" maxlength="200">
   </section>
   <section class="card"><div class="section-heading"><span class="step-number">02</span><div><h2>Creative direction</h2><p class="hint">Describe the finished image, then anchor the character.</p></div></div>
@@ -40,6 +47,8 @@
     <p class="hint">A custom reference guides the new appearance. When the studio decides, a kept subject is shown to Wan as a cutout, and otherwise Wan gets no reference: a whole source frame pulls the old room and light into the new look.</p>
     <label class="check"><input type="checkbox" name="use_global_look" value="true" checked> Apply my saved global look</label>
     <p class="hint">Includes the prefix, style modifiers and negatives from Director.</p>
+    <label class="check" style="margin-top:10px"><input type="checkbox" name="stable" value="true"> Stable mode: coherence over variety</label>
+    <p class="hint">One seed and one subject reference for every shot, no per-shot framing changes from the director, the profile's full steps, the source guide at 1.0 and a stricter quality mark. Fewer surprises, fewer artifacts; the look is set by your prompt alone.</p>
     <details><summary>Negative prompt and advanced controls</summary>
       <label for="negative_prompt">Things to avoid</label><textarea id="negative_prompt" name="negative_prompt" maxlength="2000" placeholder="Leave blank to use the director's negative prompt"></textarea>
       <label for="control_strength">Follow source structure <output id="control-value">1.0</output></label><input id="control_strength" name="control_strength" type="range" min="0" max="2" step="0.05" value="1">
@@ -96,6 +105,7 @@
     <p class="hint">Creating a video never uploads it to YouTube.</p>
   </section>
 </div></div></form>
+<form id="extend-form" method="post" action="/ui/new/extend" hidden><input type="hidden" name="media_file" id="extend-media"></form>
 <dialog id="prompt-editor" class="prompt-dialog" aria-labelledby="prompt-editor-title">
   <div class="prompt-dialog-head"><h2 id="prompt-editor-title">Prompt editor</h2>
     <button type="button" class="secondary" id="close-prompt-editor" aria-label="Close prompt editor">Close</button></div>
@@ -122,6 +132,7 @@
   let localURL, refURL;
   file.addEventListener('change', () => { if (localURL) URL.revokeObjectURL(localURL); if (!file.files[0]) return;
     if (media) media.value = ''; localURL = URL.createObjectURL(file.files[0]); video.src = localURL; video.hidden = false; });
+  media?.addEventListener('change', () => { const em = document.getElementById('extend-media'); if (em) em.value = media.value; });
   media?.addEventListener('change', () => { file.value = ''; video.hidden = !media.value;
     if (media.value) video.src = '/ui/media/preview?path=' + encodeURIComponent(media.value); });
   video.addEventListener('loadedmetadata', () => { document.getElementById('source-info').textContent =

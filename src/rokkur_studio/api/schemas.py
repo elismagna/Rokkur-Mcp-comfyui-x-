@@ -64,8 +64,38 @@ class CreativeIn(BaseModel):
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     made_for_kids: bool = False
+    # Stable mode (docs/stability.md): one seed and one reference for every shot, no per-shot
+    # framing changes from the director pass, full steps, source guide at 1.0 and a stricter
+    # quality pass mark, so drift and artifacts are caught instead of accepted.
+    stable: bool = False
     # Where the shots render: this PC's ComfyUI or the cloud server (docs/cloud.md). Unset:
     # the configured default (cloud.default when cloud is set up, else local).
+    render_on: Literal["local", "cloud"] | None = None
+
+
+class AdjustIn(BaseModel):
+    """Safe changes for the shots that have not rendered yet (commands.adjust_remaining_shots)."""
+
+    prompt_extra: str | None = Field(None, max_length=500)  # appended to those shots' prompts
+    seed: int | None = Field(None, ge=0, le=4294967295)
+    steps: int | None = Field(None, ge=4, le=60)
+    cfg: float | None = Field(None, ge=1, le=12)
+    control_strength: float | None = Field(None, ge=0, le=2)
+    canny_low: float | None = Field(None, gt=0, lt=1)
+    canny_high: float | None = Field(None, gt=0, lt=1)
+    reference_image_id: str | None = None   # a picture from the library as the appearance reference
+    clear_reference: bool = False
+
+
+class ExtendIn(BaseModel):
+    """Continue a finished video (pipeline/extend.py)."""
+
+    seconds: float = Field(3.0, gt=0, le=8)
+    prompt: str = Field("", max_length=2000)   # empty: the brief's scene prompt
+    negative_prompt: str | None = Field(None, max_length=2000)
+    seed: int | None = Field(None, ge=0, le=4294967295)
+    steps: int | None = Field(None, ge=4, le=60)
+    reference_image_path: str | None = None
     render_on: Literal["local", "cloud"] | None = None
 
 
