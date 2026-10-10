@@ -154,7 +154,7 @@ def _blurred(frames: np.ndarray) -> np.ndarray:
 def test_pick_steadier_keeps_a_clip_that_is_steadier_at_the_same_detail():
     source = _scene()
     keep, record = pick_steadier(source, _flickering(source), source, threshold=6.5)
-    assert keep and record["kept"] and record["metric"] in ("stability", "temporal_consistency")
+    assert keep and record["kept"] and record["metric"] in (stabilize.COMBINED, "temporal_consistency")
     assert record["after"]["steadiness"] - record["before"]["steadiness"] >= stabilize.MIN_GAIN
     assert set(record["before"]) == {"steadiness", "detail", "structure", "overall"}
 

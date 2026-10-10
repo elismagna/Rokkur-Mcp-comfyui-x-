@@ -338,7 +338,9 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
     for shot in manifest.shots:
         shot.overrides.update({k: project.creative_input[k]
                                for k in ("control_strength", "steps", "cfg", "seed",
-                                         "canny_low", "canny_high")
+                                         "canny_low", "canny_high", "shift", "sampler",
+                                         "scheduler", "resolution_scale", "stabilize",
+                                         "smooth_control")
                                if project.creative_input.get(k) is not None})
     compiled: dict[str, Any] = {}
     if ctx.settings.render.renderer == "comfyui":

@@ -94,16 +94,37 @@ def stabilize_render(ffmpeg: FFmpeg, render: Path, out: Path, *, level: str, fps
     return ffmpeg.filter_video(render, out, vf, fps=fps)
 
 
+COMBINED = "stability_and_flicker"
+
+
 def _steadiness_key(before: dict[str, Any], after: dict[str, Any]) -> str:
-    """Motion-compensated stability when QC measured it for both clips, else the frame-difference
-    temporal consistency score."""
-    if before.get("stability") is not None and after.get("stability") is not None:
+    """Which steadiness QC measured for both clips: the weaker of motion-compensated stability
+    and brightness flicker when it has both, else stability, else the frame-difference
+    temporal consistency score.
+
+    Both matter because they see different faults: stability removes whole-frame brightness,
+    so it cannot see brightness flicker, and deflicker can trade an additive brightness flicker
+    for a contrast pulse that only stability sees (synthetic clip: stability 9.9 -> 4.1 while
+    flicker 0.7 -> 7.1).
+    """
+    def has(key: str) -> bool:
+        return before.get(key) is not None and after.get(key) is not None
+
+    if has("stability") and has("flicker"):
+        return COMBINED
+    if has("stability"):
         return "stability"
     return "temporal_consistency"
 
 
+def _steadiness(result: dict[str, Any], key: str) -> Any:
+    if key == COMBINED:
+        return min(float(result["stability"]), float(result["flicker"]))
+    return result.get(key)
+
+
 def _numbers(result: dict[str, Any], key: str) -> dict[str, Any]:
-    return {"steadiness": result.get(key), "detail": result.get("detail"),
+    return {"steadiness": _steadiness(result, key), "detail": result.get("detail"),
             "structure": result.get("structure"), "overall": result.get("overall")}
 
 
@@ -120,10 +141,11 @@ def pick_steadier(source_gray: np.ndarray, raw_gray: np.ndarray, steady_gray: np
     key = _steadiness_key(before, after)
     record: dict[str, Any] = {"metric": key, "before": _numbers(before, key),
                               "after": _numbers(after, key)}
-    values = (before.get(key), after.get(key), before.get("detail"), after.get("detail"))
+    steady_before, steady_after = _steadiness(before, key), _steadiness(after, key)
+    values = (steady_before, steady_after, before.get("detail"), after.get("detail"))
     if any(v is None for v in values):
         return False, {**record, "kept": False, "reason": "steadiness could not be measured"}
-    gain = float(after[key]) - float(before[key])
+    gain = float(steady_after) - float(steady_before)
     detail_drop = float(before["detail"]) - float(after["detail"])
     if gain < MIN_GAIN:
         reason = f"{key.replace('_', ' ')} changed {gain:+.2f}, less than the +{MIN_GAIN} needed"
