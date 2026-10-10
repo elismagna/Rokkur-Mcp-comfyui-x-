@@ -122,6 +122,17 @@ def make_dp_provider(settings: Settings) -> AgentProvider | None:
         if settings.gpu.free_comfyui_before_agents else None)
 
 
+def make_vision_provider(settings: Settings) -> AgentProvider | None:
+    """The Ollama model for the AI picture review (``quality.vision_model``), when one is set."""
+    model = settings.quality.vision_model.strip()
+    if settings.agents.provider != "ollama" or not model:
+        return None
+    return OllamaProvider(
+        settings.ollama.url, model, max_retries=settings.agents.max_output_retries,
+        before_generate=free_idle_comfyui(settings)
+        if settings.gpu.free_comfyui_before_agents else None)
+
+
 def build_context(settings: Settings, db: Database | None = None) -> StudioContext:
     db = db or Database(settings.database.url)
     comfy_factory = lambda: ComfyClient(settings.comfyui.url)  # noqa: E731

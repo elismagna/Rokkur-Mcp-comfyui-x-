@@ -197,7 +197,7 @@ def test_picture_review_schema_is_bounded():
     assert PictureReview.model_validate({**REVIEW, "issues": ["flicker", "flicker"]}).issues \
         == ["flicker"]
     for bad in ({"anatomy": 11}, {"steadiness": -1}, {"issues": ["looks_weird"]},
-                {"description": ""}, {"description": "x" * 401}, {"notes": "x" * 301}):
+                {"description": ""}, {"description": "x" * 801}, {"notes": "x" * 601}):
         with pytest.raises(ValidationError):
             PictureReview.model_validate({**REVIEW, **bad})
     with pytest.raises(ValidationError):  # every field must be answered, issues included

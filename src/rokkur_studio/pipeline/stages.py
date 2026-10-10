@@ -14,6 +14,7 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from rokkur_studio.agents.providers import AgentProvider
 from rokkur_studio.agents.roles import ChannelManager, RepairPlanner
 from rokkur_studio.agents.schemas import CreativeBrief
 from rokkur_studio.comfyui.client import ComfyError
@@ -47,8 +48,9 @@ from rokkur_studio.manifest.builder import build_manifest, shot_params
 from rokkur_studio.manifest.schema import ReconstructionManifest, ShotSpec, SubjectSpec
 from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline import qc as qc_mod
+from rokkur_studio.pipeline import vision
 from rokkur_studio.pipeline.analysis import analyze_video
-from rokkur_studio.pipeline.context import StudioContext
+from rokkur_studio.pipeline.context import StudioContext, make_vision_provider
 from rokkur_studio.pipeline.driver import autonomy_level
 from rokkur_studio.pipeline.renderers import (
     ComfyUIRenderer,
@@ -776,6 +778,27 @@ def _assemble(ctx: StudioContext, manifest: ReconstructionManifest) -> str:
 
 
 # -- quality control ----------------------------------------------------------------------
+def _picture_checker(ctx: StudioContext, project: Project) -> vision.PictureChecker | None:
+    """The AI picture review for this QC run, or None when it is switched off. A provider that
+    cannot see images still gets a checker: each shot then records why it had no review."""
+    if ctx.settings.quality.picture_review == "off" or \
+            not project.creative_input.get("picture_review", True):
+        return None
+    custom = ctx.extras.get("vision_provider")
+    if custom is not None:
+        provider = cast(AgentProvider, custom)
+    elif ctx.settings.quality.vision_model.strip() and ctx.settings.agents.provider == "ollama":
+        provider = make_vision_provider(ctx.settings) or ctx.provider
+    else:
+        provider = ctx.dp_provider or ctx.provider
+    return vision.PictureChecker(provider)
+
+
+def _min_stability(ctx: StudioContext, project: Project) -> float:
+    value = project.creative_input.get("min_stability")
+    return float(value) if value is not None else ctx.settings.quality.min_stability
+
+
 def quality_check(ctx: StudioContext, job: Job) -> dict[str, Any]:
     project = _enter(ctx, job, {S.QUALITY_CHECK}, S.QUALITY_CHECK)
     pid = project.id
@@ -783,27 +806,49 @@ def quality_check(ctx: StudioContext, job: Job) -> dict[str, Any]:
     latest = _latest_renders(ctx, pid)
     threshold = ctx.settings.quality.pass_threshold
     fps = manifest.video.fps
+    floor = _min_stability(ctx, project)
+    checker = _picture_checker(ctx, project)
+    columns = ctx.settings.quality.contact_sheet_columns
+    detail_w, detail_h = qc_mod.detail_size(manifest.video.width, manifest.video.height)
+    sheet_w, sheet_h = vision.frame_size(manifest.video.width, manifest.video.height)
     shots = []
     offset = 0
     with ctx.db.session() as s:
         accepted = ratings.accepted_renders(s, pid)
-        for shot in manifest.shots:
-            r = latest[shot.shot_id]
-            asset = s.get(Asset, r.output_asset_id)
-            assert asset is not None
-            src = ctx.ffmpeg.read_gray_frames(_shot_clip(ctx, manifest, shot), 64, 64, fps=fps)
-            out = ctx.ffmpeg.read_gray_frames(ctx.store.path_for(asset.rel_path), 64, 64, fps=fps)
-            result = qc_mod.score_shot(src, out, threshold=threshold, shot_id=shot.shot_id,
-                                       frame_offset=offset)
-            result["render_id"] = r.id
-            result["attempt"] = r.attempt
-            if result["decision"] != "PASS" and r.id in accepted:
-                # You liked this render, or kept it while redoing other shots: QC still
-                # records what it measured, but never sends it back for repair.
-                result["decision"] = "PASS"
-                result["accepted_by"] = "you"
-            shots.append(result)
-            offset += len(src)
+        renders = {shot.shot_id: s.get(Asset, latest[shot.shot_id].output_asset_id)
+                   for shot in manifest.shots}
+    for shot in manifest.shots:
+        r = latest[shot.shot_id]
+        asset = renders[shot.shot_id]
+        assert asset is not None
+        clip = _shot_clip(ctx, manifest, shot)
+        rendered = ctx.store.path_for(asset.rel_path)
+        src = ctx.ffmpeg.read_gray_frames(clip, 64, 64, fps=fps)
+        out = ctx.ffmpeg.read_gray_frames(rendered, 64, 64, fps=fps)
+        result = qc_mod.score_shot(
+            src, out, threshold=threshold, shot_id=shot.shot_id, frame_offset=offset,
+            source_detail=ctx.ffmpeg.read_gray_frames(clip, detail_w, detail_h, fps=fps),
+            render_detail=ctx.ffmpeg.read_gray_frames(rendered, detail_w, detail_h, fps=fps),
+            min_stability=floor)
+        # The contact sheet is for you and for the AI review; the model call (seconds on a
+        # 9B model) runs outside any database session.
+        result, sheet_png = vision.check_shot(
+            checker, result, ctx.ffmpeg.read_rgb_frames(clip, sheet_w, sheet_h, fps=fps),
+            ctx.ffmpeg.read_rgb_frames(rendered, sheet_w, sheet_h, fps=fps),
+            theme=manifest.style.theme, prompt=shot.prompt or manifest.style.prompt,
+            columns=columns)
+        sheet = ctx.store.project_dir(pid, "qc") / f"sheet_{shot.shot_id}_a{r.attempt:02d}.png"
+        sheet.write_bytes(sheet_png)
+        result["contact_sheet"] = ctx.store.rel(sheet)
+        result["render_id"] = r.id
+        result["attempt"] = r.attempt
+        if result["decision"] != "PASS" and r.id in accepted:
+            # You liked this render, or kept it while redoing other shots: QC still
+            # records what it measured, but never sends it back for repair.
+            result["decision"] = "PASS"
+            result["accepted_by"] = "you"
+        shots.append(result)
+        offset += len(src)
     report = qc_mod.summarize(shots, threshold)
     with ctx.db.transaction() as s:
         doc = save_document(s, pid, "qc_report", report, created_by="qc")

@@ -160,14 +160,14 @@ def png_bytes(image: np.ndarray) -> bytes:
 class PictureReview(BaseModel):
     """A vision model's honest look at one shot's contact sheet. Scores 0-10, 10 best."""
 
-    description: str = Field(min_length=1, max_length=400)   # what the render actually shows
+    description: str = Field(min_length=1, max_length=800)   # what the render actually shows
     prompt_adherence: int = Field(ge=0, le=10)
     style_consistency: int = Field(ge=0, le=10)
     subject_identity: int = Field(ge=0, le=10)
     anatomy: int = Field(ge=0, le=10)       # 10: bodies, faces and hands intact
     steadiness: int = Field(ge=0, le=10)    # 10: surfaces hold still between frames
     issues: list[PictureIssue] = Field(max_length=len(get_args(PictureIssue)))
-    notes: str = Field(max_length=300)
+    notes: str = Field(max_length=600)
 
     @field_validator("issues")
     @classmethod
