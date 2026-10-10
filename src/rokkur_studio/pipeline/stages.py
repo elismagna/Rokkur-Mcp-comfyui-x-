@@ -601,9 +601,9 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
                     if cloud:  # an estimate: a rented server bills while it is on
                         minutes = outcome.seconds / 60
                         s.add(CostEntry(project_id=pid, job_id=job.id, kind="cloud_gpu_minutes",
-                                        amount=minutes, unit="min", usd=round(
-                                            minutes / 60 * ctx.settings.cloud.price_per_hour_usd,
-                                            4)))
+                                        amount=minutes, unit="min",
+                                        # unrounded: a short shot must not cost $0
+                                        usd=minutes / 60 * ctx.settings.cloud.price_per_hour_usd))
                     elif renderer.name != "ffmpeg_preview":
                         s.add(CostEntry(project_id=pid, job_id=job.id, kind="gpu_minutes",
                                         amount=outcome.seconds / 60, unit="min"))

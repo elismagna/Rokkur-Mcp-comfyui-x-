@@ -70,6 +70,7 @@ from rokkur_studio.director.prompts import Weights, preview
 from rokkur_studio.director.vocabulary import VOCABULARY
 from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.domain.states import ProjectStatus as S
+from rokkur_studio.manifest.schema import ReconstructionManifest
 from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline.context import StudioContext, profile_availability, supported_controls
 from rokkur_studio.pipeline.subject import OnnxSubjectMasker, decide_subject
@@ -643,12 +644,23 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
     source = next((a for a in reversed(detail.assets) if a.kind == "source"), None)
     repair_limit = at_repair_limit(project)
     usage = budget_usage(session, project_id, ctx.settings)
+    upgrade_to = None
+    try:  # a fast (draft) video offers "Render in quality"
+        plan = (ReconstructionManifest.model_validate(manifest["data"])
+                if manifest is not None else None)
+    except ValueError:
+        plan = None
+    if plan is not None:
+        upgrade_to = next((t for shot in plan.shots
+                           if (t := commands.upgrade_target(ctx.settings, plan, shot.shot_id))),
+                          None)
     return _page(request, "project.html", ctx, d=detail, p=project, events=events,
                  shots=shots, subject=subject, keyframes=keyframes, tags=ratings.TAGS,
                  video_asset=video_asset, video_rating=video_rating,
                  earlier_video_rating=earlier_video_rating,
                  source_url=(f"/projects/{project_id}/assets/{source.id}/file" if source else None),
                  can_redo=project.status == S.READY_TO_PUBLISH or repair_limit,
+                 upgrade_to=upgrade_to,
                  gpu_minutes=usage["gpu"], cloud_usage=usage,
                  render_on=project_target(project.creative_input),
                  failure=failure_reason(session, project) if failed else None,
@@ -773,6 +785,21 @@ def redo_from_ui(project_id: str, ctx: Ctx, session: Db,
     names = ", ".join(s.replace("shot_", "") for s in shots or [])
     return _back(url, msg=f"Redoing shot{'s' if len(shots or []) > 1 else ''} {names}; "
                           "the other shots stay as they are")
+
+
+@router.post("/projects/{project_id}/upgrade")
+def upgrade_from_ui(project_id: str, ctx: Ctx, session: Db,
+                    shots: Annotated[list[str] | None, Form()] = None) -> RedirectResponse:
+    url = f"/ui/projects/{project_id}"
+    project = get_project(session, project_id, for_update=True)
+    try:
+        commands.redo_shots(session, project, ctx.settings, shot_ids=shots or [],
+                            actor="dashboard", upgrade=True)
+    except ValueError as exc:
+        return _back(url, err=str(exc))
+    which = ("shot" + ("s " if len(shots) > 1 else " ")
+             + ", ".join(s.replace("shot_", "") for s in shots)) if shots else "every shot"
+    return _back(url, msg=f"Rendering {which} in full quality with the same prompt and seed")
 
 
 @router.post("/projects/{project_id}/{action}")

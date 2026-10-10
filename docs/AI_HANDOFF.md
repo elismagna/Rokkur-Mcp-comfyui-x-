@@ -4,8 +4,7 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-09 by Claude (local/cloud render mode, docs/cloud.md; merged Codex's
-Rökkur Enterprise optimization notes).
+Last updated: 2026-10-09 by Claude (cloud mode checked on a RunPod RTX 4090; docs/cloud.md).
 See the [local upgrade findings](upgrade-2026-10-07.md) for implementation details and real
 render observations; the latest Git commit is authoritative.
 
@@ -504,6 +503,22 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Claude (2026-10-10): render speed, second pass. Untested on the PC.** `docs/speed.md` item 4:
+  **Render in quality**. PREVIEW and DRAFT profiles name `upgrade_to: RTX3070_QUALITY`; on a
+  finished fast video the project page (and `POST /projects/{id}/upgrade`) re-renders the picked
+  shots, or all, in quality with the same prompt/seed/settings, via `redo_shots(upgrade=True)`.
+  First pass (models kept loaded per render stage, `stall_reports: 2`, 1 s poll, `timings`) is
+  in main since aa19052, also untested on the PC. Still needs Elis: `timings` before/after, and
+  DRAFT vs QUALITY rated on the same clip (needs the LoRA file, see `docs/speed.md`).
+- **Claude (2026-10-09): cloud mode checked on a real GPU.** Elis's RunPod RTX 4090 runs ComfyUI
+  0.39.0 with the Wan VACE 1.3B, umt5 fp8 and Wan VAE models. The studio on the PC reaches it
+  through an SSH tunnel on port 8189 (`host.docker.internal:8189` from Docker).
+  `comfy-check --cloud` passes `v2v_3070_quality` and `v2v_3070_keep`; the depth, draft and
+  preview workflows still miss their node, LoRA and checkpoint on the pod. The first cloud
+  render exposed the FUTURE_24GB size bug, which is now fixed. **Next:** Elis confirms a finished
+  cloud render. Setup lessons and troubleshooting are in `docs/cloud.md`. Pod details (address,
+  keys) stay out of git.
+
 - **Codex (2026-10-09): product and optimization handoff.** The product direction and an
   evidence-first performance prompt are recorded above and in
   `docs/ROKKUR_ENTERPRISE_OPTIMIZATION_PROMPT.md`. No application code, model, or live service was
@@ -513,6 +528,8 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 ## Log (newest first)
 
 - 2026-10-10 Claude: picture checker (`docs/picture-checker.md`: contact sheets, motion-compensated stability, flicker, advisory vision-model review), post-render stabilizer and repair auto-tuning (`docs/stability.md`). Untested on a real render yet. Also render options (sampler, scheduler, shift, render size, edge detail, stability settings on the form/API/CLI) and the CLOUD_14B profile (Wan VACE 14B, fp8, up to 720P; needs the 34.7 GB 14B model on the pod, see `docs/cloud.md`). Tests pass; none of it has been run on a real GPU yet.
+- 2026-10-10 Claude: "Render in quality" (draft-first flow, `upgrade_to` on fast profiles).
+- 2026-10-09 Claude: cloud mode checked against a RunPod RTX 4090 (`comfy-check --cloud` ok for quality and keep); `docs/cloud.md` gained the keep-alive tunnel command, troubleshooting and RunPod notes.
 - 2026-10-09 Claude: FUTURE_24GB got `max_pixels: 399360`. It renders the same Wan 1.3B workflow, and a 1920x800 source came out 1920 wide, which failed the template's WIDTH max of 1280 (Elis's first cloud render). It now renders at 976x400.
 - 2026-10-09 Claude: local/cloud render mode (`docs/cloud.md`, `tests/test_cloud.py`).
 - 2026-10-09 Claude: speed pass (`docs/speed.md`): models kept loaded across a render stage,
