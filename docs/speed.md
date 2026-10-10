@@ -28,7 +28,7 @@ re-renders and how many of them you liked.
 | Subject masks (U²-Net, CPU) | seconds per shot | only in Keep mode, cached per shot |
 | QC, FFmpeg, queue | small | QC reads 64×64 grey frames; intermediate encodes are already `veryfast` |
 
-## Shipped (no change to how a render looks)
+## Shipped (items 1–3 don't change how a render looks)
 
 1. **Models stay loaded between shots.** Every shot took its own GPU lease, and each lease ended
    with ComfyUI `/free`, which also clears ComfyUI's node cache. So shot 2 reloaded the Wan
@@ -43,6 +43,15 @@ re-renders and how many of them you liked.
    choice as the repair limit: keep the renders or grant more rounds. A round that does help
    keeps going, up to `render.max_retries`. Set it to 3 to get the old behaviour back.
 3. **ComfyUI is polled every second** instead of every two (two local GETs per poll).
+
+4. **Draft first, quality for the keepers.** PREVIEW and RTX3070_DRAFT name an `upgrade_to`
+   profile (RTX3070_QUALITY). On a finished fast video the project page shows **Render in
+   quality**: the picked shots, or every shot if none is picked, render again in quality with
+   the same prompt, seed and settings, and the other shots stay. API: `POST
+   /projects/{id}/upgrade` with `{"shots": [...]}` (empty = all). A different sampler and step
+   count do not give identical frames, so the draft shows the direction (look, subject
+   handling, framing), not the exact final frames. The saving is every rejected direction no
+   longer costs a full-quality render.
 
 ## Next: speed that may cost quality (A/B with your ratings)
 

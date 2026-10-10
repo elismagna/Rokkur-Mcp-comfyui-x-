@@ -215,6 +215,9 @@ class RenderProfile(BaseModel):
     # Workflow used instead when the real subject is kept and its masks exist: VACE then keeps
     # the subject's pixels as context and regenerates only the room (docs/subject.md).
     keep_workflow: str | None = None
+    # A fast profile names the profile its shots can be redone in at full quality, with the
+    # same prompt and seed: judge a whole video quickly, then render the keepers properly.
+    upgrade_to: str | None = None
     max_width: int   # the box turns with the source: a landscape clip gets max_height wide
     max_height: int
     max_pixels: int | None = None  # area cap, e.g. 399360 = 480x832, what Wan 1.3B was trained on

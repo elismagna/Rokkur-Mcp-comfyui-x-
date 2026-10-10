@@ -503,6 +503,13 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Claude (2026-10-10): render speed, second pass. Untested on the PC.** `docs/speed.md` item 4:
+  **Render in quality**. PREVIEW and DRAFT profiles name `upgrade_to: RTX3070_QUALITY`; on a
+  finished fast video the project page (and `POST /projects/{id}/upgrade`) re-renders the picked
+  shots, or all, in quality with the same prompt/seed/settings, via `redo_shots(upgrade=True)`.
+  First pass (models kept loaded per render stage, `stall_reports: 2`, 1 s poll, `timings`) is
+  in main since aa19052, also untested on the PC. Still needs Elis: `timings` before/after, and
+  DRAFT vs QUALITY rated on the same clip (needs the LoRA file, see `docs/speed.md`).
 - **Claude (2026-10-09): cloud mode checked on a real GPU.** Elis's RunPod RTX 4090 runs ComfyUI
   0.39.0 with the Wan VACE 1.3B, umt5 fp8 and Wan VAE models. The studio on the PC reaches it
   through an SSH tunnel on port 8189 (`host.docker.internal:8189` from Docker).
@@ -520,6 +527,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-10 Claude: "Render in quality" (draft-first flow, `upgrade_to` on fast profiles).
 - 2026-10-09 Claude: cloud mode checked against a RunPod RTX 4090 (`comfy-check --cloud` ok for quality and keep); `docs/cloud.md` gained the keep-alive tunnel command, troubleshooting and RunPod notes.
 - 2026-10-09 Claude: FUTURE_24GB got `max_pixels: 399360`. It renders the same Wan 1.3B workflow, and a 1920x800 source came out 1920 wide, which failed the template's WIDTH max of 1280 (Elis's first cloud render). It now renders at 976x400.
 - 2026-10-09 Claude: local/cloud render mode (`docs/cloud.md`, `tests/test_cloud.py`).

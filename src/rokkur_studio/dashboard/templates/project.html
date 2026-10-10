@@ -138,10 +138,15 @@
   {% endfor %}
   </div>
   {% if can_redo %}
-  <form class="redo-bar" id="redo-form" method="post" action="/ui/projects/{{p.id}}/redo" onsubmit="return confirm('Render the picked shots again? The other shots keep their renders, and the video is edited again afterwards.')">
+  <form class="redo-bar" id="redo-form" method="post" action="/ui/projects/{{p.id}}/redo">
     <div><b id="redo-count">Pick shots to redo</b><div class="hint" style="margin:2px 0 0">New seed for each; motion complaints firm up the source guide, style or prompt complaints loosen it. The other shots stay exactly as they are.</div></div>
-    <button class="ember" id="redo-submit">{{ icon('redo') }} Redo</button>
-  </form>{% endif %}
+    <button class="ember" id="redo-submit" onclick="return confirm('Render the picked shots again? The other shots keep their renders, and the video is edited again afterwards.')">{{ icon('redo') }} Redo</button>
+  </form>
+  {% if upgrade_to %}
+  <div class="redo-bar">
+    <div><b>Happy with the direction?</b><div class="hint" style="margin:2px 0 0">These shots were rendered fast. Render the picked shots, or every shot if none is picked, again with {{ upgrade_to }}: same prompt, seed and settings, full quality. The fast render shows the direction, not the exact final frames.</div></div>
+    <button class="ember" type="submit" form="redo-form" formaction="/ui/projects/{{p.id}}/upgrade" formnovalidate onclick="return confirm('Render in full quality? Picked shots only, or every shot if none is picked. This takes several times longer than the fast render.')">{{ icon('redo') }} Render in quality</button>
+  </div>{% endif %}{% endif %}
 </section>
 {% endif %}
 

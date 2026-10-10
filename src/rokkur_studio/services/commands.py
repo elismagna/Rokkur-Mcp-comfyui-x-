@@ -194,8 +194,18 @@ def keep_renders(session: Session, project: Project, settings: Settings, *, acto
     return advance(session, project, settings, manual=True)
 
 
+def upgrade_target(settings: Settings, manifest: ReconstructionManifest, shot_id: str
+                   ) -> str | None:
+    """The profile a shot's fast render can be redone in at full quality (``upgrade_to``)."""
+    shot = manifest.shot(shot_id)
+    current = str(shot.overrides.get("profile", manifest.render_profile))
+    target = settings.profiles[current].upgrade_to if current in settings.profiles else None
+    return target if target in settings.profiles else None
+
+
 def redo_shots(session: Session, project: Project, settings: Settings, *, shot_ids: list[str],
-               actor: str, supported: set[str] | None = None) -> Job | None:
+               actor: str, supported: set[str] | None = None,
+               upgrade: bool = False) -> Job | None:
     """Render the shots you picked again; every other shot keeps its render as it is.
 
     Allowed on a finished video and on a project stopped at the repair limit. Each redone shot
@@ -203,9 +213,13 @@ def redo_shots(session: Session, project: Project, settings: Settings, *, shot_i
     plan is saved as a repair plan so the project page shows what changed. The shots left
     alone are recorded as accepted, so QC never sends them back for repair, and the redone
     shots get the usual automatic repair rounds.
+
+    ``upgrade`` instead renders the shots again in their fast profile's ``upgrade_to`` profile
+    (draft to quality) with the same prompt, seed and settings; no picked shots means every
+    shot. Render a whole video fast, judge the direction, then pay for quality only once.
     """
     shot_ids = list(dict.fromkeys(shot_ids))
-    if not shot_ids:
+    if not shot_ids and not upgrade:
         raise ValueError("Pick at least one shot to redo")
     ready = project.status == S.READY_TO_PUBLISH
     if not ready and not at_repair_limit(project):
@@ -216,9 +230,23 @@ def redo_shots(session: Session, project: Project, settings: Settings, *, shot_i
     if mdoc is None:
         raise ValueError("This project has no shots to redo yet")
     manifest = ReconstructionManifest.model_validate(mdoc.data)
+    if upgrade and not shot_ids:
+        shot_ids = [shot.shot_id for shot in manifest.shots]
     unknown = [s for s in shot_ids if s not in {shot.shot_id for shot in manifest.shots}]
     if unknown:
         raise ValueError(f"Unknown shots: {', '.join(unknown)}")
+    targets: dict[str, str] = {}
+    if upgrade:
+        for sid in shot_ids:
+            target = upgrade_target(settings, manifest, sid)
+            if target is None:
+                raise ValueError(f"{sid.replace('shot_', 'Shot ')} is already rendered in "
+                                 "full quality")
+            problem = settings.profile_problem(target,
+                                               target=project_target(project.creative_input))
+            if problem:
+                raise ValueError(f"{target} is not available: {problem}")
+            targets[sid] = target
     current: dict[str, Render] = {}
     for r in session.scalars(select(Render).where(Render.project_id == project.id,
                                                   Render.status == "succeeded")
@@ -227,6 +255,13 @@ def redo_shots(session: Session, project: Project, settings: Settings, *, shot_i
     verdicts = {r.render_id: r for r in ratings.project_ratings(session, project.id)}
     actions: list[dict[str, Any]] = []
     for sid in shot_ids:
+        if upgrade:
+            manifest.shot(sid).overrides["profile"] = targets[sid]
+            actions.append({"shot_id": sid, "changes": {"profile": targets[sid]},
+                            "reason": f"same prompt, seed and settings, rendered with "
+                                      f"{targets[sid]}",
+                            "recommendations": [], "unsupported": [], "tags": []})
+            continue
         render = current.get(sid)
         verdict = verdicts.get(render.id) if render is not None else None
         tags = verdict.tags if verdict is not None and verdict.value < 0 else []
@@ -247,7 +282,9 @@ def redo_shots(session: Session, project: Project, settings: Settings, *, shot_i
                                                         status="pending"):
         req.status, req.decided_by, req.decided_at = "rejected", actor, utcnow()
         req.note = "superseded: shots are being redone, a new video will be proposed"
-    transition(session, project, S.REPAIRING, actor=actor, reason="you asked to redo shots",
+    transition(session, project, S.REPAIRING, actor=actor,
+               reason=("you asked for these shots in full quality" if upgrade
+                       else "you asked to redo shots"),
                data={"shots": shot_ids})
     save_document(session, project.id, "repair_plan",
                   {"round": project.repair_rounds, "requested_by": actor, "actions": actions},
