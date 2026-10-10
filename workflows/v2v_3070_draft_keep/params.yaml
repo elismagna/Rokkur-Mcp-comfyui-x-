@@ -7,8 +7,11 @@
 #   loras/Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors
 #   from huggingface.co/Kijai/WanVideo_comfy, LoRAs/Wan2_1_self_forcing_1_3B/
 # Other models as v2v_3070_keep. Quality vs the 20-step workflow is untested: A/B it on the PC.
+# SHIFT (ModelSamplingSD3) defaults to this graph's 8.0. SAMPLER and SCHEDULER are not
+# parameters here: the Self-Forcing LoRA needs lcm/simple at 4 steps, so a requested sampler
+# or scheduler is reported as ignored.
 name: v2v_3070_draft_keep
-version: 1
+version: 2
 description: Fast draft of v2v_3070_keep (Self-Forcing DMD LoRA, 4 steps, cfg 1)
 resource_class: GPU_HEAVY
 input_kind: video
@@ -31,5 +34,6 @@ parameters:
   FRAME_COUNT: {node: "14", input: length, type: int, min: 1, max: 161}
   CONTROL_STRENGTH: {node: "14", input: strength, type: float, default: 1.0, min: 0, max: 2}
   SEED: {node: "15", input: seed, type: int, default: 0, min: 0}
+  SHIFT: {node: "4", input: shift, type: float, default: 8.0, min: 0.5, max: 30}
   FPS: {node: "18", input: fps, type: float, min: 1, max: 60}
   OUTPUT_PREFIX: {node: "19", input: filename_prefix, type: str, default: rokkur/render}

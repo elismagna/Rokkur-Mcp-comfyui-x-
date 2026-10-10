@@ -132,6 +132,10 @@ def shot_params(manifest: ReconstructionManifest, shot: ShotSpec,
         "CONTROL_STRENGTH": float(o.get("control_strength", 1.0)),
         "_OUTPUT_FRAMES": output_frames,
         "_REFERENCE_MODE": manifest.identity.reference_mode,
+        # Read by the studio around the render (post-render stabilizer, guide smoothing); the
+        # renderer never hands underscore keys to the workflow compiler.
+        "_STABILIZE": str(o.get("stabilize") or "auto"),
+        "_SMOOTH_CONTROL": float(o.get("smooth_control") or 0.0),
         "DENOISE": round(min(0.95, max(0.2, profile.denoise * style / 0.7)), 3),
         "STYLE_STRENGTH": style,
         "IDENTITY_STRENGTH": identity,
@@ -139,9 +143,13 @@ def shot_params(manifest: ReconstructionManifest, shot: ShotSpec,
         "DEPTH_STRENGTH": 1.0 if o.get("depth", shot.controls.depth) else 0.0,
         "OFFLOAD": bool(o.get("offload", profile.offload)),
     }
-    for key in ("canny_low", "canny_high"):
+    # Only when set: otherwise each workflow keeps its own value (the drafts' sampler is fixed).
+    for key in ("canny_low", "canny_high", "shift"):
         if o.get(key) is not None:
             params[key.upper()] = float(o[key])
+    for key in ("sampler", "scheduler"):
+        if o.get(key):
+            params[key.upper()] = str(o[key])
     if manifest.identity.reference_image:
         params["REFERENCE_IMAGE"] = manifest.identity.reference_image
     return params

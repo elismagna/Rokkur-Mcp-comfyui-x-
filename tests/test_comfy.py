@@ -228,10 +228,14 @@ def test_draft_workflows_add_the_self_forcing_lora_and_fix_the_sampler(draft, ba
     assert d.workflow["7"]["inputs"]["model"] == ["1", 0] and d.workflow["4"]["inputs"]["model"] == ["7", 0]
     ks = d.workflow["15"]["inputs"]
     assert (ks["steps"], ks["cfg"], ks["sampler_name"], ks["scheduler"]) == (4, 1.0, "lcm", "simple")
-    assert set(d.spec.parameters) == set(b.spec.parameters) - {"STEPS", "CFG"} | {"LORA", "LORA_STRENGTH"}
+    # The LoRA needs lcm/simple at 4 steps: sampler and scheduler are fixed too, shift is not.
+    assert set(d.spec.parameters) == (set(b.spec.parameters) - {"STEPS", "CFG", "SAMPLER", "SCHEDULER"}
+                                      | {"LORA", "LORA_STRENGTH"})
     compiled = compile_workflow(d, {"STYLE_PROMPT": "spa", "INPUT_VIDEO": "c.mp4", "MASK_VIDEO": "m.mp4",
-                                    "STEPS": 20, "CFG": 6.0})
-    assert compiled.workflow["15"]["inputs"]["steps"] == 4 and {"STEPS", "CFG"} <= set(compiled.ignored)
+                                    "STEPS": 20, "CFG": 6.0, "SAMPLER": "euler"})
+    assert compiled.workflow["15"]["inputs"]["steps"] == 4
+    assert compiled.workflow["15"]["inputs"]["sampler_name"] == "lcm"
+    assert {"STEPS", "CFG", "SAMPLER"} <= set(compiled.ignored)
 
 
 def test_draft_profile_is_loadable(settings):

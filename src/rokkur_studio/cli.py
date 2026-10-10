@@ -11,12 +11,15 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from rokkur_studio.config import Settings, load_settings
+from rokkur_studio.config import RenderProfile, Settings, load_settings
 from rokkur_studio.logging_setup import configure_logging
+
+if TYPE_CHECKING:
+    from rokkur_studio.api.schemas import CreativeIn
 
 
 def _settings(args: argparse.Namespace) -> Settings:
@@ -83,7 +86,8 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
     settings = _settings(args)
     url = settings.comfyui.url
     client = ComfyClient(url)
-    if getattr(args, "cloud", False):
+    cloud = bool(getattr(args, "cloud", False))
+    if cloud:
         if not settings.cloud.ready:
             print("Cloud rendering is not set up: set STUDIO_CLOUD__ENABLED=true and "
                   "STUDIO_CLOUD__URL in .env (docs/cloud.md).")
@@ -105,9 +109,13 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
     finally:
         client.close()
     registry = TemplateRegistry(settings.workflows_dir)
-    needed = ({p.workflow for p in settings.profiles.values()}
-              | {p.keep_workflow for p in settings.profiles.values() if p.keep_workflow})
-    for name in sorted(set(registry.names()) | needed):
+    profiles = settings.profiles.values()
+    used = ({p.workflow for p in profiles} | {p.keep_workflow for p in profiles if p.keep_workflow})
+    # Only profiles this server can run must pass: the PC never needs CLOUD_14B's 14B model.
+    runnable = [p for p in profiles if _profile_fits(settings, p, cloud=cloud)]
+    needed = ({p.workflow for p in runnable}
+              | {p.keep_workflow for p in runnable if p.keep_workflow})
+    for name in sorted(set(registry.names()) | used):
         try:
             template = registry.get(name)
         except TemplateError as exc:
@@ -115,12 +123,20 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
             ok = ok and name not in needed
             continue
         problems = validate_against_object_info(template, info)
-        unused = "" if name in needed else "  (not used by any render profile)"
-        print(f"  [{'ok' if not problems else 'FAIL'}] {name} v{template.spec.version}{unused}")
+        note = ("" if name in needed else "  (not used by any render profile)" if name not in used
+                else "  (only for profiles this server cannot run)")
+        print(f"  [{'ok' if not problems else 'FAIL'}] {name} v{template.spec.version}{note}")
         for p in problems:
             print(f"      - {p}")
         ok = ok and (not problems or name not in needed)
     return 0 if ok else 1
+
+
+def _profile_fits(settings: Settings, profile: RenderProfile, *, cloud: bool) -> bool:
+    """Whether a profile can render on the checked server (its location and VRAM)."""
+    if profile.location == "remote" and not cloud:
+        return False
+    return profile.min_vram_gb <= (settings.cloud.vram_gb if cloud else settings.gpu.vram_gb)
 
 
 # Loader node -> the input whose choices are the model files ComfyUI can see.
@@ -560,9 +576,28 @@ def _drive(ctx: Any, pid: str, timeout: float, *, actor: str) -> int:
     return 0
 
 
+def render_creative(args: argparse.Namespace) -> CreativeIn:
+    """The ``render`` command's creative options as a validated ``CreativeIn``."""
+    from rokkur_studio.api.schemas import CreativeIn
+
+    return CreativeIn(theme=args.theme, prompt=args.prompt, subject=args.subject,
+                      reference_mode=args.reference, character_key=args.character,
+                      seed=args.seed,
+                      canny_low=args.canny[0] if args.canny else None,
+                      canny_high=args.canny[1] if args.canny else None,
+                      shift=args.shift, sampler=args.sampler, scheduler=args.scheduler,
+                      resolution_scale=args.scale, stabilize=args.stabilize,
+                      smooth_control=args.smooth_control, auto_tune=not args.no_auto_tune,
+                      min_stability=args.min_stability,
+                      picture_review=not args.no_picture_review,
+                      use_global_look=not args.no_global_look)
+
+
 def cmd_render(args: argparse.Namespace) -> int:
     """Render a video you have rights to through the full pipeline (publishing stays a dry run)."""
-    from rokkur_studio.api.schemas import CreativeIn, ProjectCreate, RightsIn, SourceIn
+    from pydantic import ValidationError
+
+    from rokkur_studio.api.schemas import ProjectCreate, RightsIn, SourceIn
     from rokkur_studio.domain.rights import RightsCategory
     from rokkur_studio.pipeline.context import build_context, profile_availability
     from rokkur_studio.services import commands
@@ -572,6 +607,13 @@ def cmd_render(args: argparse.Namespace) -> int:
     source = Path(args.path)
     if not source.is_file():
         print(f"no such file: {source} (inside Docker your media folder is /media)", file=sys.stderr)
+        return 2
+    try:
+        creative = render_creative(args)
+    except ValidationError as exc:
+        print("invalid render option: " + "; ".join(
+            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()),
+            file=sys.stderr)
         return 2
     ctx = build_context(settings)
     profile = args.profile or settings.render.default_profile
@@ -588,12 +630,7 @@ def cmd_render(args: argparse.Namespace) -> int:
             name=args.name or source.stem, target_format=args.format, render_profile=args.profile,
             source=SourceIn(platform="local", local_path=str(source.resolve())),
             rights=RightsIn(category=RightsCategory(args.rights), permission_evidence=args.evidence),
-            creative=CreativeIn(theme=args.theme, prompt=args.prompt, subject=args.subject,
-                                reference_mode=args.reference, character_key=args.character,
-                                seed=args.seed,
-                                canny_low=args.canny[0] if args.canny else None,
-                                canny_high=args.canny[1] if args.canny else None,
-                                use_global_look=not args.no_global_look), autostart=True),
+            creative=creative, autostart=True),
             settings, actor="cli")
         pid = project.id
     print(f"project {pid} created; rendering with {args.renderer} / {args.profile or 'default profile'}")
@@ -653,7 +690,8 @@ def cmd_prompt_schedule(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    from rokkur_studio.api.schemas import SAMPLERS, SCHEDULERS, STABILIZE_MODES
     from rokkur_studio.domain.rights import RightsCategory
 
     parser = argparse.ArgumentParser(prog="rokkur-studio")
@@ -717,6 +755,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--canny", nargs=2, type=float, metavar=("LOW", "HIGH"),
                    help="edge thresholds for the Canny workflows (default 0.2 0.5)")
     p.add_argument("--seed", type=int, help="one seed for every shot, to compare settings")
+    p.add_argument("--shift", type=float,
+                   help="Wan sampling shift, 1-20 (default: the workflow's 8)")
+    p.add_argument("--sampler", choices=SAMPLERS, help="KSampler sampler (default: uni_pc)")
+    p.add_argument("--scheduler", choices=SCHEDULERS, help="KSampler scheduler (default: simple)")
+    p.add_argument("--scale", type=float, metavar="FACTOR",
+                   help="render at this fraction of the profile's size, 0.5-1.0")
+    p.add_argument("--stabilize", choices=STABILIZE_MODES, default="auto",
+                   help="steady the finished shots (default: auto, the studio decides)")
+    p.add_argument("--smooth-control", type=float, default=0.0, metavar="AMOUNT",
+                   help="smooth the source guide over time, 0-1 (default 0: off)")
+    p.add_argument("--no-auto-tune", action="store_true",
+                   help="when a shot fails QC, change only the seed, not the settings")
+    p.add_argument("--min-stability", type=float, default=0.0, metavar="SCORE",
+                   help="re-render shots whose stability score is below this, 0-10 (default 0: off)")
+    p.add_argument("--no-picture-review", action="store_true",
+                   help="skip the AI picture review after rendering")
     p.add_argument("--no-global-look", action="store_true",
                    help="skip the global prefix, style modifiers and negative prompt")
     p.add_argument("--rights", required=True,
@@ -738,7 +792,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("project_id", nargs="?")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_timings)
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     return int(args.func(args))
 
 

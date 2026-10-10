@@ -109,3 +109,31 @@ profiles:
     resource_class: GPU_HEAVY
     location: local
     degrade: [clear_cache, reduce_frames, reduce_resolution, enable_offload]
+
+  # Wan 2.1 VACE 14B for the 24 GB cloud GPU (workflows/v2v_cloud_14b, from Comfy-Org's MIT VACE
+  # 14B v2v template without its non-commercial CausVid LoRA). min_vram_gb keeps it off the 8 GB
+  # PC, so the New video page lists it as "cloud only"; location stays local because the studio
+  # sends it to the cloud ComfyUI through the video's "Where to render" choice (render_on).
+  # The cloud server needs diffusion_models/wan2.1_vace_14B_fp16.safetensors (34.7 GB, loaded
+  # as fp8), see docs/cloud.md.
+  CLOUD_14B:
+    min_vram_gb: 24
+    description: Wan VACE 14B up to 720P on a 24 GB cloud GPU (needs the 14B model on the cloud server; much slower than 1.3B)
+    workflow: v2v_cloud_14b
+    keep_workflow: v2v_cloud_14b_keep
+    max_width: 720
+    max_height: 1280
+    max_pixels: 921600   # 1280x720: VACE 14B is trained at 480P and 720P
+    negative_base: *wan_negative
+    fps: 16
+    max_frames: 81
+    frame_multiple: 4
+    steps: 20            # Comfy-Org's non-LoRA KSampler defaults: 20 steps, cfg 6
+    denoise: 0.65
+    controls: {pose: false, depth: false, segmentation: false}
+    resource_class: GPU_HEAVY
+    location: local
+    # No switch to a 1.3B profile: a mid-video switch would change the model, and with it the
+    # look and the 480P size cap, between shots. Smaller frames come first because 720P is the
+    # likeliest reason for an out-of-memory error on 24 GB.
+    degrade: [clear_cache, reduce_resolution, reduce_frames]

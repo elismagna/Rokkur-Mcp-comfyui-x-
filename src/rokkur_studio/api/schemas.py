@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from rokkur_studio.domain.rights import RightsCategory
+
+# KSampler names offered for Wan; all are in ComfyUI core's KSampler lists.
+Sampler = Literal["uni_pc", "uni_pc_bh2", "euler", "dpmpp_2m", "res_multistep"]
+Scheduler = Literal["simple", "beta", "normal", "sgm_uniform"]
+# Post-render stabilizer; auto lets the studio decide.
+Stabilize = Literal["auto", "off", "light", "strong"]
+SAMPLERS: tuple[str, ...] = get_args(Sampler)
+SCHEDULERS: tuple[str, ...] = get_args(Scheduler)
+STABILIZE_MODES: tuple[str, ...] = get_args(Stabilize)
+# Edge detail on the New video form: Canny (low, high) thresholds; None keeps the workflow's
+# 0.2/0.5. 0.4/0.8 is Comfy-Org's VACE template default and draws fewer fur and texture edges.
+EDGE_PRESETS: dict[str, tuple[float, float] | None] = {
+    "default": None, "calm": (0.4, 0.8), "tight": (0.1, 0.3)}
 
 
 class SourceIn(BaseModel):
@@ -52,6 +65,22 @@ class CreativeIn(BaseModel):
     seed: int | None = Field(None, ge=0, le=4294967295)
     steps: int | None = Field(None, ge=8, le=40)
     cfg: float = Field(6.0, ge=1, le=12)
+    # Sampling options; None keeps the workflow's own value (shift 8, uni_pc, simple). A
+    # workflow that fixes one (the Self-Forcing drafts' sampler) reports it as ignored.
+    shift: float | None = Field(None, ge=1, le=20)
+    sampler: Sampler | None = None
+    scheduler: Scheduler | None = None
+    # Below 1 renders smaller than the profile's size box, e.g. 0.67 for 480P on CLOUD_14B.
+    resolution_scale: float | None = Field(None, ge=0.5, le=1.0)
+    # Temporal stability: the post-render stabilizer (auto: the studio decides), and how much
+    # the source clip is smoothed over time before it becomes the Canny/depth guide.
+    stabilize: Stabilize = "auto"
+    smooth_control: float = Field(0.0, ge=0, le=1)
+    # Repairs: auto_tune lets QC change settings when a shot fails (off: only the seed changes);
+    # min_stability > 0 re-renders shots whose stability score is below it.
+    auto_tune: bool = True
+    min_stability: float = Field(0.0, ge=0, le=10)
+    picture_review: bool = True   # AI picture review after rendering, on the local vision model
     negative_prompt: str | None = Field(None, max_length=2000)
     keep_source_audio: bool = True
     audio_bed_path: str | None = None

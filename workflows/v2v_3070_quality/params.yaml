@@ -11,8 +11,11 @@
 # carries the node defaults 0.4/0.8 (its Canny node is bypassed there), which draw fewer fur and
 # texture edges; worth an A/B on the workstation before changing the default.
 # Run `scripts/studio.ps1 comfy-check` to validate node inputs and model files on the workstation.
+# SHIFT (ModelSamplingSD3), SAMPLER and SCHEDULER (KSampler) default to this graph's own
+# values (8.0, uni_pc, simple), so a render that sets none of them is unchanged; a video's
+# advanced settings or a QC repair may change them.
 name: v2v_3070_quality
-version: 3
+version: 4
 description: Wan 2.1 VACE 1.3B restyle, Canny control from the source clip
 resource_class: GPU_HEAVY
 input_kind: video
@@ -34,5 +37,8 @@ parameters:
   SEED: {node: "15", input: seed, type: int, default: 0, min: 0}
   STEPS: {node: "15", input: steps, type: int, min: 1, max: 60}
   CFG: {node: "15", input: cfg, type: float, min: 0, max: 15}
+  SHIFT: {node: "4", input: shift, type: float, default: 8.0, min: 0.5, max: 30}
+  SAMPLER: {node: "15", input: sampler_name, type: str, default: uni_pc}
+  SCHEDULER: {node: "15", input: scheduler, type: str, default: simple}
   FPS: {node: "18", input: fps, type: float, min: 1, max: 60}
   OUTPUT_PREFIX: {node: "19", input: filename_prefix, type: str, default: rokkur/render}
