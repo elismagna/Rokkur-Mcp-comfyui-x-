@@ -7,6 +7,7 @@ import contextlib
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -61,6 +62,7 @@ from rokkur_studio.pipeline.renderers import (
     RenderRejected,
     RenderUnavailable,
 )
+from rokkur_studio.pipeline.stabilize import stabilize_shot
 from rokkur_studio.pipeline.subject import (
     MaskerUnavailable,
     OnnxSubjectMasker,
@@ -565,6 +567,18 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
                 details, final = outcome.details, outcome.path
                 if guidance:
                     details = {**details, "guidance": guidance}
+                if not params.get("_FAULT"):  # a test fault models a broken render: keep it
+                    # Before the kept-subject composite, so the real subject's pixels go back
+                    # in untouched. CPU only: no GPU lease (pipeline/stabilize.py).
+                    steady, stabilizer = stabilize_shot(
+                        ctx.ffmpeg, source=_shot_clip(ctx, manifest, shot), render=outcome.path,
+                        value=shot.overrides.get("stabilize", ctx.settings.render.stabilize),
+                        fps=float(params["FPS"]),
+                        qc_fps=manifest.video.fps, threshold=ctx.settings.quality.pass_threshold)
+                    details = {**details, "stabilizer": stabilizer}
+                    if steady != outcome.path:
+                        outcome = replace(outcome, path=steady)
+                        final = steady
                 if keep and masker is not None:
                     subject, kept = _keep_subject(ctx, manifest, shot, clip, outcome, params, masker)
                     details = {**details, "subject": subject}
@@ -925,18 +939,33 @@ def repair(ctx: StudioContext, job: Job) -> dict[str, Any]:
                                      "repeated re-renders did not improve QC")
 
     round_ = project.repair_rounds + 1
-    current = {s.shot_id: {"seed": s.overrides.get("seed", s.seed),
-                           "control_strength": s.overrides.get("control_strength", 1.0),
-                           "style_strength": s.overrides.get("style_strength",
-                                                             manifest.style.strength),
-                           "identity_strength": s.overrides.get("identity_strength",
-                                                                manifest.identity.strength)}
-               for s in manifest.shots}
+    # What each failing shot already tried, so tuning never repeats a combination.
+    tried: dict[str, list[dict[str, Any]]] = {}
+    with ctx.db.session() as s:
+        for row in s.scalars(select(Render).where(Render.project_id == pid,
+                                                  Render.status.in_(("succeeded", "superseded")))
+                             .order_by(Render.attempt)):
+            tried.setdefault(row.shot_id, []).append(RepairPlanner.settings_from_params(row.params))
+    current: dict[str, dict[str, Any]] = {}
+    for sh in manifest.shots:
+        o = sh.overrides
+        shot_profile = ctx.settings.profile(str(o.get("profile", manifest.render_profile)))
+        current[sh.shot_id] = {
+            "seed": o.get("seed", sh.seed), "control_strength": o.get("control_strength", 1.0),
+            "style_strength": o.get("style_strength", manifest.style.strength),
+            "identity_strength": o.get("identity_strength", manifest.identity.strength),
+            "cfg": o.get("cfg", 6.0), "steps": o.get("steps", shot_profile.steps),
+            "canny_low": o.get("canny_low", 0.2), "canny_high": o.get("canny_high", 0.5),
+            "shift": o.get("shift", 8.0), "stabilize": o.get("stabilize", ctx.settings.render.stabilize),
+            "smooth_control": o.get("smooth_control", 0.0), "tried": tried.get(sh.shot_id, [])}
     supported = None
     if ctx.settings.render.renderer == "comfyui":
         supported = set(ctx.registry.get(ctx.settings.profile(manifest.render_profile).workflow)
                         .spec.parameters)
-    plan = RepairPlanner().plan(report, round_, current, supported=supported)
+    auto_tune = project.creative_input.get("auto_tune")
+    plan = RepairPlanner().plan(report, round_, current, supported=supported,
+                                auto_tune=ctx.settings.render.auto_tune if auto_tune is None
+                                else bool(auto_tune))
     if not plan.actions:
         # Stop where a human can keep the renders or check again, as at the repair limit.
         return _stop_at_repair_limit(ctx, job, report,
