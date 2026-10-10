@@ -3,7 +3,8 @@
   Windows equivalent of the Makefile. Usage: .\scripts\studio.ps1 <command>
   Commands: up, down, logs, test, migrate, studio, worker, comfy-check, youtube-auth,
             smoke-test, audit, lint, build, install-models, comfy-render, render, agent-check, publish,
-            prompt-schedule, youtube-playlists, taste, timings
+            prompt-schedule, youtube-playlists, taste, timings, shortcut, launch, cloud-on, cloud-off,
+            cloud-pod
   publish: .\scripts\studio.ps1 publish <project id> [--privacy unlisted] [--dry-run]
            [--at "2026-10-09 18:00" | --at next] [--playlist "Shorts"]
   render: .\scripts\studio.ps1 render myclip.mp4 --theme "1970s claymation" --rights USER_OWNED --evidence "I filmed it"
@@ -12,6 +13,12 @@
   prompt-schedule: .\scripts\studio.ps1 prompt-schedule <project id>   (FizzNodes Batch Prompt Schedule text)
   taste:        .\scripts\studio.ps1 taste   (what your ratings say works, to paste to Claude or Codex)
   timings:      .\scripts\studio.ps1 timings [project id]   (where the render time went)
+  shortcut:     put the Rokkur Studio icon on the desktop (it runs launch)
+  launch:       start Docker, the studio and, if you say yes, the RunPod cloud GPU; then open
+                the dashboard. Options: -Cloud (no question), -NoCloud
+  cloud-on:     start the cloud GPU and its tunnel without asking
+  cloud-off:    stop the cloud GPU and close its tunnel
+  cloud-pod:    .\scripts\studio.ps1 cloud-pod status   (what RunPod says about the pod)
 #>
 # Plain (non-advanced) param block on purpose: options like --theme land in $args
 # instead of being rejected as unknown PowerShell parameters.
@@ -54,6 +61,11 @@ switch ($Command) {
   }
   "audit"        { InApi audit }
   "install-models" { & (Join-Path $PSScriptRoot "install-models.ps1") }
+  "shortcut"     { & (Join-Path $PSScriptRoot "install-shortcut.ps1") }
+  "launch"       { & (Join-Path $PSScriptRoot "launch.ps1") @Rest }
+  "cloud-on"     { & (Join-Path $PSScriptRoot "launch.ps1") -Cloud }
+  "cloud-off"    { & (Join-Path $PSScriptRoot "launch.ps1") -Off }
+  "cloud-pod"    { InApi cloud-pod @Rest }
   "test"         { python -m pytest }
   "lint"         { ruff check src tests; mypy }
   default        { Write-Error "unknown command '$Command'"; exit 1 }

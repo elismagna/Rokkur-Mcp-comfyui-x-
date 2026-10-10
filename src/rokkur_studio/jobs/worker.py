@@ -19,6 +19,7 @@ from rokkur_studio.pipeline.context import StudioContext
 from rokkur_studio.pipeline.driver import advance
 from rokkur_studio.pipeline.stages import HANDLERS, Handler
 from rokkur_studio.services.projects import get_project, transition
+from rokkur_studio.services.runpod import IdleStopper, cloud_queue_busy
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,9 @@ class Worker:
         self.worker_id = worker_id or f"{socket.gethostname()}:{os.getpid()}"
         self.kinds = kinds or sorted(self.handlers)
         self._stop = threading.Event()
+        # a running RunPod pod bills by the hour: stop it once the studio stops using it
+        self.idle_stopper = IdleStopper(ctx.runpod, ctx.settings.cloud.auto_stop_idle_minutes,
+                                        ctx.db.session, busy_probe=cloud_queue_busy(ctx.cloud_factory))
 
     def stop(self) -> None:
         self._stop.set()
@@ -60,6 +64,7 @@ class Worker:
             except Exception:
                 log.exception("worker loop error")
                 worked = False
+            self.idle_stopper.tick()  # also between local jobs; it checks every few minutes
             if not worked:
                 self._stop.wait(self.ctx.settings.jobs.poll_interval_s)
 

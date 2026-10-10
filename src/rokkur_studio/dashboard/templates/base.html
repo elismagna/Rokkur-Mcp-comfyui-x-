@@ -23,7 +23,7 @@
     <a class="nav {% if path=='/ui/system' %}on{% endif %}" href="/ui/system">{{icon('sys')}}System</a>
     <a class="nav" href="/docs">{{icon('api')}}API docs</a>
   </nav>
-  <div class="live" id="live" aria-live="polite"><a href="/ui/queue"><div class="row"><span class="pulse"></span><b data-live="title">Studio</b></div><div data-live="detail">Checking…</div></a></div>
+  <div class="live" id="live" aria-live="polite"><a href="/ui/queue"><div class="row"><span class="pulse"></span><b data-live="title">Studio</b></div><div data-live="detail">Checking…</div></a><a class="cloud-chip" data-live="cloud" href="/ui/system#cloud-gpu" hidden></a></div>
 </aside>
 <main id="main-content">
 <div class="topbar"><span>{% block crumb %}Rökkur / Local production studio{% endblock %}</span><button id="theme-toggle" type="button" class="secondary">Light appearance</button></div>

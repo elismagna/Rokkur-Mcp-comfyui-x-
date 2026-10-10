@@ -503,6 +503,17 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Claude (2026-10-10): desktop icon and RunPod start/stop. Untested on Windows.**
+  `.\scripts\studio.ps1 shortcut` makes a *Rökkur Studio* desktop icon (`assets/rokkur.ico`)
+  that runs `scripts/launch.ps1`: Docker Desktop, `studio.ps1 up`, then (with
+  `STUDIO_CLOUD__RUNPOD_API_KEY` and `STUDIO_CLOUD__RUNPOD_POD_ID` in `.env`) a question
+  whether to turn on the cloud GPU; yes starts the pod through RunPod's REST API, starts
+  ComfyUI on it over SSH and opens a hidden tunnel on 8189. The System page has a Cloud GPU
+  card with Stop, the rail a chip while it runs, and the worker stops the pod after
+  `cloud.auto_stop_idle_minutes` (30) without cloud work. Code: `services/runpod.py`, CLI
+  `cloud-pod`, `tests/test_runpod.py` (fake RunPod). The PowerShell launcher was parse-checked
+  and run here with stand-in docker/ssh only. **Next:** Elis adds the key and pod id, makes the
+  icon and tries it; details in `docs/cloud.md` ("Start the cloud GPU with the studio").
 - **Claude (2026-10-10): render speed, second pass. Untested on the PC.** `docs/speed.md` item 4:
   **Render in quality**. PREVIEW and DRAFT profiles name `upgrade_to: RTX3070_QUALITY`; on a
   finished fast video the project page (and `POST /projects/{id}/upgrade`) re-renders the picked
@@ -527,6 +538,10 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-10 Claude: desktop icon + launcher (`scripts/launch.ps1`, `install-shortcut.ps1`,
+  `studio.ps1 shortcut|launch|cloud-on|cloud-off|cloud-pod`), RunPod start/stop/status
+  (`services/runpod.py`, CLI `cloud-pod`), System page Cloud GPU card and Stop, rail chip,
+  idle auto-stop in the worker (`IdleStopper`), new `cloud.*` settings, `tests/test_runpod.py`.
 - 2026-10-10 Claude: "Render in quality" (draft-first flow, `upgrade_to` on fast profiles).
 - 2026-10-09 Claude: cloud mode checked against a RunPod RTX 4090 (`comfy-check --cloud` ok for quality and keep); `docs/cloud.md` gained the keep-alive tunnel command, troubleshooting and RunPod notes.
 - 2026-10-09 Claude: FUTURE_24GB got `max_pixels: 399360`. It renders the same Wan 1.3B workflow, and a 1920x800 source came out 1920 wide, which failed the template's WIDTH max of 1280 (Elis's first cloud render). It now renders at 976x400.

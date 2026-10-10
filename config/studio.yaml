@@ -31,6 +31,11 @@ cloud:                       # optional ComfyUI server you rent or run elsewhere
   vram_gb: 24                # the cloud GPU's memory, for profile checks
   price_per_hour_usd: 0      # what the provider charges, for the cost estimate; 0 = unknown
   default: local             # preselected on the New video page: local | cloud
+  ask_on_launch: true        # the desktop icon asks whether to start the RunPod pod
+  auto_stop_idle_minutes: 30 # the worker stops the pod after this long without cloud work; 0 = never
+  ssh_user: root
+  remote_comfy_dir: /workspace/ComfyUI   # where ComfyUI lives on the pod
+  remote_comfy_port: 8188
 
 ollama:
   url: http://127.0.0.1:11434
