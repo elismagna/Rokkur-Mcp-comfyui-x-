@@ -71,6 +71,9 @@ effective Wan controls, timing fixes, render comparisons and real RTX 3070 findi
   form that shows how the prompt rules turn a description into a prompt.
 - **YouTube**: sign-in, quota, release times and what is scheduled, your playlists.
 - **Approvals**: rights questions, and at autonomy level 3 every upload the studio proposes.
+- **3D**: open, measure, fix and convert STL/OBJ/PLY/GLB, and make models from a picture
+  (relief or lithophane, or AI on this PC or the cloud), a LiDAR scan, photos or a video
+  (`docs/three.md`).
 - **REA**: reverse-engineer a program, app or plugin on this machine with the real `rea` CLI
   and keep the evidence (`docs/rea.md`).
 - **Agents** (with a one-click model check), **Queue**, **System**.
@@ -123,7 +126,7 @@ curl -X POST localhost:8400/projects -H 'content-type: application/json' -d '{
 ## Commands
 
 `make up | down | logs | test | migrate | studio | worker | comfy-check | agent-check |
-render | image | image-list | audio | audio-edit | audio-list | youtube-auth | publish | youtube-playlists | prompt-schedule | taste | smoke-test | audit | lint` — or the same
+render | image | image-list | audio | audio-edit | audio-list | mesh-info | mesh-convert | model3d-list | rea-run | rea-list | youtube-auth | publish | youtube-playlists | prompt-schedule | taste | smoke-test | audit | lint` — or the same
 names via `scripts\studio.ps1`.
 
 ## Documentation
@@ -139,6 +142,7 @@ names via `scripts\studio.ps1`.
 - `docs/images.md` – the picture studio: generate, change, repaint, extend, upscale, characters, storyboards
 - `docs/audio.md` – the sound studio: music and effects generation, editing, soundtracks at any stage
 - `docs/stability.md` – Stable mode and changing the shots still to render
+- `docs/three.md` – the 3D studio: models for printing, conversions, and the ways to make one
 - `docs/rea.md` – REA (reverse engineer anything) as a studio tool: runs on local files, kept with their evidence
 - `docs/live.md` – the live view: watch the studio work and decide with the evidence in front of you
 - `docs/video-tools.md` – extending a clip or a finished video with Wan VACE

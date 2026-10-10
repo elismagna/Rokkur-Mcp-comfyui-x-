@@ -112,3 +112,9 @@ jobs:
   backoff_base_s: 5
   backoff_max_s: 600
   poll_interval_s: 1.0
+
+three:                       # the 3D studio (docs/three.md)
+  image_workflow: mesh_hunyuan3d_i2m   # one picture to a mesh, through ComfyUI (local or cloud)
+  photogrammetry_command: meshroom_batch  # Meshroom on the worker's PATH; empty to turn off
+  video_fps: 2               # frames per second taken from a video for photogrammetry
+  max_video_frames: 150

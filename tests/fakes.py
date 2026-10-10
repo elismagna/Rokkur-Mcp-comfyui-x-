@@ -77,6 +77,13 @@ class FakeComfyUI:
             self.history_store[prompt_id] = {"prompt": [], "outputs": {}, "status": {
                 "status_str": "error", "completed": False, "messages": msgs}}
             return
+        if any(n["class_type"] == "SaveGLB" for n in workflow.values()):
+            msgs.append(["execution_success", {"prompt_id": prompt_id, "timestamp": 4000}])
+            self.history_store[prompt_id] = {"prompt": [], "outputs": {"82": {"3d": [
+                {"filename": f"m3d_{prompt_id}_00001_.glb", "subfolder": "rokkur/3d",
+                 "type": "output"}]}}, "status": {"status_str": "success", "completed": True,
+                                                  "messages": msgs}}
+            return
         if any(n["class_type"] == "SaveAudio" for n in workflow.values()):
             self._complete_audio(prompt_id, workflow, msgs)
             return
@@ -175,6 +182,11 @@ class FakeComfyUI:
             return httpx.Response(200, json={})
         if path == "/view":
             filename = request.url.params["filename"]
+            if filename.startswith("m3d_"):
+                from rokkur_studio.mesh.io import glb_bytes
+                from rokkur_studio.mesh.ops import box
+
+                return httpx.Response(200, content=glb_bytes(box((12.0, 8.0, 5.0))))
             if filename.startswith("aud_"):
                 pid = filename[4:].rsplit("_", 1)[0]
                 return httpx.Response(200, content=_wav(min(self.audio_seconds.get(pid, 1.0), 60)))

@@ -1,0 +1,32 @@
+# Hunyuan3D 2.0 image to shape (an untextured mesh from one picture), ComfyUI core nodes only.
+# Source: Comfy-Org workflow template "3d_hunyuan3d_image_to_model" (MIT)
+#   https://github.com/Comfy-Org/workflow_templates/blob/main/templates/3d_hunyuan3d_image_to_model.json
+#   and tutorial https://docs.comfy.org/tutorials/3d/hunyuan3D-2: ImageOnlyCheckpointLoader ->
+#   CLIPVisionEncode (crop none) -> Hunyuan3Dv2Conditioning; ModelSamplingAuraFlow shift 1.0;
+#   EmptyLatentHunyuan3Dv2 3072; KSampler euler/normal 20 steps cfg 8 (the template's note:
+#   cfg 4-8); VAEDecodeHunyuan3D 8000 chunks, octree 256; VoxelToMesh surface net 0.6; SaveGLB.
+#   Node and input names checked against ComfyUI comfy_extras/nodes_hunyuan3d.py and
+#   nodes_save_3d.py (2026-10-10).
+# Model: checkpoints/hunyuan3d-dit-v2_fp16.safetensors (4.59 GB) from
+#   huggingface.co/Comfy-Org/hunyuan3D_2.0_repackaged (split_files). Licence: Tencent Hunyuan 3D
+#   2.0 Community License: its territory excludes the EU, the UK and South Korea, and use above
+#   1M monthly active users needs Tencent's permission. Read it before commercial use.
+# About 6 GB VRAM for shape generation (Comfy-Org). Untested on a real GPU (docs/three.md).
+name: mesh_hunyuan3d_i2m
+version: 1
+description: Hunyuan3D 2.0 untextured mesh from one picture
+resource_class: GPU_HEAVY
+input_kind: image
+output_kinds: [3d]
+parameters:
+  CHECKPOINT: {node: "54", input: ckpt_name, type: str, default: hunyuan3d-dit-v2_fp16.safetensors}
+  SOURCE_IMAGE: {node: "56", input: image, type: str, required: true}
+  RESOLUTION: {node: "66", input: resolution, type: int, default: 3072, min: 256, max: 8192}
+  SEED: {node: "3", input: seed, type: int, default: 0, min: 0}
+  STEPS: {node: "3", input: steps, type: int, default: 20, min: 1, max: 100}
+  CFG: {node: "3", input: cfg, type: float, default: 8.0, min: 1, max: 15}
+  OCTREE: {node: "61", input: octree_resolution, type: int, default: 256, min: 16, max: 512}
+  CHUNKS: {node: "61", input: num_chunks, type: int, default: 8000, min: 1000, max: 500000}
+  ALGORITHM: {node: "81", input: algorithm, type: str, default: surface net}
+  THRESHOLD: {node: "81", input: threshold, type: float, default: 0.6, min: -1, max: 1}
+  OUTPUT_PREFIX: {node: "82", input: filename_prefix, type: str, default: rokkur/3d}

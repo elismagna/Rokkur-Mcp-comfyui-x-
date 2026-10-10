@@ -276,6 +276,18 @@ class ReaSection(BaseModel):
     snapshots: bool = True          # keep analysis snapshots under data/rea/snapshots
 
 
+class ThreeSection(BaseModel):
+    """The 3D studio (docs/three.md): meshes, conversions and reconstruction tools."""
+
+    image_workflow: str = "mesh_hunyuan3d_i2m"   # one picture to a mesh, through ComfyUI
+    image_resource_class: ResourceClass = "GPU_HEAVY"
+    photogrammetry_command: str = "meshroom_batch"  # Meshroom (AliceVision); empty = off
+    photogrammetry_timeout_s: float = Field(4 * 3600, ge=60)
+    video_fps: float = Field(2.0, gt=0, le=30)      # frames taken from a video for photogrammetry
+    max_video_frames: int = Field(150, ge=10, le=2000)
+    view_max_faces: int = Field(150_000, ge=1000)   # the page's 3D view thins larger meshes
+
+
 class AudioProfile(BaseModel):
     """One audio profile from ``config/audio_profiles.yaml``: a model and its workflow."""
 
@@ -338,6 +350,7 @@ class Settings(BaseModel):
     images: ImagesSection = ImagesSection()
     audio: AudioSection = AudioSection()
     rea: ReaSection = ReaSection()
+    three: ThreeSection = ThreeSection()
     profiles: dict[str, RenderProfile] = Field(default_factory=dict)
     image_profiles: dict[str, ImageProfile] = Field(default_factory=dict)
     audio_profiles: dict[str, AudioProfile] = Field(default_factory=dict)

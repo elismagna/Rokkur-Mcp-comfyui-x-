@@ -52,6 +52,7 @@ from rokkur_studio.db.models import (
     Event,
     Image,
     Job,
+    Model3D,
     Project,
     Publication,
     ReaRun,
@@ -90,6 +91,7 @@ from rokkur_studio.services import characters as character_svc
 from rokkur_studio.services import commands, publishing, ratings, taste
 from rokkur_studio.services import images as image_svc
 from rokkur_studio.services import live as live_svc
+from rokkur_studio.services import models3d as m3d_svc
 from rokkur_studio.services import rea as rea_svc
 from rokkur_studio.services.assets import import_file
 from rokkur_studio.services.audio import OPERATION_HINTS, AudioEdit, AudioRequest, AudioStore
@@ -1517,6 +1519,232 @@ def audio_as_soundtrack(clip_id: str, ctx: Ctx, session: Db, project_id: Annotat
     return _back(f"/ui/projects/{project.id}#sound",
                  msg="Soundtrack set" + ("; the video is being edited again with it"
                                          if result["re_edit"] else "; it is used when the video is edited"))
+
+
+# -- 3D studio -----------------------------------------------------------------------------
+def _m3d(ctx: StudioContext) -> m3d_svc.ModelStore:
+    return m3d_svc.ModelStore(ctx.settings.studio.data_dir)
+
+
+def _save_uploads(ctx: StudioContext, files: list[UploadFile], allowed: frozenset[str] | set[str]
+                  ) -> list[Path]:
+    """Copy uploaded files into data/uploads; refuse a file whose type is not allowed."""
+    uploads = Path(ctx.settings.studio.data_dir) / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
+    for f in files:
+        if f is None or not f.filename:
+            continue
+        suffix = Path(f.filename).suffix.lower()
+        if suffix not in allowed:
+            for done in saved:
+                done.unlink(missing_ok=True)
+            raise ValueError(f"{f.filename}: this file type does not fit here")
+        dest = uploads / f"{uuid.uuid4().hex[:12]}_{Path(f.filename).name}"
+        with dest.open("wb") as fh:
+            shutil.copyfileobj(f.file, fh)
+        saved.append(dest)
+    return saved
+
+
+@router.get("/3d", response_class=HTMLResponse)
+def models3d_page(request: Request, ctx: Ctx, session: Db, model: str = "", kind: str = "",
+                  page: int = 1) -> HTMLResponse:
+    page = max(1, page)
+    gallery = m3d_svc.list_models(session, limit=PAGE_SIZE + 1, offset=(page - 1) * PAGE_SIZE,
+                                  kind=kind or None)
+    more = len(gallery) > PAGE_SIZE
+    gallery = gallery[:PAGE_SIZE]
+    selected = session.get(Model3D, model) if model else None
+    cloud = ctx.settings.cloud
+    status = m3d_svc.availability(ctx.settings)
+    if cloud.ready and status.get("image"):
+        cloud_image = m3d_svc.availability(ctx.settings, "cloud").get("image")
+        if cloud_image is None:
+            status["image"] = None  # runs on the cloud server
+    library = [m for m in m3d_svc.list_models(session, limit=200) if m.status == "done"]
+    pictures = [i for i in image_svc.list_images(session, limit=60) if i.status == "done" and i.rel_path]
+    return _page(request, "models3d.html", ctx, gallery=gallery, more=more, page=page, kind=kind,
+                 selected=selected, library=library, pictures=pictures, methods=m3d_svc.METHODS,
+                 status=status, cloud=cloud if cloud.ready else None, media=media_files(ctx)[:60],
+                 busy=any(m.status in ("queued", "running") for m in gallery),
+                 parent=(session.get(Model3D, selected.parent_id)
+                         if selected and selected.parent_id else None),
+                 children=(list(session.scalars(select(Model3D).where(Model3D.parent_id == selected.id)
+                                                .order_by(Model3D.created_at)))
+                           if selected else []))
+
+
+def _m3d_back(row: Model3D, msg: str) -> RedirectResponse:
+    return _back(f"/ui/3d?model={row.id}#selected", msg=msg)
+
+
+@router.post("/3d/upload")
+def models3d_upload(ctx: Ctx, session: Db, model_file: Annotated[UploadFile, File()],
+                    title: Annotated[str, Form()] = "",
+                    rights_evidence: Annotated[str, Form()] = "") -> RedirectResponse:
+    try:
+        saved = _save_uploads(ctx, [model_file], {".stl", ".obj", ".ply", ".glb"})
+        if not saved:
+            return _back("/ui/3d", err="Choose a model file.")
+        path = saved[0]
+        try:
+            row = m3d_svc.import_model(session, _m3d(ctx), path,
+                                       title=title or Path(model_file.filename or "").stem,
+                                       rights_evidence=rights_evidence)
+        finally:
+            path.unlink(missing_ok=True)
+    except ValueError as exc:
+        return _back("/ui/3d", err=str(exc))
+    return _m3d_back(row, "Model opened and measured")
+
+
+@router.post("/3d/edit")
+def models3d_edit(ctx: Ctx, session: Db, operation: Annotated[str, Form()],
+                  source_id: Annotated[str, Form()] = "",
+                  source_ids: Annotated[list[str], Form()] = [],  # noqa: B006
+                  factor: Annotated[float, Form()] = 1.0, size: Annotated[float, Form()] = 100.0,
+                  axis: Annotated[str, Form()] = "max", degrees: Annotated[float, Form()] = 90.0,
+                  on_floor: Annotated[bool, Form()] = False,
+                  tolerance: Annotated[float, Form()] = 0.0001,
+                  title: Annotated[str, Form()] = "") -> RedirectResponse:
+    back = f"/ui/3d?model={source_id}#selected" if source_id else "/ui/3d"
+    try:
+        body = m3d_svc.EditRequest(
+            operation=operation, source_id=source_id or None,  # type: ignore[arg-type]
+            source_ids=[i for i in source_ids if i], factor=factor, size=size,
+            axis=axis, degrees=degrees, on_floor=on_floor, tolerance=tolerance,  # type: ignore[arg-type]
+            title=title)
+        row = m3d_svc.edit_model(session, _m3d(ctx), body, actor="dashboard")
+    except (ValueError, LookupError, ValidationError) as exc:
+        return _back(back, err=str(exc).splitlines()[0] if isinstance(exc, ValidationError) else str(exc))
+    return _m3d_back(row, f"{operation.capitalize()} done; the original is kept")
+
+
+@router.post("/3d/box")
+def models3d_box(ctx: Ctx, session: Db, x: Annotated[float, Form()] = 20.0,
+                 y: Annotated[float, Form()] = 20.0, z: Annotated[float, Form()] = 20.0,
+                 title: Annotated[str, Form()] = "") -> RedirectResponse:
+    try:
+        row = m3d_svc.make_box(session, _m3d(ctx), (x, y, z), title=title)
+    except ValueError as exc:
+        return _back("/ui/3d", err=str(exc))
+    return _m3d_back(row, "Box made")
+
+
+@router.post("/3d/relief")
+def models3d_relief(ctx: Ctx, session: Db, image_id: Annotated[str, Form()] = "",
+                    picture_file: Annotated[UploadFile | None, File()] = None,
+                    width_mm: Annotated[float, Form()] = 100.0,
+                    depth_mm: Annotated[float, Form()] = 3.0,
+                    base_mm: Annotated[float, Form()] = 0.8,
+                    resolution: Annotated[int, Form()] = 200,
+                    invert: Annotated[bool, Form()] = False,
+                    rights_confirmed: Annotated[bool, Form()] = False,
+                    rights_evidence: Annotated[str, Form()] = "",
+                    title: Annotated[str, Form()] = "") -> RedirectResponse:
+    saved: list[Path] = []
+    try:
+        saved = _save_uploads(ctx, [picture_file] if picture_file else [],
+                              m3d_svc.IMAGE_EXTS)
+        body = m3d_svc.ReliefRequest(
+            image_id=None if saved else (image_id or None),
+            image_path=str(saved[0]) if saved else None, width_mm=width_mm, depth_mm=depth_mm,
+            base_mm=base_mm, resolution=resolution, invert=invert, title=title,
+            rights_confirmed=rights_confirmed, rights_evidence=rights_evidence)
+        row = m3d_svc.make_relief(session, ctx.settings, _m3d(ctx), ctx.ffmpeg, body)
+    except (ValueError, LookupError, ValidationError) as exc:
+        return _back("/ui/3d#make", err=str(exc).splitlines()[0])
+    finally:
+        for f in saved:
+            f.unlink(missing_ok=True)
+    return _m3d_back(row, "Relief made" if not invert else "Lithophane made")
+
+
+@router.post("/3d/points")
+def models3d_points(ctx: Ctx, session: Db, points_file: Annotated[UploadFile, File()],
+                    method: Annotated[str, Form()] = "points",
+                    cell: Annotated[float, Form()] = 0.0, base: Annotated[float, Form()] = 1.0,
+                    fill: Annotated[int, Form()] = 1, depth: Annotated[int, Form()] = 9,
+                    rights_confirmed: Annotated[bool, Form()] = False,
+                    rights_evidence: Annotated[str, Form()] = "",
+                    title: Annotated[str, Form()] = "") -> RedirectResponse:
+    allowed = {".ply", ".obj", ".stl", ".glb", ".xyz", ".pts", ".txt", ".csv"}
+    saved: list[Path] = []
+    try:
+        saved = _save_uploads(ctx, [points_file], allowed)
+        if not saved:
+            return _back("/ui/3d#make", err="Choose the scan file.")
+        if method == "poisson":
+            row = m3d_svc.request_reconstruction(
+                session, ctx.settings, _m3d(ctx), ctx.ffmpeg, m3d_svc.ReconRequest(
+                    method="poisson", points_path=str(saved[0]), depth=depth, title=title,
+                    rights_confirmed=rights_confirmed, rights_evidence=rights_evidence),
+                actor="dashboard")
+            return _m3d_back(row, "Poisson reconstruction queued; the worker runs it now")
+        row = m3d_svc.points_to_model(session, _m3d(ctx), m3d_svc.PointsRequest(
+            path=str(saved[0]), cell=cell, base=base, fill=fill, title=title,
+            rights_confirmed=rights_confirmed, rights_evidence=rights_evidence))
+    except (ValueError, LookupError, ValidationError) as exc:
+        return _back("/ui/3d#make", err=str(exc).splitlines()[0])
+    finally:
+        for f in saved:
+            f.unlink(missing_ok=True)
+    return _m3d_back(row, "Solid made from the scan")
+
+
+@router.post("/3d/reconstruct")
+def models3d_reconstruct(ctx: Ctx, session: Db, method: Annotated[str, Form()],
+                         image_id: Annotated[str, Form()] = "",
+                         picture_file: Annotated[UploadFile | None, File()] = None,
+                         photo_files: Annotated[list[UploadFile], File()] = [],  # noqa: B006
+                         video_file: Annotated[UploadFile | None, File()] = None,
+                         media_file: Annotated[str, Form()] = "",
+                         seed: Annotated[str, Form()] = "", octree: Annotated[int, Form()] = 256,
+                         render_on: Annotated[str, Form()] = "",
+                         rights_confirmed: Annotated[bool, Form()] = False,
+                         rights_evidence: Annotated[str, Form()] = "",
+                         title: Annotated[str, Form()] = "") -> RedirectResponse:
+    saved: list[Path] = []
+    try:
+        fields: dict[str, Any] = {}
+        if method == "image":
+            saved = _save_uploads(ctx, [picture_file] if picture_file else [], m3d_svc.IMAGE_EXTS)
+            fields = {"image_path": str(saved[0])} if saved else {"image_id": image_id or None}
+        elif method == "photos":
+            saved = _save_uploads(ctx, photo_files, m3d_svc.IMAGE_EXTS)
+            fields = {"photo_paths": [str(p) for p in saved]}
+        elif method == "video":
+            saved = _save_uploads(ctx, [video_file] if video_file else [], m3d_svc.VIDEO_EXTS)
+            if saved:
+                fields = {"video_path": str(saved[0])}
+            elif media_file in {m["path"] for m in media_files(ctx)}:
+                fields = {"video_path": media_file}
+            else:
+                return _back("/ui/3d#make", err="Pick a video from the media folder or upload one.")
+        row = m3d_svc.request_reconstruction(
+            session, ctx.settings, _m3d(ctx), ctx.ffmpeg, m3d_svc.ReconRequest(
+                method=method,  # type: ignore[arg-type]
+                seed=int(seed) if seed.strip() else None, octree=octree,
+                render_on=render_on or None,  # type: ignore[arg-type]
+                title=title, rights_confirmed=rights_confirmed, rights_evidence=rights_evidence,
+                **fields), actor="dashboard")
+    except (ValueError, LookupError, ValidationError) as exc:
+        return _back("/ui/3d#make", err=str(exc).splitlines()[0])
+    finally:
+        for f in saved:  # the request copied what it needs (a video is read by the job)
+            if method != "video":
+                f.unlink(missing_ok=True)
+    return _m3d_back(row, f"{m3d_svc.METHODS[method]['label']} queued; the worker runs it now")
+
+
+@router.post("/3d/{model_id}/delete")
+def models3d_delete(model_id: str, ctx: Ctx, session: Db) -> RedirectResponse:
+    try:
+        m3d_svc.delete_model(session, _m3d(ctx), m3d_svc.get_model(session, model_id))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return _back("/ui/3d", msg="Model deleted")
 
 
 # -- REA -----------------------------------------------------------------------------------

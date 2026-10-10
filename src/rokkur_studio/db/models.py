@@ -271,6 +271,36 @@ class AudioClip(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class Model3D(Base):
+    """One 3D model in the 3D studio (docs/three.md): imported, edited, combined, a relief, or
+    reconstructed from a picture, photos, a video or a point cloud. The working file is
+    ``model.stl`` under ``data/3d/<id>/``; ``stats`` holds its measurements."""
+
+    __tablename__ = "models3d"
+    __table_args__ = (Index("ix_models3d_listing", "status", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("m3d"))
+    # upload | edit | combine | primitive | relief | points | image | photos | video
+    kind: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued | running | done | failed
+    method: Mapped[str] = mapped_column(String(32), default="")  # how it was made, in a word
+    title: Mapped[str] = mapped_column(String(200), default="")
+    params: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    request: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey("models3d.id"), index=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), index=True)
+    job_id: Mapped[str | None] = mapped_column(String(64))
+    rel_path: Mapped[str | None] = mapped_column(Text)
+    source_rel_path: Mapped[str | None] = mapped_column(Text)
+    stats: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    render_on: Mapped[str] = mapped_column(String(8), default="local")
+    remote_id: Mapped[str | None] = mapped_column(String(64))
+    took_s: Mapped[float | None] = mapped_column(Float)
+    error: Mapped[dict[str, Any] | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ReaRun(Base):
     """One run of the REA reverse-engineering CLI on a local target (docs/rea.md): the
     command as run, its exit status, and its JSON output kept under ``data/rea/<id>/``."""

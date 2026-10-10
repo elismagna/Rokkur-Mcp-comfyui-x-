@@ -846,6 +846,60 @@ def cmd_rea_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mesh_info(args: argparse.Namespace) -> int:
+    """Measure a model file: size, triangles, volume, whether it is closed (no database)."""
+    from rokkur_studio.mesh import ops
+    from rokkur_studio.mesh.io import MeshError, read_mesh
+
+    try:
+        stats = ops.measure(read_mesh(Path(args.path)))
+    except (MeshError, OSError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 1
+    if args.json:
+        print(json.dumps(stats, indent=2))
+        return 0
+    size = " x ".join(f"{v:g}" for v in stats["size"])
+    print(f"{Path(args.path).name}: {size}  {stats['triangles']} triangles  volume {stats['volume']:g}"
+          f"  {'closed' if stats['closed'] else str(stats['open_edges']) + ' open edges'}")
+    return 0
+
+
+def cmd_mesh_convert(args: argparse.Namespace) -> int:
+    """Convert between STL, OBJ, PLY and GLB, optionally fitting the longest side to --fit."""
+    from rokkur_studio.mesh import ops
+    from rokkur_studio.mesh.io import MeshError, read_mesh, write_mesh
+
+    try:
+        mesh = read_mesh(Path(args.source))
+        if args.repair:
+            mesh = ops.drop_degenerate(ops.weld(mesh, 1e-4))
+        if args.fit:
+            mesh = ops.fit(mesh, args.fit)
+        if args.floor:
+            mesh = ops.center(mesh, on_floor=True)
+        out = write_mesh(mesh, Path(args.out), ascii_stl=args.ascii)
+    except (MeshError, OSError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 1
+    stats = ops.measure(mesh)
+    print(f"wrote {out} ({stats['triangles']} triangles, {'closed' if stats['closed'] else 'open'})")
+    return 0
+
+
+def cmd_model3d_list(args: argparse.Namespace) -> int:
+    from rokkur_studio.db.session import Database
+    from rokkur_studio.services import models3d as svc
+
+    settings = _settings(args)
+    db = Database(settings.database.url)
+    with db.session() as s:
+        for row in svc.list_models(s, limit=args.limit):
+            size = " x ".join(f"{v:g}" for v in row.stats.get("size", [])) or "?"
+            print(f"{row.id}  {row.status:<8} {row.kind:<9} {size:<24} {row.title}")
+    return 0
+
+
 def cmd_image_list(args: argparse.Namespace) -> int:
     from rokkur_studio.db.session import Database
     from rokkur_studio.services import images as svc
@@ -1011,6 +1065,21 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("rea-list", help="list REA runs")
     p.add_argument("--limit", type=int, default=30)
     p.set_defaults(func=cmd_rea_list)
+    p = sub.add_parser("mesh-info", help="measure an STL, OBJ, PLY or GLB file")
+    p.add_argument("path")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_mesh_info)
+    p = sub.add_parser("mesh-convert", help="convert a model between STL, OBJ, PLY and GLB")
+    p.add_argument("source")
+    p.add_argument("out", help="the new file; its extension picks the format")
+    p.add_argument("--fit", type=float, help="scale so the longest side measures this")
+    p.add_argument("--floor", action="store_true", help="centre it and stand it on z = 0")
+    p.add_argument("--repair", action="store_true", help="weld points and drop flat triangles")
+    p.add_argument("--ascii", action="store_true", help="ASCII STL instead of binary")
+    p.set_defaults(func=cmd_mesh_convert)
+    p = sub.add_parser("model3d-list", help="list the 3D studio's models")
+    p.add_argument("--limit", type=int, default=30)
+    p.set_defaults(func=cmd_model3d_list)
     p = sub.add_parser("prompt-schedule", help="print a project's Batch Prompt Schedule")
     p.add_argument("project_id")
     p.set_defaults(func=cmd_prompt_schedule)

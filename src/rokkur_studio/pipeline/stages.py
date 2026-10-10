@@ -53,6 +53,7 @@ from rokkur_studio.pipeline.context import StudioContext
 from rokkur_studio.pipeline.driver import autonomy_level
 from rokkur_studio.pipeline.extend import extend_job
 from rokkur_studio.pipeline.images import image_job
+from rokkur_studio.pipeline.models3d import mesh_job
 from rokkur_studio.pipeline.rea import rea_job
 from rokkur_studio.pipeline.renderers import (
     ComfyUIRenderer,
@@ -1036,7 +1037,7 @@ def _propose_upload(s: Session, p: Project, ctx: StudioContext, job: Job) -> Non
 
 
 HANDLERS: dict[str, Handler] = {
-    "image": image_job, "audio": audio_job, "rea": rea_job,
+    "image": image_job, "audio": audio_job, "rea": rea_job, "mesh": mesh_job,
     "extend": extend_job,
     "rights_check": rights_check,
     "ingest": ingest,

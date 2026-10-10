@@ -1,0 +1,207 @@
+{% extends "base.html" %}{% from "_icons.html" import icon %}
+{% block title %}3D · Rökkur Studio{% endblock %}
+{% block crumb %}Rökkur / 3D{% endblock %}
+{% block head %}{% if busy %}<meta name="studio-refresh" content="8">{% endif %}{% endblock %}
+{% block body %}
+<div class="eyebrow">CREATE / 3D</div>
+<h1>3D</h1>
+<p class="sub">Open, measure, fix and change models for printing, and make new ones: from a picture as a relief or lithophane, from a LiDAR scan or point cloud, from one picture with AI (on this PC or the cloud server), or from a photo set or a walk-around video with photogrammetry. Everything ends as an STL you can download; OBJ, PLY and GLB too.</p>
+
+{% if selected %}
+<section class="card" id="selected" style="margin-bottom:22px">
+  <div class="img-detail">
+    <div class="m3d-stage">
+      {% if selected.rel_path %}<canvas id="m3d-canvas" width="900" height="640" data-src="/models3d/{{ selected.id }}/view.json" aria-label="3D view of {{ selected.title }}; drag to turn, scroll to zoom"></canvas>
+      <div class="m3d-tools"><span class="hint" id="m3d-hint">Drag to turn · scroll to zoom</span><button type="button" class="ghost small" id="m3d-reset">Reset view</button></div>
+      {% elif selected.status == 'failed' %}<div class="img-placeholder bad">{{ icon('nope') }}<b>Failed</b><span>{{ (selected.error or {}).get('message', '') }}</span></div>
+      {% else %}<div class="img-placeholder"><span class="pulse on"></span><b>{{ 'Working' if selected.status == 'running' else 'Waiting for the worker' }}</b><span>This page refreshes on its own.</span></div>{% endif %}
+    </div>
+    <div class="img-side">
+      <div class="row spread" style="align-items:flex-start"><div><div class="eyebrow">{{ selected.kind|capitalize }}{% if selected.method and selected.method != selected.kind %} · {{ selected.method }}{% endif %}{% if selected.render_on == 'cloud' %} · cloud{% endif %}</div><h2 style="margin:0">{{ selected.title or selected.kind|capitalize }}</h2></div>
+        <span class="pill {{ 'ok' if selected.status == 'done' else ('bad' if selected.status == 'failed' else 'info') }}">{{ selected.status }}</span></div>
+      {% set st = selected.stats %}
+      {% if st.triangles %}<dl class="kv" style="margin-top:12px">
+        <dt>Size</dt><dd>{{ '%g'|format(st.size[0]) }} × {{ '%g'|format(st.size[1]) }} × {{ '%g'|format(st.size[2]) }} <span class="muted">(units of the file; mm for most printers)</span></dd>
+        <dt>Triangles</dt><dd>{{ '{:,}'.format(st.triangles) }} · {{ '{:,}'.format(st.vertices) }} points</dd>
+        <dt>Volume</dt><dd>{{ '%g'|format(st.volume) }}{% if st.inverted %} <span class="warn">(inside out; Repair turns it right)</span>{% endif %}</dd>
+        <dt>Surface</dt><dd>{{ '%g'|format(st.area) }}</dd>
+        <dt>Printable</dt><dd>{% if st.closed %}<span class="pill ok">closed, watertight</span>{% else %}<span class="pill warn">{{ st.open_edges }} open edge{{ '' if st.open_edges == 1 else 's' }}{% if st.degenerate %}, {{ st.degenerate }} flat triangle{{ '' if st.degenerate == 1 else 's' }}{% endif %}</span> <span class="hint">Repair welds and cleans; real holes need a mesh tool.</span>{% endif %}</dd>
+        {% if selected.took_s %}<dt>Took</dt><dd>{{ '%.1f'|format(selected.took_s) }} s</dd>{% endif %}
+        {% if parent %}<dt>Made from</dt><dd><a href="/ui/3d?model={{ parent.id }}#selected">{{ parent.title or parent.kind }}</a></dd>{% endif %}
+        {% if selected.request.rights_evidence %}<dt>Rights</dt><dd>{{ selected.request.rights_evidence }}</dd>{% endif %}
+      </dl>{% endif %}
+      {% if selected.status == 'done' %}
+      <div class="img-actions">{% for fmt in ['stl', 'obj', 'ply', 'glb'] %}<a class="btn secondary small" href="/models3d/{{ selected.id }}/file?format={{ fmt }}" download>{{ fmt|upper }}</a>{% endfor %}<a class="btn ghost small" href="/models3d/{{ selected.id }}/file?ascii=1" download>ASCII STL</a></div>
+      <form method="post" action="/ui/3d/edit" class="card m3d-edit" id="edit-form" style="margin-top:12px;padding:12px">
+        <input type="hidden" name="source_id" value="{{ selected.id }}">
+        <div class="seg img-ops" role="group" aria-label="Edit">{% for op, label in [('fit', 'Fit size'), ('scale', 'Scale'), ('rotate', 'Rotate'), ('mirror', 'Mirror'), ('center', 'Centre'), ('repair', 'Repair'), ('flip', 'Flip inside out'), ('combine', 'Combine')] %}<label class="op"><input type="radio" name="operation" value="{{ op }}" {% if loop.first %}checked{% endif %}><span>{{ label }}</span></label>{% endfor %}</div>
+        <div data-edit="fit" class="form-pair"><div><label for="ed_size">Longest side becomes</label><input id="ed_size" name="size" type="number" min="0.01" step="any" value="{{ '%g'|format((st.size or [100])|max) }}"></div><div><label for="ed_fit_axis">Measured along</label><select id="ed_fit_axis" name="axis"><option value="max">the longest side</option><option value="x">X</option><option value="y">Y</option><option value="z">Z (height)</option></select></div></div>
+        <div data-edit="scale"><label for="ed_factor">Factor <span class="muted">2 = twice as big; 25.4 turns inches into mm</span></label><input id="ed_factor" name="factor" type="number" min="0.0001" step="any" value="1"></div>
+        <div data-edit="rotate mirror" class="form-pair"><div><label for="ed_axis">Axis</label><select id="ed_axis" name="axis" disabled><option value="x">X</option><option value="y">Y</option><option value="z" selected>Z</option></select></div><div data-edit="rotate"><label for="ed_deg">Degrees</label><input id="ed_deg" name="degrees" type="number" min="-360" max="360" step="any" value="90"></div></div>
+        <div data-edit="center"><label class="check"><input type="checkbox" name="on_floor" value="true" checked> Stand it on the build plate (z = 0)</label></div>
+        <div data-edit="repair"><label for="ed_tol">Weld points closer than</label><input id="ed_tol" name="tolerance" type="number" min="0.000001" step="any" value="0.0001"><p class="hint">Merges duplicate points, removes flat triangles and turns an inside-out model right.</p></div>
+        <div data-edit="combine"><input type="hidden" name="source_ids" value="{{ selected.id }}"><label>Combine with</label><div class="aud-pick">{% for m in library if m.id != selected.id %}<label class="check"><input type="checkbox" name="source_ids" value="{{ m.id }}"> {{ m.title or m.kind }}</label>{% else %}<span class="hint">Open or make another model first.</span>{% endfor %}</div></div>
+        <p style="margin:12px 0 0"><button class="secondary small">Apply</button> <span class="hint">The result is a new model; this one stays.</span></p>
+      </form>
+      {% endif %}
+      <div class="row spread" style="margin-top:12px">{% if children %}<p class="hint" style="margin:0">Made from this one: {% for c in children %}<a href="/ui/3d?model={{ c.id }}#selected">{{ c.method or c.kind }}</a>{{ ', ' if not loop.last }}{% endfor %}</p>{% else %}<span></span>{% endif %}
+        <form method="post" action="/ui/3d/{{ selected.id }}/delete" onsubmit="return confirm('Delete this model and its files? Models made from it stay.')"><button class="ghost small">Delete</button></form></div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<div class="create-layout">
+<div class="stack" id="make">
+<form method="post" action="/ui/3d/upload" enctype="multipart/form-data" class="card">
+  <div class="section-heading"><span class="step-number">01</span><div><h2>Open a model</h2><p class="hint">STL, OBJ, PLY or GLB. It is measured and kept as STL; the original stays next to it.</p></div></div>
+  <input type="file" name="model_file" accept=".stl,.obj,.ply,.glb" required>
+  <div class="form-pair"><div><label for="up_title">Name <span class="muted">optional</span></label><input id="up_title" name="title" maxlength="200"></div><div><label for="up_rights">Where it comes from <span class="muted">optional</span></label><input id="up_rights" name="rights_evidence" maxlength="1000" placeholder="My design / licence"></div></div>
+  <p style="margin:14px 0 0"><button class="secondary">Open</button></p>
+</form>
+
+<section class="card">
+  <div class="section-heading"><span class="step-number">02</span><div><h2>Make a model</h2><p class="hint">Pick a way; the ones whose tool is missing say what to install.</p></div></div>
+  <div class="seg img-ops" role="group" aria-label="Method">{% for key in ['relief', 'points', 'image', 'photos', 'video', 'box'] %}<label class="op"><input type="radio" name="make" value="{{ key }}" {% if loop.first %}checked{% endif %}><span>{{ {'relief': 'Picture relief', 'points': 'LiDAR / points', 'image': 'Picture → 3D (AI)', 'photos': 'Photo set', 'video': 'Video', 'box': 'Box'}[key] }}</span></label>{% endfor %}</div>
+
+  <form method="post" action="/ui/3d/relief" enctype="multipart/form-data" data-make="relief">
+    <p class="hint">{{ methods.relief.how }}</p>
+    <label for="rl_pic">Picture from Pictures</label><select id="rl_pic" name="image_id"><option value="">— or upload below —</option>{% for i in pictures %}<option value="{{ i.id }}">{{ i.title or i.prompt|truncate(50) or i.kind }}</option>{% endfor %}</select>
+    <input type="file" name="picture_file" accept="image/png,image/jpeg,image/webp">
+    <div class="form-pair"><div><label>Width (mm)</label><input name="width_mm" type="number" min="1" step="any" value="100"></div><div><label>Relief depth (mm)</label><input name="depth_mm" type="number" min="0.1" step="any" value="3"></div></div>
+    <div class="form-pair"><div><label>Base thickness (mm)</label><input name="base_mm" type="number" min="0" step="any" value="0.8"></div><div><label>Detail (samples across)</label><input name="resolution" type="number" min="16" max="1000" value="200"></div></div>
+    <label class="check"><input type="checkbox" name="invert" value="true"> Lithophane: dark parts thick, for light shining through</label>
+    <label class="check"><input type="checkbox" name="rights_confirmed" value="true"> I may use an uploaded picture</label><input name="rights_evidence" maxlength="1000" placeholder="Where an uploaded picture comes from">
+    <p style="margin:14px 0 0"><button class="secondary">Make the relief</button></p>
+  </form>
+
+  <form method="post" action="/ui/3d/points" enctype="multipart/form-data" data-make="points" hidden>
+    <p class="hint">{{ methods.points.how }} A phone LiDAR app (Polycam, 3D Scanner App, Scaniverse) exports PLY or OBJ; a scan that is already a mesh opens directly under "Open a model".</p>
+    <input type="file" name="points_file" accept=".ply,.obj,.xyz,.pts,.txt,.csv,.stl,.glb" required>
+    <div class="seg" role="group" style="margin:8px 0"><label class="check" style="margin:0 12px 0 0"><input type="radio" name="method" value="points" checked> 2.5D solid (built in)</label><label class="check" style="margin:0"><input type="radio" name="method" value="poisson" {% if status.poisson %}disabled{% endif %}> Poisson surface{% if status.poisson %} · unavailable{% endif %}</label></div>
+    {% if status.poisson %}<p class="hint">{{ status.poisson }}</p>{% endif %}
+    <div class="form-pair"><div><label>Grid step <span class="muted">0 = automatic</span></label><input name="cell" type="number" min="0" step="any" value="0"></div><div><label>Base thickness</label><input name="base" type="number" min="0" step="any" value="1"></div></div>
+    <label class="check"><input type="checkbox" name="rights_confirmed" value="true" required> I may use this scan</label><input name="rights_evidence" maxlength="1000" placeholder="My scan / licence" required>
+    <p style="margin:14px 0 0"><button class="secondary">Make the solid</button></p>
+  </form>
+
+  <form method="post" action="/ui/3d/reconstruct" enctype="multipart/form-data" data-make="image" hidden>
+    <input type="hidden" name="method" value="image">
+    <p class="hint">{{ methods.image.how }}</p>
+    {% if status.image %}<div class="callout warn"><div><p><b>Not available.</b></p><div class="hint">{{ status.image }} Model and set-up: <code>docs/three.md</code>.</div></div></div>{% endif %}
+    <label for="im_pic">Picture from Pictures</label><select id="im_pic" name="image_id"><option value="">— or upload below —</option>{% for i in pictures %}<option value="{{ i.id }}">{{ i.title or i.prompt|truncate(50) or i.kind }}</option>{% endfor %}</select>
+    <input type="file" name="picture_file" accept="image/png,image/jpeg,image/webp">
+    <p class="hint">Best: one object, plain background, the whole thing in view. Make one in Pictures and remove the background with Repaint first.</p>
+    <div class="form-pair"><div><label>Seed</label><input name="seed" type="number" min="0" placeholder="Random"></div><div><label>Detail (octree)</label><select name="octree"><option value="256" selected>256 · default</option><option value="384">384 · finer, more VRAM</option><option value="128">128 · coarse, less VRAM</option></select></div></div>
+    {% if cloud %}<label>Where to render</label><select name="render_on"><option value="local">This PC</option><option value="cloud">Cloud server · {{ '%g'|format(cloud.vram_gb) }} GB</option></select>{% endif %}
+    <label class="check"><input type="checkbox" name="rights_confirmed" value="true"> I may use an uploaded picture</label><input name="rights_evidence" maxlength="1000" placeholder="Where an uploaded picture comes from">
+    <p style="margin:14px 0 0"><button class="secondary" {% if status.image %}disabled{% endif %}>Make it in 3D</button></p>
+  </form>
+
+  <form method="post" action="/ui/3d/reconstruct" enctype="multipart/form-data" data-make="photos" hidden>
+    <input type="hidden" name="method" value="photos">
+    <p class="hint">{{ methods.photos.how }} Walk around the object; every part should appear in three or more photos.</p>
+    {% if status.photos %}<div class="callout warn"><div><p><b>Not available.</b></p><div class="hint">{{ status.photos }}</div></div></div>{% endif %}
+    <input type="file" name="photo_files" accept="image/png,image/jpeg,image/webp" multiple required>
+    <label class="check"><input type="checkbox" name="rights_confirmed" value="true" required> I may use these photos</label><input name="rights_evidence" maxlength="1000" placeholder="My photos" required>
+    <p style="margin:14px 0 0"><button class="secondary" {% if status.photos %}disabled{% endif %}>Rebuild from photos</button></p>
+  </form>
+
+  <form method="post" action="/ui/3d/reconstruct" enctype="multipart/form-data" data-make="video" hidden>
+    <input type="hidden" name="method" value="video">
+    <p class="hint">{{ methods.video.how }} {{ '%g'|format(settings.three.video_fps) }} frames a second, at most {{ settings.three.max_video_frames }}.</p>
+    {% if status.video %}<div class="callout warn"><div><p><b>Not available.</b></p><div class="hint">{{ status.video }}</div></div></div>{% endif %}
+    <label for="vd_media">From the media folder</label><select id="vd_media" name="media_file"><option value="">— or upload below —</option>{% for m in media %}<option value="{{ m.path }}">{{ m.name }}</option>{% endfor %}</select>
+    <input type="file" name="video_file" accept="video/*">
+    <label class="check"><input type="checkbox" name="rights_confirmed" value="true" required> I may use this video</label><input name="rights_evidence" maxlength="1000" placeholder="My video" required>
+    <p style="margin:14px 0 0"><button class="secondary" {% if status.video %}disabled{% endif %}>Rebuild from the video</button></p>
+  </form>
+
+  <form method="post" action="/ui/3d/box" data-make="box" hidden>
+    <p class="hint">A box to start from, combine with, or test the printer.</p>
+    <div class="pad-grid"><label>X <input name="x" type="number" min="0.01" step="any" value="20"></label><label>Y <input name="y" type="number" min="0.01" step="any" value="20"></label><label>Z <input name="z" type="number" min="0.01" step="any" value="20"></label><label>Name <input name="title" maxlength="200"></label></div>
+    <p style="margin:14px 0 0"><button class="secondary">Make the box</button></p>
+  </form>
+</section>
+
+<section class="card"><h2>Tools</h2>
+  {% for key, m in methods.items() %}<p><b>{{ m.label }}</b> <span class="pill {{ 'warn' if status[key] else 'ok' }}">{{ 'Unavailable' if status[key] else 'Ready' }}</span><br><span class="hint">{{ status[key] or ('Needs ' + m.needs + '.') }}</span></p>{% endfor %}
+</section>
+</div>
+
+<div class="stack">
+<section class="card">
+  <div class="row spread"><h2>Models</h2><div class="chips" style="margin:0">{% for key, label in [('', 'All'), ('upload', 'Opened'), ('edit', 'Edited'), ('relief', 'Reliefs'), ('points', 'Scans'), ('image', 'From pictures'), ('photos', 'Photos'), ('video', 'Video')] %}<a href="/ui/3d?kind={{ key }}" class="{{ 'on' if key == kind else '' }}">{{ label }}</a>{% endfor %}</div></div>
+  {% if gallery %}<div class="img-grid">{% for m in gallery %}<a class="img-card {{ m.status }}{% if selected and m.id == selected.id %} on{% endif %}" href="/ui/3d?model={{ m.id }}{% if kind %}&kind={{ kind }}{% endif %}#selected" title="{{ m.title }}">
+    {% if m.rel_path %}<img src="/models3d/{{ m.id }}/preview.svg" alt="" loading="lazy" style="object-fit:contain">{% elif m.status == 'failed' %}<div class="img-placeholder bad">{{ icon('nope') }}<span>Failed</span></div>{% else %}<div class="img-placeholder"><span class="pulse on"></span><span>{{ 'Working' if m.status == 'running' else 'Queued' }}</span></div>{% endif %}
+    <div class="img-cap"><span class="truncate">{{ m.title or m.kind }}</span><span class="pill">{{ m.method or m.kind }}</span></div></a>{% endfor %}</div>
+  {% if more %}<p style="margin:14px 0 0"><a class="btn secondary small" href="/ui/3d?page={{ page + 1 }}{% if kind %}&kind={{ kind }}{% endif %}">Older models</a></p>{% endif %}
+  {% else %}<p class="empty">No models yet. Open an STL or make one on the left.</p>{% endif %}
+</section>
+</div>
+</div>
+
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  // method tabs
+  const make = () => { const v = document.querySelector('input[name=make]:checked')?.value; $$('[data-make]').forEach(f => { f.hidden = f.dataset.make !== v; }); };
+  $$('input[name=make]').forEach(r => r.addEventListener('change', make)); make();
+  // edit options
+  const edit = $('#edit-form');
+  if (edit) { const sync = () => { const op = edit.querySelector('input[name=operation]:checked').value;
+      $$('[data-edit]', edit).forEach(el => { el.hidden = !el.dataset.edit.split(' ').includes(op); });
+      $('#ed_fit_axis').disabled = op !== 'fit'; $('#ed_axis').disabled = !['rotate', 'mirror'].includes(op);
+      $$('input[name=source_ids]', edit).forEach(i => { i.disabled = op !== 'combine'; }); };
+    $$('input[name=operation]', edit).forEach(r => r.addEventListener('change', sync)); sync(); }
+  // the 3D view: painter's algorithm on a 2D canvas, no WebGL needed
+  const canvas = $('#m3d-canvas'); if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let V = null, F = null, rx = -1.0, rz = 0.7, zoom = 1, center = [0, 0, 0], radius = 1;
+  const reset = () => { rx = -1.0; rz = 0.7; zoom = 1; draw(); };
+  const draw = () => {
+    if (!V) return;
+    const w = canvas.width, h = canvas.height, cx = Math.cos(rx), sx = Math.sin(rx), cz = Math.cos(rz), sz = Math.sin(rz);
+    const n = V.length / 3, P = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const x = V[i * 3] - center[0], y = V[i * 3 + 1] - center[1], z = V[i * 3 + 2] - center[2];
+      const x1 = x * cz - y * sz, y1 = x * sz + y * cz;                 // turn around Z
+      const y2 = y1 * cx - z * sx, z2 = y1 * sx + z * cx;               // tilt around X
+      P[i * 3] = x1; P[i * 3 + 1] = y2; P[i * 3 + 2] = z2;
+    }
+    const s = Math.min(w, h) * 0.42 * zoom / radius;
+    const m = F.length / 3, order = new Uint32Array(m), depth = new Float32Array(m), shade = new Float32Array(m);
+    const L = [0.35, -0.45, 0.82], ll = Math.hypot(...L);
+    for (let f = 0; f < m; f++) {
+      const a = F[f * 3] * 3, b = F[f * 3 + 1] * 3, c = F[f * 3 + 2] * 3;
+      const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+      const vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const nl = Math.hypot(nx, ny, nz) || 1;
+      nx /= nl; ny /= nl; nz /= nl;
+      shade[f] = Math.abs(nx * L[0] + ny * L[1] + nz * L[2]) / ll;
+      depth[f] = P[a + 2] + P[b + 2] + P[c + 2]; order[f] = f;
+    }
+    order.sort((i, j) => depth[i] - depth[j]);
+    ctx.fillStyle = '#13141c'; ctx.fillRect(0, 0, w, h);
+    for (const f of order) {
+      const a = F[f * 3] * 3, b = F[f * 3 + 1] * 3, c = F[f * 3 + 2] * 3, k = 0.28 + 0.72 * shade[f];
+      ctx.fillStyle = `rgb(${Math.round(242 * k)},${Math.round(166 * k)},${Math.round(90 * k)})`;
+      ctx.beginPath(); ctx.moveTo(w / 2 + P[a] * s, h / 2 - P[a + 1] * s); ctx.lineTo(w / 2 + P[b] * s, h / 2 - P[b + 1] * s); ctx.lineTo(w / 2 + P[c] * s, h / 2 - P[c + 1] * s); ctx.closePath(); ctx.fill();
+    }
+  };
+  fetch(canvas.dataset.src).then(r => r.json()).then(d => {
+    V = d.vertices; F = d.faces; let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < V.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], V[i + k]); hi[k] = Math.max(hi[k], V[i + k]); }
+    center = lo.map((v, k) => (v + hi[k]) / 2); radius = Math.max(1e-9, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2);
+    if (d.thinned) $('#m3d-hint').textContent = `Showing ${(F.length / 3).toLocaleString()} of ${d.total_faces.toLocaleString()} triangles · drag to turn · scroll to zoom`;
+    draw();
+  }).catch(() => { $('#m3d-hint').textContent = 'The 3D view could not load this model.'; });
+  let drag = null;
+  canvas.addEventListener('pointerdown', e => { drag = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointermove', e => { if (!drag) return; rz += (e.clientX - drag[0]) * 0.01; rx += (e.clientY - drag[1]) * 0.01; drag = [e.clientX, e.clientY]; draw(); });
+  ['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, () => { drag = null; }));
+  canvas.addEventListener('wheel', e => { e.preventDefault(); zoom = Math.min(20, Math.max(0.2, zoom * (e.deltaY < 0 ? 1.12 : 0.89))); draw(); }, { passive: false });
+  $('#m3d-reset').addEventListener('click', reset);
+})();
+</script>
+{% endblock %}

@@ -71,6 +71,7 @@ shot-level repair → encode → metadata/thumbnail → publish.
 | Sound: music and effects generation, FFmpeg edits, soundtracks at any stage | `services/audio.py`, `pipeline/audio.py`, `commands.set_soundtrack`, `config/audio_profiles.yaml` | `docs/audio.md` |
 | Stable mode and adjusting the shots still to render | `pipeline/stages.py` (`stable_overrides`), `commands.adjust_remaining_shots` | `docs/stability.md` |
 | Live view: pipeline graph, what runs now, stage trace, decisions with evidence, events | `services/live.py`, `dashboard/templates/live.html` | `docs/live.md` |
+| 3D studio: mesh files, edits, relief, scans, picture/photos/video to 3D | `mesh/`, `services/models3d.py`, `pipeline/models3d.py` | `docs/three.md` |
 | REA (reverse engineering) runs on local files, kept with their output | `services/rea.py`, `pipeline/rea.py`, `config/studio.yaml` `rea:` | `docs/rea.md` |
 | Extending a clip or a finished video | `pipeline/extend.py`, `workflows/v2v_3070_extend` | `docs/video-tools.md` |
 | Dashboard | `dashboard/views.py`, `dashboard/templates/`, `dashboard/static/` (one CSS, one JS) | `README.md` |
@@ -573,6 +574,9 @@ and the event stream in words.
     4. Extension: extend a finished video by 3 s; look at the seam at the overlap.
     5. Sound: one ACE-Step 30 s clip and one Stable Audio 10 s effect; then set the music as
        a finished video's soundtrack and check the new final.
+    6. 3D: `comfy-check` for `mesh_hunyuan3d_i2m` (download the checkpoint first), one
+       picture of a single object on a plain background, then open the STL in the slicer.
+       Read the Hunyuan3D licence's territory clause first. Meshroom and Open3D are optional.
   - *See the workflow of each tool visually, decide visually or with a tool* → **Live view**
     (`docs/live.md`, "Watch it work" on every project page): the graph, the running job and
     shot with ComfyUI's queue, one card per shot with the original frame and the latest
@@ -583,10 +587,19 @@ and the event stream in words.
     providers, capabilities), run by the worker with `--json`, output kept per run, honest
     summaries, migration `0005`; checked against the real rea-agents 6.3.0 here. Needs Node.js
     22+ where the worker runs (not in the Docker image).
-  - **Next, not built yet** (Elis's requests, in order): the REA tab's uses beyond local files
-    and keeps its reports, a **3D studio** (STL/OBJ/PLY inspect, edit, view; photo stack,
-    video and LiDAR reconstruction only through installed providers, never faked), and the
-    research write-up of the top image and video tools' features with what maps onto Rökkur.
+  - *3D studio for STL, local and cloud, with several ways to make a model* → **3D**
+    (`docs/three.md`): open/measure/fix/convert STL, OBJ, PLY, GLB in numpy; picture relief
+    and lithophane; LiDAR or point cloud to a closed 2.5D solid; one picture to a mesh with
+    Hunyuan3D 2.0 through ComfyUI (local or cloud; workflow from Comfy-Org's template);
+    photos and video through Meshroom, Poisson through Open3D, each offered only when
+    installed. Migration `0006`. The canvas 3D view needs no WebGL.
+  - *Top image and video tools explored* → `docs/research/ai-image-video-tools-2026-10.md`:
+    GPT Image, Nano Banana, Midjourney, FLUX.2, Ideogram; Veo 3.1, Kling 3.0, Runway,
+    Seedance, Luma; each feature marked built, next (open model + published workflow), partial
+    or cloud only. Recommended next: first/last frame and image to video, Wan T2V 1.3B,
+    object removal in footage, cut-out PNG, klein multi-reference.
+  - **Next:** the PC acceptance tests above, then the research doc's list. Ideas not started: textures for 3D models (Hunyuan3D-Paint needs 12 GB), REA on
+    websites and running apps (its browser and process capture), stem separation for sound.
 
 - **Claude (2026-10-10, earlier): suite check.** Ran `ruff check src tests`, `mypy src`
   and the full `pytest` in the cloud clone against a fresh `rokkur_test` database. One real
@@ -613,6 +626,11 @@ and the event stream in words.
 
 ## Log (newest first)
 
+- 2026-10-10 Claude: **3D studio** (`docs/three.md`): `mesh/io.py` (STL/OBJ/PLY/GLB read and
+  write, point lists), `mesh/ops.py` (measure, edits, heightfield, relief, scan solid, SVG
+  preview), `Model3D` + migration `0006`, `services/models3d.py`, `pipeline/models3d.py` (`mesh`
+  job), workflow `mesh_hunyuan3d_i2m`, 3D page with a canvas view, `/models3d` API, CLI
+  `mesh-info`/`mesh-convert`/`model3d-list`, `tests/test_models3d.py` (7 tests).
 - 2026-10-10 Claude: **REA tab** (`docs/rea.md`): `ReaRun` + migration `0005`, `services/rea.py`
   (presets, argument building, execution, summaries), `pipeline/rea.py` (`rea` job), REA page,
   `/rea` API, CLI `rea-run`/`rea-list`, `tests/test_rea.py` (4 tests, fake rea).

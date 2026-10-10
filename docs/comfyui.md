@@ -68,6 +68,10 @@ CHECKPOINT, OUTPUT_PREFIX, MASK_VIDEO, CANNY_LOW, CANNY_HIGH`.
   SEED, STEPS, CFG` and `PROMPT, NEGATIVE_PROMPT, SECONDS, BATCH, SEED, STEPS, CFG`; both
   declare `output_kinds: [audio]` and save FLAC.
 
+- `mesh_hunyuan3d_i2m`: one picture to an untextured mesh (`docs/three.md`), from Comfy-Org's
+  `3d_hunyuan3d_image_to_model` template. Semantic names: `SOURCE_IMAGE, RESOLUTION, SEED,
+  STEPS, CFG, OCTREE, CHUNKS, ALGORITHM, THRESHOLD`; SaveGLB writes a GLB the studio converts.
+
 `CANNY_LOW` / `CANNY_HIGH` set the Canny thresholds (default 0.2 / 0.5). The CLI takes
 `--canny LOW HIGH` and the API `creative.canny_low` / `canny_high`, for A/B runs against
 0.4 / 0.8, the node defaults kept in Comfy-Org's VACE v2v template.
