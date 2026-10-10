@@ -29,6 +29,7 @@ from rokkur_studio.api.schemas import (
     RightsDecisionIn,
     RightsOut,
     SoundtrackIn,
+    UpgradeIn,
 )
 from rokkur_studio.db.models import Asset, Event, Job, Project, Publication, Rating, Render
 from rokkur_studio.domain.states import InvalidTransition, ProjectStatus
@@ -235,6 +236,18 @@ def extend_video(project_id: str, body: ExtendIn, ctx: Ctx, session: Db) -> Job:
             project_id=project_id, **body.model_dump()), actor="api")
     except (ValueError, LookupError) as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/{project_id}/upgrade", response_model=ProjectOut, tags=["ratings"],
+             summary="Render fast (draft) shots again in full quality with the same seed")
+def upgrade(project_id: str, body: UpgradeIn, ctx: Ctx, session: Db) -> Project:
+    project = _project(session, project_id, for_update=True)
+    try:
+        commands.redo_shots(session, project, ctx.settings, shot_ids=body.shots, actor="api",
+                            upgrade=True)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return project
 
 
 @router.post("/{project_id}/repair-more", response_model=ProjectOut,

@@ -19,6 +19,7 @@ from rokkur_studio.config import Settings
 from rokkur_studio.db.session import Database
 from rokkur_studio.gpu.lease import GpuLeaseManager
 from rokkur_studio.media.ffmpeg import FFmpeg
+from rokkur_studio.services.runpod import RunPodClient, make_client
 from rokkur_studio.storage.base import AssetStore
 from rokkur_studio.storage.local import LocalAssetStore
 
@@ -36,6 +37,7 @@ class StudioContext:
     extras: dict[str, object] = field(default_factory=dict)
     dp_provider: AgentProvider | None = None  # None: the DP pass uses ``provider``
     cloud_factory: Callable[[], ComfyClient] | None = None  # None: cloud is not set up
+    runpod_factory: Callable[[], RunPodClient | None] | None = None  # None: no pod control
 
     def comfy_for(self, target: str) -> ComfyClient:
         """A ComfyUI client for this PC (``local``) or the cloud server (``cloud``)."""
@@ -46,6 +48,10 @@ class StudioContext:
                                    "This video renders on the cloud server, which is not set "
                                    "up: set STUDIO_CLOUD__ENABLED and STUDIO_CLOUD__URL.")
         return self.cloud_factory()
+
+    def runpod(self) -> RunPodClient | None:
+        """A RunPod client when the API key and pod id are set (docs/cloud.md), else None."""
+        return self.runpod_factory() if self.runpod_factory is not None else None
 
 
 def profile_availability(ctx: StudioContext, target: str = "local", *,
@@ -156,4 +162,5 @@ def build_context(settings: Settings, db: Database | None = None) -> StudioConte
         comfy_factory=comfy_factory,
         dp_provider=make_dp_provider(settings),
         cloud_factory=cloud_factory,
+        runpod_factory=(lambda: make_client(cloud)) if cloud.pod_control else None,
     )

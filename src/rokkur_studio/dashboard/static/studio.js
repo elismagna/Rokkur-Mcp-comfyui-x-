@@ -183,6 +183,8 @@
       $('[data-live=title]', live).textContent = run ? run.name : 'Studio is idle';
       $('[data-live=detail]', live).textContent = run ? run.step : (d.queued ? `${d.queued} job${d.queued > 1 ? 's' : ''} waiting` : 'Nothing rendering');
       live.querySelector('a').href = run ? `/ui/projects/${run.project_id}` : '/ui/queue';
+      const chip = $('[data-live=cloud]', live), pod = d.cloud_gpu;
+      if (chip) { chip.hidden = !(pod && pod.on); chip.textContent = pod && pod.on ? pod.label : ''; }
       const badge = $('[data-count=approvals]');
       if (badge) { badge.textContent = d.approvals; badge.hidden = !d.approvals; }
     } catch { /* offline: leave the last state */ }

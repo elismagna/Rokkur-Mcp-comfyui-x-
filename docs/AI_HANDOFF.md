@@ -536,6 +536,25 @@ and the event stream in words.
 
 ## Current work
 
+- **Claude (2026-10-10): desktop icon and RunPod start/stop. Untested on Windows.**
+  `.\scripts\studio.ps1 shortcut` makes a *Rökkur Studio* desktop icon (`assets/rokkur.ico`)
+  that runs `scripts/launch.ps1`: Docker Desktop, `studio.ps1 up`, then (with
+  `STUDIO_CLOUD__RUNPOD_API_KEY` and `STUDIO_CLOUD__RUNPOD_POD_ID` in `.env`) a question
+  whether to turn on the cloud GPU; yes starts the pod through RunPod's REST API, starts
+  ComfyUI on it over SSH and opens a hidden tunnel on 8189. The System page has a Cloud GPU
+  card with Stop, the rail a chip while it runs, and the worker stops the pod after
+  `cloud.auto_stop_idle_minutes` (30) without cloud work. Code: `services/runpod.py`, CLI
+  `cloud-pod`, `tests/test_runpod.py` (fake RunPod). The PowerShell launcher was parse-checked
+  and run here with stand-in docker/ssh only. **Next:** Elis adds the key and pod id, makes the
+  icon and tries it; details in `docs/cloud.md` ("Start the cloud GPU with the studio").
+- **Claude (2026-10-10): render speed, second pass. Untested on the PC.** `docs/speed.md` item 4:
+  **Render in quality**. PREVIEW and DRAFT profiles name `upgrade_to: RTX3070_QUALITY`; on a
+  finished fast video the project page (and `POST /projects/{id}/upgrade`) re-renders the picked
+  shots, or all, in quality with the same prompt/seed/settings, via `redo_shots(upgrade=True)`.
+  First pass (models kept loaded per render stage, `stall_reports: 2`, 1 s poll, `timings`) is
+  in main since aa19052, also untested on the PC. Still needs Elis: `timings` before/after, and
+  DRAFT vs QUALITY rated on the same clip (needs the LoRA file, see `docs/speed.md`).
+
 - **Claude (2026-10-10): the studio grows from restyling footage into a small creative studio.**
   All of it is tested here with the fake ComfyUI, real FFmpeg and real Postgres; **none of the
   new ComfyUI graphs has run on a real GPU yet**. Elis's requests, in order, and what was built:
@@ -627,6 +646,11 @@ and the event stream in words.
 
 ## Log (newest first)
 
+- 2026-10-10 Claude: desktop icon + launcher (`scripts/launch.ps1`, `install-shortcut.ps1`,
+  `studio.ps1 shortcut|launch|cloud-on|cloud-off|cloud-pod`), RunPod start/stop/status
+  (`services/runpod.py`, CLI `cloud-pod`), System page Cloud GPU card and Stop, rail chip,
+  idle auto-stop in the worker (`IdleStopper`), new `cloud.*` settings, `tests/test_runpod.py`.
+- 2026-10-10 Claude: "Render in quality" (draft-first flow, `upgrade_to` on fast profiles).
 - 2026-10-10 Claude: **3D studio** (`docs/three.md`): `mesh/io.py` (STL/OBJ/PLY/GLB read and
   write, point lists), `mesh/ops.py` (measure, edits, heightfield, relief, scan solid, SVG
   preview), `Model3D` + migration `0006`, `services/models3d.py`, `pipeline/models3d.py` (`mesh`

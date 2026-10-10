@@ -59,6 +59,62 @@ that many dollars.
 
 The System page then lists **Cloud ComfyUI** with its host, memory and price (never the token).
 
+## Start the cloud GPU with the studio (RunPod)
+
+With a RunPod API key the studio switches your pod on and off for you: the desktop icon asks
+whether to turn the cloud GPU on, starts the pod, starts ComfyUI on it and opens the tunnel.
+Built and tested here against a fake RunPod API and a stand-in `ssh`; **not yet run on
+Windows**.
+
+1. **An API key.** In RunPod open *Settings → API Keys* and create a key. Give it the least
+   access that works (read/write on Pods if RunPod offers that choice). Treat it like a
+   password: it can start pods that bill your account.
+2. **The pod's id**, shown on the pod in RunPod's *Pods* page.
+3. Add to `.env` next to the lines above, then run `.\scripts\studio.ps1 up`:
+   ```
+   STUDIO_CLOUD__RUNPOD_API_KEY=<your key>
+   STUDIO_CLOUD__RUNPOD_POD_ID=<the pod id>
+   STUDIO_CLOUD__SSH_KEY=                  # empty: %USERPROFILE%\.ssh\id_ed25519
+   ```
+4. **The desktop icon:** `.\scripts\studio.ps1 shortcut` puts *Rökkur Studio* on your
+   desktop with the studio's logo.
+
+Double-clicking the icon starts Docker Desktop if needed, starts the studio, then asks
+*Turn on the cloud GPU?* with the GPU and RunPod's hourly price. **Yes** starts the pod
+(a minute or two), starts ComfyUI on it over SSH if it is not running, opens a hidden SSH tunnel
+on port 8189 and waits until ComfyUI answers. **No** renders on this PC only. If the pod is
+already on, the icon connects without asking. If anything fails, a message says why and the
+studio opens anyway, rendering on this PC. The same steps from PowerShell:
+`.\scripts\studio.ps1 launch` (`-Cloud` skips the question, `-NoCloud` skips the cloud),
+`cloud-on`, and `cloud-pod status`.
+
+**Stopping it.** A running pod bills by the hour, rendering or not.
+- The rail shows a *Cloud GPU on* chip while the pod runs. The System page's **Cloud GPU**
+  card has **Stop the cloud GPU** (refused while something renders on it).
+- The worker stops the pod by itself after `cloud.auto_stop_idle_minutes` (default 30) without
+  cloud work: no cloud job running or due, and an empty queue on the cloud ComfyUI. Set it to
+  0 to turn this off.
+- `.\scripts\studio.ps1 cloud-off` stops the pod and closes the tunnel.
+
+The studio only ever *stops* the pod. It never terminates it, so `/workspace` (ComfyUI and the
+models) stays. RunPod still charges a little for a stopped pod's disk.
+
+**Notes**
+- `cloud.ask_on_launch: false` (`STUDIO_CLOUD__ASK_ON_LAUNCH=false`) stops the question; the
+  icon then connects to the cloud GPU only when it is already on.
+- The icon uses the pod's public IP and SSH port from RunPod's API, which means the pod needs
+  SSH over exposed TCP, the `ssh root@<ip> -p <port>` address. Your public key must be on the
+  pod (see RunPod notes below).
+- SSH runs without prompts, so a key with a passphrase must be loaded into the Windows
+  ssh-agent first (`ssh-add`).
+- The pod's host key is kept in `%USERPROFILE%\.ssh\rokkur_runpod_known_hosts`, separate from
+  your normal `known_hosts`. When a restarted pod reuses an address, the old key for that
+  address is forgotten first.
+- ComfyUI on the pod is started from `cloud.remote_comfy_dir` (default `/workspace/ComfyUI`)
+  on `cloud.remote_comfy_port` (8188), with its log in `/workspace/comfyui.log`.
+- The tunnel closes when you sign out or restart Windows. Double-click the icon again to
+  reconnect.
+
 ## What changes for a cloud video
 
 - **Where to render** on the New video page offers *This PC* and *Cloud server*. The API takes
@@ -72,7 +128,8 @@ The System page then lists **Cloud ComfyUI** with its host, memory and price (ne
 - Each render's time (upload, queue, render and download) is recorded as *cloud GPU minutes*,
   with an estimated cost
   from `price_per_hour_usd`. The video page shows both. **This is an estimate:** a rented
-  server bills for every hour it is switched on, rendering or not. Stop it when you are done.
+  server bills for every hour it is switched on, rendering or not. Stop it when you are done
+  (with RunPod the studio can stop it for you, see above).
 - `costs.max_cloud_gpu_minutes` (default 60 per video) and the optional dollar cap stop a
   video at its budget, like the local GPU-minute budget. *Allow more renders* raises both.
 - If the cloud server is off or unreachable, the render job waits and retries like a local
@@ -107,8 +164,8 @@ in `output/`).
   ```
   cd /workspace/ComfyUI && nohup python main.py --listen 127.0.0.1 --port 8188 > /workspace/comfyui.log 2>&1 &
   ```
-  It does not start by itself when the pod restarts. Start it only once: a second copy fails
-  on the `comfyui.db` lock, which is harmless.
+  It does not start by itself when the pod restarts; the desktop icon starts it for you (see
+  above). Start it only once: a second copy fails on the `comfyui.db` lock, which is harmless.
 - **Models.** Put the same files your PC uses under `/workspace/ComfyUI/models`, from the
   Comfy-Org `Wan_2.1_ComfyUI_repackaged` split files (VACE 1.3B fp16, umt5 xxl fp8, Wan VAE).
   The depth, draft and preview workflows also need the DepthAnythingV2 node pack, the

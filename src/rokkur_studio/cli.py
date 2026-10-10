@@ -123,6 +123,49 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_cloud_pod(args: argparse.Namespace) -> int:
+    """Check, start or stop the RunPod pod. ``scripts/launch.ps1`` reads the ``--json`` line."""
+    from rokkur_studio.pipeline import context as context_mod
+    from rokkur_studio.services.runpod import RunPodError, connect_info
+
+    settings = _settings(args)
+    cloud = settings.cloud
+
+    def say(data: dict[str, Any], text: str) -> None:
+        print(json.dumps({"configured": cloud.pod_control, "ready": cloud.ready, **data})
+              if args.json else text)
+
+    client = context_mod.build_context(settings).runpod() if cloud.pod_control else None
+    if client is None:
+        say({}, "RunPod start/stop is not set up: add STUDIO_CLOUD__RUNPOD_API_KEY and "
+                "STUDIO_CLOUD__RUNPOD_POD_ID to .env (docs/cloud.md).")
+        return 0 if args.action == "status" else 1
+    try:
+        if args.action == "stop":
+            client.stop()
+            say({"stopped": True}, "Stopping the cloud GPU. RunPod stops charging its hourly "
+                                   "rate once it has stopped.")
+            return 0
+        state = client.state()
+        started = False
+        if args.action == "start" and not state.running:
+            client.start()
+            started = True
+        if args.action == "start" and args.wait:
+            state = client.wait_until_reachable(timeout_s=args.timeout)
+        elif started:
+            state = client.state()
+        info = connect_info(cloud, state)
+        where = f" at {state.ip}:{state.ssh_port}" if state.reachable else ""
+        say({**info, "started": started}, state.label() + where)
+        return 0
+    except RunPodError as exc:
+        say({"error": str(exc)}, f"RunPod: {exc}")
+        return 1
+    finally:
+        client.close()
+
+
 # Loader node -> the input whose choices are the model files ComfyUI can see.
 MODEL_LOADERS = {
     "checkpoints": ("CheckpointLoaderSimple", "ckpt_name"),
@@ -933,6 +976,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cloud", action="store_true",
                    help="check the cloud ComfyUI server (STUDIO_CLOUD__URL) instead of this PC's")
     p.set_defaults(func=cmd_comfy_check)
+    p = sub.add_parser("cloud-pod", help="check, start or stop the RunPod cloud GPU")
+    p.add_argument("action", choices=["status", "start", "stop"])
+    p.add_argument("--wait", action="store_true",
+                   help="start: wait until the pod runs and its SSH port is known")
+    p.add_argument("--timeout", type=float, default=600, help="seconds --wait may take")
+    p.add_argument("--json", action="store_true", help="one JSON line, for the launcher")
+    p.set_defaults(func=cmd_cloud_pod)
     sub.add_parser("audit", help="inspect the local environment").set_defaults(func=cmd_audit)
     p = sub.add_parser("agent-check",
                        help="ask the Ollama agents for a brief, framing and metadata")

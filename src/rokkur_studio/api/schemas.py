@@ -264,6 +264,10 @@ class RedoIn(BaseModel):
     shots: list[str] = Field(min_length=1)
 
 
+class UpgradeIn(BaseModel):
+    shots: list[str] = Field(default_factory=list)  # empty: every shot
+
+
 class PublishIn(BaseModel):
     dry_run: bool = True
     privacy: Literal["private", "unlisted", "public"] | None = None

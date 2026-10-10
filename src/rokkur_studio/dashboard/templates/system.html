@@ -13,6 +13,12 @@
   <dt>Media folder</dt><dd><code>{{ settings.studio.media_dir }}</code></dd><dt>Repair rounds</dt><dd>up to {{ settings.render.max_retries }}</dd>
   <dt>QC pass mark</dt><dd>{{ settings.quality.pass_threshold }} / 10</dd></dl>
 </div>
+{% if pod_control %}<div class="card" id="cloud-gpu"><h2>Cloud GPU</h2>
+  {% if pod %}<div class="svc full"><span class="dot {{ 'warn' if pod.running else '' }}"></span><div><b>{{ 'On' if pod.running else ('Stopped' if pod.status == 'EXITED' else pod.status|lower|capitalize) }}</b><div class="hint">{{ pod.gpu or pod.name or 'RunPod pod' }}{% if pod.price_per_hour %} · ${{ '%g'|format(pod.price_per_hour) }} an hour while it is on{% endif %}</div></div></div>
+  {% if pod.running %}<form method="post" action="/ui/cloud-gpu/stop" style="margin-top:10px"><button type="submit" class="secondary">Stop the cloud GPU</button></form>{% endif %}
+  {% else %}<p class="hint">{{ pod_error or 'RunPod did not answer yet.' }}</p>{% endif %}
+  <p class="hint">Start it with the Rökkur Studio icon on your desktop.{% if settings.cloud.auto_stop_idle_minutes %} The studio stops it after {{ '%g'|format(settings.cloud.auto_stop_idle_minutes) }} minutes without cloud work.{% endif %}</p>
+</div>{% endif %}
 <div class="card"><h2>GPU</h2>
   <div class="row" style="justify-content:space-between"><span>{{ '%.0f'|format(gpu.in_use_gb) }} of {{ '%.0f'|format(gpu.vram_gb) }} GB reserved</span></div>
   <div class="meter" style="margin-top:8px"><i style="width:{{ (100 * gpu.in_use_gb / gpu.vram_gb)|round|int if gpu.vram_gb else 0 }}%"></i></div>

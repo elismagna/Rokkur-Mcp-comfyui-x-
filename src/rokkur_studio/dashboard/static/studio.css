@@ -73,6 +73,9 @@ code { font: 12px var(--mono); background: var(--surface-2); padding: 1px 6px; b
 .live b { color: var(--fg); font-weight: 600; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .live .row { gap: 6px; flex-wrap: nowrap }
 .live a { color: inherit } .live a:hover { text-decoration: none; color: var(--fg) }
+.live .cloud-chip { display: flex; align-items: center; gap: 7px; margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); color: var(--ember); font-weight: 600 }
+.live .cloud-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ember); flex: none }
+.live .cloud-chip[hidden] { display: none }
 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none }
 .pulse.on { background: var(--ember); box-shadow: 0 0 0 0 var(--ember); animation: beat 1.8s ease-out infinite }
 @keyframes beat { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ember) 60%, transparent) } 80%, 100% { box-shadow: 0 0 0 8px transparent } }

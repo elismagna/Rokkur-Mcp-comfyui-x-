@@ -73,7 +73,39 @@ def test_taste_page_suggestions_and_live_status(ctx, sample_video):
     new = c.get("/ui/new").text
     assert 'data-apply data-field="theme" data-action="append" data-value="claymation"' in new
     live = c.get("/ui/status").json()
-    assert live == {"running": [], "queued": 0, "approvals": live["approvals"]}
+    assert live == {"running": [], "queued": 0, "approvals": live["approvals"], "cloud_gpu": None}
     css = c.get("/ui/static/studio.css")
     assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")
     assert "/ui/static/studio.js?v=" in c.get("/ui").text
+
+
+def test_render_in_quality_redoes_fast_shots_with_the_same_seed(ctx, sample_video):
+    from rokkur_studio.db.models import Project, Render
+
+    c = client_for(ctx)
+    pid = create(ctx, sample_video)
+    run(ctx)
+    with ctx.db.session() as s:
+        assert s.get(Project, pid).render_profile == "PREVIEW"  # a fast profile
+        first = {r.shot_id: r.params["SEED"] for r in s.scalars(
+            select(Render).where(Render.project_id == pid))}
+    page = c.get(f"/ui/projects/{pid}").text
+    assert "Render in quality" in page and "RTX3070_QUALITY" in page
+    r = c.post(f"/ui/projects/{pid}/upgrade", follow_redirects=False)  # nothing picked: all
+    assert "every%20shot" in r.headers["location"]
+    run(ctx)
+    assert status(ctx, pid) == "READY_TO_PUBLISH"
+    with ctx.db.session() as s:
+        latest = {r.shot_id: r for r in s.scalars(select(Render).where(
+            Render.project_id == pid, Render.status == "succeeded"))}
+    assert {sid: r.profile for sid, r in latest.items()} == {
+        sid: "RTX3070_QUALITY" for sid in first}
+    assert {sid: r.params["SEED"] for sid, r in latest.items()} == first  # same seed
+    assert all(r.params["STEPS"] == 20 for r in latest.values())
+    page = c.get(f"/ui/projects/{pid}").text
+    assert "Render in quality" not in page and "same prompt, seed and settings" in page
+    r = c.post(f"/ui/projects/{pid}/upgrade", data={"shots": ["shot_001"]},
+               follow_redirects=False)
+    assert "already%20rendered%20in%20full%20quality" in r.headers["location"]
+    api = c.post(f"/projects/{pid}/upgrade", json={"shots": ["shot_001"]})
+    assert api.status_code == 409
