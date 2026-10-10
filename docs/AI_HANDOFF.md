@@ -225,10 +225,11 @@ ComfyUI, Ollama and Google servers (`tests/fakes*.py`).
 
 Tested by Claude in the cloud clone (Linux, real FFmpeg, fresh Postgres 16 `rokkur_test`), 2026-10-10, after the
 pictures, characters, stability, extension and sound work:
-- **337 passed, 1 skipped**, `ruff check src tests` and `mypy src` clean. The Pictures, Sound, New
-  video and project pages were rendered in Chromium at desktop and phone width with no script
-  errors (fake ComfyUI, preview renderer). Real-GPU runs of the new graphs: none yet; see the
-  acceptance list under Current work.
+- **351 passed, 1 skipped** (12 min 56 s), `ruff check src tests` and `mypy src` clean, after
+  the sound studio, live view, REA tab and 3D studio. The Pictures, Sound, live, REA and 3D
+  pages were rendered in Chromium at desktop and phone width with no script errors (fake
+  ComfyUI, preview renderer). Real-GPU runs of the new graphs: none yet; see the acceptance
+  list under Current work. Run the suite alone: two runs sharing `rokkur_test` break each other.
 
 Earlier the same day, before that work:
 - **306 passed, 1 skipped**, `ruff check src tests` and `mypy src` clean, after the cloud cost
