@@ -1,35 +1,28 @@
-# Wan 2.1 VACE 1.3B for an 8 GB RTX 3070: keeps the real main subject and restyles the room
-# around it. Used instead of v2v_3070_quality when a project keeps its subject and the studio
-# could mask it (docs/subject.md).
-# Built from proven graphs, not from scratch:
-#   - our v2v_3070_quality (nodes 1-20 unchanged: Canny control, uni_pc 20 steps, cfg 6, shift 8);
-#   - the mask wiring of Comfy-Org's "Wan2.1 VACE inpainting" template (MIT,
-#     github.com/Comfy-Org/workflow_templates, video_wan_vace_inpainting.json): a mask into
-#     WanVaceToVideo's control_masks (white = regenerate, black = keep) and the frames composited
-#     with ImageCompositeMasked into control_video;
-#   - Civitai 1605242 and 1470557, which wire a subject mask the same way, and the "background
-#     change = invert the mask" recipe Civitai 1680850 describes. Only the wiring is reused; no
-#     node or file is copied from them (notes: docs/research/civitai-wan-workflows.md).
-# Changes from the template: the mask comes from the studio (U2-Net, nodes 30-34) instead of
-# SAM3; it is inverted (35) so the room is regenerated and the subject kept; and the control
-# video keeps the source pixels on the subject and Canny edges elsewhere (36), so the room
-# follows the source layout instead of being invented.
-# Models as v2v_3070_quality:
-#   diffusion_models/wan2.1_vace_1.3B_fp16.safetensors
-#   text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
-#   vae/wan_2.1_vae.safetensors
-# Run `scripts/studio.ps1 comfy-check` to validate node inputs and model files on the workstation.
+# Wan 2.1 VACE 14B for a 24 GB cloud GPU: keeps the real main subject and restyles the room
+# around it. Used instead of v2v_cloud_14b when a project keeps its subject and the studio could
+# mask it (docs/subject.md). Cloud only (render profile CLOUD_14B, docs/cloud.md).
+# Built from proven graphs, not from scratch: our v2v_3070_keep (its sources are listed there:
+# Comfy-Org's VACE inpainting template wiring and Civitai mask recipes), node for node except
+# node 1, which loads the 14B model the way v2v_cloud_14b does (from Comfy-Org's MIT
+# "Wan2.1 VACE 14B video to video" template, without its CC-BY-NC CausVid LoRA).
+# The model is loaded with weight_dtype fp8_e4m3fn (about 17 GB on the GPU) so it fits 24 GB.
+# Models (Comfy-Org/Wan_2.1_ComfyUI_repackaged, Apache-2.0; sizes from the Hugging Face API,
+# 2026-10-10):
+#   diffusion_models/wan2.1_vace_14B_fp16.safetensors        34,675,323,640 bytes (32.3 GiB)
+#   text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors      6,735,906,897 bytes
+#   vae/wan_2.1_vae.safetensors                                  253,815,318 bytes
+# Run `scripts/studio.ps1 comfy-check --cloud` to validate node inputs and model files on the server.
 # SHIFT (ModelSamplingSD3), SAMPLER and SCHEDULER (KSampler) default to this graph's own
-# values (8.0, uni_pc, simple), so a render that sets none of them is unchanged; a video's
-# advanced settings or a QC repair may change them.
-name: v2v_3070_keep
-version: 2
-description: Wan 2.1 VACE 1.3B restyle of the room around the real subject (subject mask + Canny)
+# values (8.0, uni_pc, simple); a video's advanced settings or a QC repair may change them.
+name: v2v_cloud_14b_keep
+version: 1
+description: Wan 2.1 VACE 14B (fp8 weights) restyle of the room around the real subject (subject mask + Canny)
 resource_class: GPU_HEAVY
 input_kind: video
 output_kinds: [videos, images, gifs]
 parameters:
-  DIFFUSION_MODEL: {node: "1", input: unet_name, type: str, default: wan2.1_vace_1.3B_fp16.safetensors}
+  DIFFUSION_MODEL: {node: "1", input: unet_name, type: str, default: wan2.1_vace_14B_fp16.safetensors}
+  WEIGHT_DTYPE: {node: "1", input: weight_dtype, type: str, default: fp8_e4m3fn}
   TEXT_ENCODER: {node: "2", input: clip_name, type: str, default: umt5_xxl_fp8_e4m3fn_scaled.safetensors}
   VAE: {node: "3", input: vae_name, type: str, default: wan_2.1_vae.safetensors}
   STYLE_PROMPT: {node: "5", input: text, type: str, required: true}

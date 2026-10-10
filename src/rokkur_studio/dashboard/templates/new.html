@@ -44,7 +44,27 @@
       <div class="form-pair"><div><label for="seed">Seed</label><input id="seed" name="seed" type="number" min="0" max="4294967295" placeholder="Automatic, reproducible per shot"></div><div><label for="steps">Sampling steps</label><input id="steps" name="steps" type="number" min="8" max="40" placeholder="Use the quality profile"></div></div>
       <label for="cfg">Prompt guidance</label><input id="cfg" name="cfg" type="number" min="1" max="12" step="0.5" value="6">
       <p class="hint">Keep a fixed seed when comparing a setting. More steps take longer and do not guarantee a better result.</p>
+      <div class="form-pair"><div><label for="sampler">Sampler</label><select id="sampler" name="sampler"><option value="" selected>Workflow default (uni_pc)</option>{% for s in samplers %}<option value="{{s}}">{{s}}</option>{% endfor %}</select></div>
+      <div><label for="scheduler">Scheduler</label><select id="scheduler" name="scheduler"><option value="" selected>Workflow default (simple)</option>{% for s in schedulers %}<option value="{{s}}">{{s}}</option>{% endfor %}</select></div></div>
+      <label for="shift">Shift</label><input id="shift" name="shift" type="number" min="1" max="20" step="0.5" placeholder="Workflow default (8)">
+      <p class="hint">Higher shift settles the big shapes and motion earlier; lower leaves more room for fine detail. The fast draft profile keeps its own sampler.</p>
+      <label for="edge_detail">Edge detail</label><select id="edge_detail" name="edge_detail"><option value="default" selected>Studio default · 0.2 / 0.5</option><option value="calm">Calmer, fewer edges · 0.4 / 0.8 (Comfy-Org default)</option><option value="tight">Tighter, more edges · 0.1 / 0.3</option></select>
+      <p class="hint">How many outlines the source guide draws. Calmer lets fur, grass and textures settle; tighter follows the source more closely. Depth profiles have no edges and ignore it.</p>
+      <label for="resolution_scale">Render size</label><select id="resolution_scale" name="resolution_scale"><option value="" selected>Full size for the render quality</option><option value="0.85">85%</option><option value="0.75">75%</option><option value="0.67">67% · about 480P on Cloud 14B</option><option value="0.5">50%</option></select>
+      <p class="hint">Smaller renders faster and needs less memory. The final video is still fitted to your delivery format.</p>
       <label for="character_reference_path">Existing reference path on the worker</label><input id="character_reference_path" name="character_reference_path" placeholder="/media/character.png">
+    </details>
+    <details><summary>Stability and tuning</summary>
+      <label for="stabilize">Steady the finished shots</label><select id="stabilize" name="stabilize"><option value="auto" selected>Let the studio decide (recommended)</option><option value="off">Off</option><option value="light">Light</option><option value="strong">Strong</option></select>
+      <p class="hint">Calms shimmering surfaces and flicker after rendering. Strong steadies more but may soften quick movement.</p>
+      <label for="smooth_control">Smooth the source guide</label><select id="smooth_control" name="smooth_control"><option value="0" selected>Off</option><option value="0.3">Light</option><option value="0.6">Strong</option></select>
+      <p class="hint">Evens out the edges or depth Wan follows from frame to frame, so textures boil less. Strong may blur quick movement.</p>
+      <label class="check"><input type="checkbox" name="auto_tune" value="true" checked> Let QC tune settings when a shot fails</label>
+      <p class="hint">Off changes only the seed when a shot is rendered again.</p>
+      <label for="min_stability">Minimum stability <span class="muted">0 = off</span></label><input id="min_stability" name="min_stability" type="number" min="0" max="10" step="0.5" value="0">
+      <p class="hint">Re-render shots whose stability score is below this, on QC's 0 to 10 scale.</p>
+      <label class="check"><input type="checkbox" name="picture_review" value="true" checked> AI picture review after rendering</label>
+      <p class="hint">Uses your local vision model to look at the finished frames.</p>
     </details>
   </section>
 </div>

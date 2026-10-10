@@ -116,6 +116,12 @@ def shot_snapshot(session: Session, project: Project, render: Render) -> dict[st
     plan = _brief_shot(session, project.id, render.shot_id)
     creative = project.creative_input or {}
     canny = [params.get("CANNY_LOW"), params.get("CANNY_HIGH")]
+    # Unset sampling options take the workflow's value, which the compiler reports as applied.
+    applied = details.get("applied") or {}
+
+    def sampling(key: str) -> Any:
+        return params.get(key, applied.get(key))
+
     return {
         "kind": "shot",
         "shot_id": render.shot_id,
@@ -132,6 +138,11 @@ def shot_snapshot(session: Session, project: Project, render: Render) -> dict[st
         "cfg": params.get("CFG"),
         "control_strength": params.get("CONTROL_STRENGTH"),
         "canny": canny if any(v is not None for v in canny) else None,
+        "shift": sampling("SHIFT"),
+        "sampler": sampling("SAMPLER"),
+        "scheduler": sampling("SCHEDULER"),
+        "stabilize": params.get("_STABILIZE"),
+        "smooth_control": params.get("_SMOOTH_CONTROL"),
         "reference": details.get("reference"),
         "subject_mode": _subject_mode(session, project.id),
         "subject_kept": (details.get("subject") or {}).get("kept"),

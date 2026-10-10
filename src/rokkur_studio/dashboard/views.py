@@ -33,7 +33,15 @@ from rokkur_studio.api.routes_system import gpu_leases as gpu_info
 from rokkur_studio.api.routes_system import system as system_info
 from rokkur_studio.api.routes_system import workers as workers_info
 from rokkur_studio.api.routes_youtube import release_overview
-from rokkur_studio.api.schemas import CreativeIn, ProjectCreate, RightsIn, SourceIn
+from rokkur_studio.api.schemas import (
+    EDGE_PRESETS,
+    SAMPLERS,
+    SCHEDULERS,
+    CreativeIn,
+    ProjectCreate,
+    RightsIn,
+    SourceIn,
+)
 from rokkur_studio.config import Settings, project_target
 from rokkur_studio.db.models import (
     ApprovalRequest,
@@ -348,6 +356,7 @@ def new_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
                  cloud_status=(profile_availability(ctx, "cloud", live=False)
                                if cloud.ready else {}),
                  characters=tracker.characters if tracker else {},
+                 samplers=SAMPLERS, schedulers=SCHEDULERS,
                  profiles=ctx.settings.profiles,
                  default_profile=ctx.settings.render.default_profile,
                  categories=[c.value for c in RightsCategory
@@ -415,6 +424,17 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                      seed: Annotated[str, Form()] = "",
                      steps: Annotated[str, Form()] = "",
                      cfg: Annotated[float, Form()] = 6.0,
+                     shift: Annotated[str, Form()] = "",
+                     sampler: Annotated[str, Form()] = "",
+                     scheduler: Annotated[str, Form()] = "",
+                     edge_detail: Annotated[str, Form()] = "default",
+                     resolution_scale: Annotated[str, Form()] = "",
+                     stabilize: Annotated[str, Form()] = "auto",
+                     smooth_control: Annotated[float, Form()] = 0.0,
+                     # Checkboxes send nothing when cleared, so a missing field means off.
+                     auto_tune: Annotated[bool, Form()] = False,
+                     min_stability: Annotated[float, Form()] = 0.0,
+                     picture_review: Annotated[bool, Form()] = False,
                      negative_prompt: Annotated[str, Form()] = "",
                      prompt: Annotated[str, Form()] = "",
                      permission_evidence: Annotated[str, Form()] = "",
@@ -485,6 +505,9 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                 return fail("The selected soundtrack file does not contain an audio stream.")
         except FFmpegError:
             return fail("The studio could not read that soundtrack file. Choose another audio file.")
+    if edge_detail not in EDGE_PRESETS:
+        return fail(f"Unknown edge detail {edge_detail!r}")
+    canny = EDGE_PRESETS[edge_detail]
     try:
         body = ProjectCreate(
             name=name or Path(path).stem, target_format=target_format,  # type: ignore[arg-type]
@@ -498,6 +521,16 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                                 control_strength=control_strength, cfg=cfg,
                                 seed=int(seed) if seed.strip() else None,
                                 steps=int(steps) if steps.strip() else None,
+                                shift=float(shift) if shift.strip() else None,
+                                sampler=sampler or None,  # type: ignore[arg-type]
+                                scheduler=scheduler or None,  # type: ignore[arg-type]
+                                canny_low=canny[0] if canny else None,
+                                canny_high=canny[1] if canny else None,
+                                resolution_scale=(float(resolution_scale)
+                                                  if resolution_scale.strip() else None),
+                                stabilize=stabilize,  # type: ignore[arg-type]
+                                smooth_control=smooth_control, auto_tune=auto_tune,
+                                min_stability=min_stability, picture_review=picture_review,
                                 negative_prompt=negative_prompt or None,
                                 keep_source_audio=not mute_source_audio,
                                 audio_bed_path=audio_bed_path,
