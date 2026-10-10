@@ -87,6 +87,14 @@ class AdjustIn(BaseModel):
     clear_reference: bool = False
 
 
+class SoundtrackIn(BaseModel):
+    """A video's soundtrack, from the sound library (commands.set_soundtrack)."""
+
+    clip_id: str | None = None            # None: remove the added track
+    gain: float | None = Field(None, ge=0, le=2)
+    keep_source_audio: bool | None = None
+
+
 class ExtendIn(BaseModel):
     """Continue a finished video (pipeline/extend.py)."""
 

@@ -62,6 +62,12 @@ CHECKPOINT, OUTPUT_PREFIX, MASK_VIDEO, CANNY_LOW, CANNY_HIGH`.
   Their semantic names: `PROMPT, SOURCE_IMAGE, WIDTH, HEIGHT, BATCH, STEPS, CFG, SEED,
   MEGAPIXELS, MASK_GROW, PAD_LEFT/TOP/RIGHT/BOTTOM, FEATHER, SCALE_BY, UPSCALE_MODEL`.
 
+- `audio_ace_step` and `audio_stable_open`: music and sound effects (`docs/audio.md`), adapted
+  from Comfy-Org's ACE-Step example workflow and ComfyUI's Stable Audio example, core audio
+  nodes only. Semantic names: `TAGS, LYRICS, LYRICS_STRENGTH, SECONDS, BATCH, SHIFT, VOCALS,
+  SEED, STEPS, CFG` and `PROMPT, NEGATIVE_PROMPT, SECONDS, BATCH, SEED, STEPS, CFG`; both
+  declare `output_kinds: [audio]` and save FLAC.
+
 `CANNY_LOW` / `CANNY_HIGH` set the Canny thresholds (default 0.2 / 0.5). The CLI takes
 `--canny LOW HIGH` and the API `creative.canny_low` / `canny_high`, for A/B runs against
 0.4 / 0.8, the node defaults kept in Comfy-Org's VACE v2v template.

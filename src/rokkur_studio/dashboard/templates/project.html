@@ -159,6 +159,27 @@
 </section>
 {% endif %}
 
+<section class="section" id="sound">
+  <div class="section-title"><h2>Sound</h2>{% if sound.clip %}<span class="pill ok">{{ icon('music') }} {{ sound.clip.title or sound.clip.prompt|truncate(40) or sound.clip.kind }}</span>{% elif sound.bed_name %}<span class="pill ok">added file: {{ sound.bed_name }}</span>{% else %}<span class="hint">{{ 'footage sound only' if sound.keep_source else 'silent' }}</span>{% endif %}</div>
+  <p class="hint" style="margin:-6px 0 14px">{% if sound.re_edits %}Changing the soundtrack edits the finished video again: the new cut becomes the latest final, the earlier one stays in Renders.{% elif sound.changeable %}The soundtrack is mixed under the footage's sound in the edit stage; choose it now and it is used when the video gets there.{% else %}The sound cannot change in this state.{% endif %}</p>
+  <div class="grid2">
+    {% if sound.changeable %}<form class="card" method="post" action="/ui/projects/{{p.id}}/sound">
+      <label for="snd_clip">Soundtrack from the sound library</label>
+      <select id="snd_clip" name="clip_id"><option value="">{{ 'keep the current one' if (sound.clip or sound.bed_name) else 'none' }}</option>{% for c in library_sounds %}<option value="{{ c.id }}" {% if sound.clip and c.id == sound.clip.id %}selected{% endif %}>{{ c.title or c.prompt|truncate(50) or c.kind }} · {{ '%.0f'|format(c.duration_s or 0) }} s</option>{% endfor %}</select>
+      <div class="form-pair" style="margin-top:10px"><div><label for="snd_gain">Track level <output id="snd-gain-value">{{ (sound.gain * 100)|round|int }}%</output></label><input id="snd_gain" name="gain" type="range" min="0" max="1" step="0.05" value="{{ sound.gain }}" oninput="document.getElementById('snd-gain-value').textContent=Math.round(this.value*100)+'%'"></div>
+      <div><label class="check" style="margin-top:22px"><input type="checkbox" name="mute_source_audio" value="true" {% if not sound.keep_source %}checked{% endif %}> Mute the footage's own sound</label></div></div>
+      {% if sound.evidence %}<p class="hint">Rights: {{ sound.evidence }}</p>{% endif %}
+      <div class="row" style="margin-top:14px;gap:8px"><button class="secondary">{{ icon('music') }} Set the soundtrack</button>{% if sound.clip or sound.bed_name %}<button class="ghost" name="remove" value="true">Remove the added track</button>{% endif %}</div>
+    </form>{% endif %}
+    <div class="card">
+      <p style="margin:0 0 10px"><a class="btn secondary small" href="/ui/audio?project={{ p.id }}{% if video_seconds %}&seconds={{ video_seconds|round|int }}{% endif %}">{{ icon('music') }} Make music or effects for this video</a></p>
+      <div class="row" style="gap:8px;flex-wrap:wrap">{% if finals %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/sound/extract"><input type="hidden" name="which" value="final"><button class="secondary small">Take the final cut's sound into the library</button></form>{% endif %}
+      {% if sources %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/sound/extract"><input type="hidden" name="which" value="source"><button class="secondary small">Take the footage's sound into the library</button></form>{% endif %}</div>
+      {% if project_sounds %}<p class="hint" style="margin:12px 0 4px">Sound made for this video:</p><ul class="hint" style="margin:0;padding-left:18px">{% for c in project_sounds %}<li><a href="/ui/audio?clip={{ c.id }}#selected">{{ c.title or c.prompt|truncate(50) or c.kind }}</a> · {{ c.status }}{% if c.duration_s %} · {{ '%.0f'|format(c.duration_s) }} s{% endif %}</li>{% endfor %}</ul>{% endif %}
+    </div>
+  </div>
+</section>
+
 {% if adjustable %}
 <section class="section" id="adjust">
   <div class="section-title"><h2>Adjust the remaining shots</h2><span class="hint">{{ rendered_shot_ids|length }} shot{{ '' if rendered_shot_ids|length == 1 else 's' }} already rendered and kept as they are</span></div>

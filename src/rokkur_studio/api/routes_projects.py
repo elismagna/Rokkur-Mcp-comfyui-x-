@@ -28,9 +28,10 @@ from rokkur_studio.api.schemas import (
     RenderOut,
     RightsDecisionIn,
     RightsOut,
+    SoundtrackIn,
 )
 from rokkur_studio.db.models import Asset, Event, Job, Project, Publication, Rating, Render
-from rokkur_studio.domain.states import ProjectStatus
+from rokkur_studio.domain.states import InvalidTransition, ProjectStatus
 from rokkur_studio.pipeline.context import (
     StudioContext,
     profile_availability,
@@ -199,6 +200,27 @@ def adjust(project_id: str, body: AdjustIn, ctx: Ctx, session: Db) -> dict[str, 
             clear_reference=body.clear_reference,
             changes=body.model_dump(exclude={"reference_image_id", "clear_reference"}))
     except (ValueError, LookupError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/{project_id}/soundtrack", tags=["render"],
+             summary="Set, change or remove the video's added soundtrack, at any stage")
+def set_soundtrack(project_id: str, body: SoundtrackIn, ctx: Ctx, session: Db) -> dict[str, object]:
+    from rokkur_studio.services.audio import AudioStore, get_clip, rights_line
+
+    project = _project(session, project_id, for_update=True)
+    bed_path = rights = None
+    try:
+        if body.clip_id:
+            clip = get_clip(session, body.clip_id)
+            if not clip.rel_path:
+                raise ValueError("that clip has no file yet")
+            bed_path = str(AudioStore(ctx.settings.studio.data_dir).path_for(clip.rel_path))
+            rights = rights_line(clip)
+        return commands.set_soundtrack(session, project, ctx.settings, actor="api",
+                                       bed_path=bed_path, rights=rights, clip_id=body.clip_id,
+                                       gain=body.gain, keep_source_audio=body.keep_source_audio)
+    except (ValueError, LookupError, InvalidTransition) as exc:
         raise HTTPException(409, str(exc)) from exc
 
 

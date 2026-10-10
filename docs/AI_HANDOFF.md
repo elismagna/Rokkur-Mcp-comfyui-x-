@@ -4,7 +4,8 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-10 by Claude (full suite re-run in the cloud clone; cloud cost rounding fix).
+Last updated: 2026-10-10 by Claude (pictures, characters, Stable mode, mid-render adjustments,
+video extension, sound studio and soundtracks at any stage; see Current work).
 See the [local upgrade findings](upgrade-2026-10-07.md) for implementation details and real
 render observations; the latest Git commit is authoritative.
 
@@ -66,6 +67,10 @@ shot-level repair → encode → metadata/thumbnail → publish.
 | Rights gate | `domain/rights.py` | `docs/rights.md` |
 | YouTube OAuth, upload, schedule, playlists, approvals | `youtube/`, `services/publishing.py` | `docs/youtube.md` |
 | Use cases shared by API, dashboard and CLI | `services/commands.py` | |
+| Pictures: generate, change, repaint, extend, upscale, vary; characters from a clip; storyboard stills | `services/images.py`, `pipeline/images.py`, `services/characters.py`, `config/image_profiles.yaml` | `docs/images.md` |
+| Sound: music and effects generation, FFmpeg edits, soundtracks at any stage | `services/audio.py`, `pipeline/audio.py`, `commands.set_soundtrack`, `config/audio_profiles.yaml` | `docs/audio.md` |
+| Stable mode and adjusting the shots still to render | `pipeline/stages.py` (`stable_overrides`), `commands.adjust_remaining_shots` | `docs/stability.md` |
+| Extending a clip or a finished video | `pipeline/extend.py`, `workflows/v2v_3070_extend` | `docs/video-tools.md` |
 | Dashboard | `dashboard/views.py`, `dashboard/templates/`, `dashboard/static/` (one CSS, one JS) | `README.md` |
 | CLI | `cli.py`; Windows wrapper `scripts/studio.ps1`, Linux `Makefile` | `README.md` |
 | Config | `config/studio.yaml`, overridden by `.env` (`STUDIO_<SECTION>__<KEY>`) | `.env.example` |
@@ -215,7 +220,14 @@ ComfyUI, Ollama and Google servers (`tests/fakes*.py`).
 
 ## Verified results
 
-Tested by Claude in the cloud clone (Linux, real FFmpeg, fresh Postgres 16 `rokkur_test`), 2026-10-10:
+Tested by Claude in the cloud clone (Linux, real FFmpeg, fresh Postgres 16 `rokkur_test`), 2026-10-10, after the
+pictures, characters, stability, extension and sound work:
+- **337 passed, 1 skipped**, `ruff check src tests` and `mypy src` clean. The Pictures, Sound, New
+  video and project pages were rendered in Chromium at desktop and phone width with no script
+  errors (fake ComfyUI, preview renderer). Real-GPU runs of the new graphs: none yet; see the
+  acceptance list under Current work.
+
+Earlier the same day, before that work:
 - **306 passed, 1 skipped**, `ruff check src tests` and `mypy src` clean, after the cloud cost
   rounding fix. Before it, `test_cloud.py` failed here because the fake server renders a shot in
   milliseconds and the per-shot estimate rounded to $0.
@@ -506,9 +518,65 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   user flow for projects stopped at the total render budget. Do not promise that increasing
   source strength improves quality: the real comparison showed the opposite.
 
+## The main goal (Elis, 2026-10-10)
+
+Communication between the person and the studio **without losing or altering detail**: every
+decision the studio makes is recorded with what produced it (events, documents, params), every
+change a person makes is visible where it applies, and the studio shows its work so the person
+can decide visually or with a tool, at the point where the decision is needed. New features
+are judged by that: a feature that hides a step, or quietly changes what the person chose,
+goes against the goal. The live workflow view (next) is the direct expression of it.
+
 ## Current work
 
-- **Claude (2026-10-10): suite check, no edit in progress.** Ran `ruff check src tests`, `mypy src`
+- **Claude (2026-10-10): the studio grows from restyling footage into a small creative studio.**
+  All of it is tested here with the fake ComfyUI, real FFmpeg and real Postgres; **none of the
+  new ComfyUI graphs has run on a real GPU yet**. Elis's requests, in order, and what was built:
+  - *Image editing, inpaint, generation and more* → **Pictures** (`/ui/images`, `docs/images.md`):
+    FLUX.2 [klein] 4B fp8 (generate, change, repaint with a painted or subject-model mask,
+    extend the edges, variations), Z-Image-Turbo (generate), RealESRGAN (upscale). Same GPU
+    lease, cloud target, OOM ladder and cost entries as video. Hand-offs: a picture as the
+    video's appearance reference, as a thumbnail; migration `0003`.
+  - *Extract characters before prompting, plus must-have features in that phase* → **Find the
+    characters** on New video (CPU U²-Net cutouts of the subjects seen in the clip, into the
+    picture library as `character`), storyboard stills per shot from the same prompts the
+    video uses, "use as reference" from any picture, and the Stable mode below.
+  - *Alter the workload while the video is made; stability, no artifacts* →
+    `docs/stability.md`: **Stable mode** (one seed and one cutout reference for every shot,
+    full steps, source guide 1.0, no per-shot DP framing, QC pass mark +1) and **Adjust the
+    remaining shots** (prompt addition, seed, steps, guidance, source guide, edge thresholds,
+    reference) that only touch shots not rendered yet; the render loop reloads the manifest
+    before each shot.
+  - *Extend videos, before and after render* → `docs/video-tools.md`: Wan VACE continuation
+    from the last 9 frames (control video + mask built with FFmpeg), on a media clip before
+    a video exists and on a finished video (new final, old one kept).
+  - *Sound generation and manipulation, usable at any point* → **Sound** (`/ui/audio`,
+    `docs/audio.md`): ACE-Step music (tags + lyrics) and Stable Audio Open effects through
+    ComfyUI, FFmpeg trim/fade/level/loudness/loop/speed/mix/join/extract, uploads, waveforms,
+    and `commands.set_soundtrack`: a library clip becomes a video's soundtrack on New video,
+    before the edit stage (saved and used there) or on a finished video (edited again, new
+    final). Migration `0004`.
+  - **PC acceptance tests, in this order** (report results in the Log; never commit media):
+    1. `git pull`, `studio.ps1 up` (applies `0003` and `0004`), `comfy-check`: every `img_*`,
+       `audio_*` and `v2v_3070_extend` template against the live ComfyUI. Download the models
+       listed in `docs/images.md` and `docs/audio.md` with `install-models.ps1` first.
+    2. Pictures: one klein generate at 1024², then change/repaint/extend on it. Note seconds
+       and VRAM; a CUDA OOM should show "Recovered" on the picture, not fail it.
+    3. Stable mode A/B: the same clip, same prompt, same seed, once normal and once Stable;
+       compare QC scores and the shots by eye. If Stable is not visibly steadier, the next
+       knobs are in `docs/stability.md`.
+    4. Extension: extend a finished video by 3 s; look at the seam at the overlap.
+    5. Sound: one ACE-Step 30 s clip and one Stable Audio 10 s effect; then set the music as
+       a finished video's soundtrack and check the new final.
+  - **Next, not built yet** (Elis's requests, in order): a live workflow view per video
+    (`/ui/projects/{id}/live`: the pipeline as a graph with the current stage and shot, the
+    ComfyUI queue position, the event stream, and the decisions waiting for a person shown
+    with their frames and renders), a **REA** tab that runs the real `rea` CLI on local files
+    and keeps its reports, a **3D studio** (STL/OBJ/PLY inspect, edit, view; photo stack,
+    video and LiDAR reconstruction only through installed providers, never faked), and the
+    research write-up of the top image and video tools' features with what maps onto Rökkur.
+
+- **Claude (2026-10-10, earlier): suite check.** Ran `ruff check src tests`, `mypy src`
   and the full `pytest` in the cloud clone against a fresh `rokkur_test` database. One real
   failure: the cloud cost estimate was rounded to 4 decimals per shot before being stored, so a
   shot that renders in well under a second (the fake server here) stored $0 and
@@ -533,6 +601,27 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-10 Claude: **Sound studio** (`docs/audio.md`): `audio_ace_step` and
+  `audio_stable_open` workflows (core nodes, sources in their headers), `config/audio_profiles.yaml`,
+  `AudioClip` + migration `0004`, `services/audio.py` (generation requests, FFmpeg edits,
+  uploads, extraction), `pipeline/audio.py` (`audio` job: lease, OOM ladder clear_cache /
+  single_clip / shorter, FLAC), FFmpeg sound helpers (`audio_info`, trim, fade, gain,
+  loudnorm, loop, speed, mix, concat, waveform), `commands.set_soundtrack` (`SOUNDTRACK_SET`
+  event; re-edits a finished video), Sound page, project page Sound section, New video
+  library pick, `/audio` API, `POST /projects/{id}/soundtrack`, CLI `audio`, `audio-edit`,
+  `audio-list`, `tests/test_audio.py` (7 tests). The edit stage now accepts a bed from
+  `data/audio` as well as `data/uploads`.
+- 2026-10-10 Claude: **video extension** before and after render (`pipeline/extend.py`,
+  `workflows/v2v_3070_extend`, `docs/video-tools.md`, `tests/test_extend.py`).
+- 2026-10-10 Claude: **Stable mode** and **Adjust the remaining shots** (`docs/stability.md`,
+  `tests/test_adjust.py`); the render loop reloads the manifest per shot.
+- 2026-10-10 Claude: **Find the characters** before prompting (`services/characters.py`),
+  storyboard stills per shot, reference hand-off from Pictures (`tests/test_characters.py`).
+- 2026-10-10 Claude: **Pictures** (`docs/images.md`): six `img_*` workflows adapted from the
+  Comfy-Org klein and Z-Image templates and ComfyUI's inpaint/outpaint/upscale examples,
+  `config/image_profiles.yaml`, `Image` + migration `0003`, `services/images.py`,
+  `pipeline/images.py`, Pictures page, `/images` API, CLI `image`/`image-list`,
+  `tests/test_images.py`. `scripts/install-models.ps1` lists the optional picture models.
 - 2026-10-10 Claude: cloud `CostEntry.usd` is no longer rounded per shot (`pipeline/stages.py`);
   per-shot rounding dropped sub-cent estimates and biased the project total. Full suite, ruff and
   mypy pass in the cloud clone (see Verified results).

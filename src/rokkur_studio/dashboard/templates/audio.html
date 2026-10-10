@@ -1,0 +1,209 @@
+{% extends "base.html" %}{% from "_icons.html" import icon %}
+{% block title %}Sound · Rökkur Studio{% endblock %}
+{% block crumb %}Rökkur / Sound{% endblock %}
+{% block head %}{% if busy %}<meta name="studio-refresh" content="6">{% endif %}{% endblock %}
+{% block body %}
+<div class="eyebrow">CREATE / SOUND</div>
+<h1>Sound</h1>
+<p class="sub">Make music from style tags and lyrics, make a sound effect or ambience from a description, bring your own sound in, take the sound out of a video, and shape any clip: trim, fade, level, loudness, loop, speed, mix, join. Every clip can become a video's soundtrack at any stage, from New video to a finished cut.</p>
+{% if not music_available and not sound_available %}<div class="callout warn" style="margin-bottom:20px"><span style="color:var(--warn)">{{ icon('sys') }}</span><div><p><b>Sound cannot be generated yet.</b> Editing, uploads and soundtracks still work.</p><div class="hint">{{ unavailable_reason }}</div><div class="hint">Models and set-up: <code>docs/audio.md</code>.</div></div></div>{% endif %}
+{% if for_project %}<div class="callout" style="margin-bottom:20px"><span>{{ icon('film') }}</span><div><p>Making sound for <a href="/ui/projects/{{ for_project.id }}">{{ for_project.name }}</a>. When the clip is done, press <b>Use as soundtrack</b> on it.</p></div></div>{% endif %}
+
+{% if selected %}
+<section class="card" id="selected" style="margin-bottom:22px">
+  <div class="img-detail">
+    <div class="aud-stage">
+      {% if selected.rel_path %}<img class="wave" src="/audio/{{ selected.id }}/waveform.png" alt="Waveform of {{ selected.title or selected.prompt or selected.kind }}">
+      <audio controls preload="metadata" src="/audio/{{ selected.id }}/file" style="width:100%"></audio>
+      {% elif selected.status == 'failed' %}<div class="img-placeholder bad">{{ icon('nope') }}<b>Failed</b><span>{{ (selected.error or {}).get('message', '') }}</span></div>
+      {% else %}<div class="img-placeholder"><span class="pulse on"></span><b>{{ 'Generating' if selected.status == 'running' else 'Waiting for the GPU' }}</b><span>This page refreshes on its own.</span></div>{% endif %}
+    </div>
+    <div class="img-side">
+      <div class="row spread" style="align-items:flex-start"><div><div class="eyebrow">{{ selected.kind|capitalize }}{% if selected.profile %} · {{ selected.profile|replace('_',' ') }}{% endif %}{% if selected.render_on == 'cloud' %} · cloud{% endif %}</div><h2 style="margin:0">{{ selected.title or {'music': 'Music', 'sound': 'Sound effect', 'upload': 'Your sound', 'extract': 'Sound of a video', 'trim': 'Trimmed clip', 'fade': 'Faded clip', 'gain': 'Level changed', 'normalize': 'Loudness normalised', 'loop': 'Looped clip', 'speed': 'Speed changed', 'mix': 'Mix', 'concat': 'Joined clips'}.get(selected.kind, selected.kind|capitalize) }}</h2></div>
+        <span class="pill {{ 'ok' if selected.status == 'done' else ('bad' if selected.status == 'failed' else 'info') }}">{{ selected.status }}</span></div>
+      {% if selected.prompt %}<p style="margin:10px 0 0;user-select:text">{{ selected.prompt }}</p>{% endif %}
+      {% if selected.lyrics %}<details><summary>Lyrics</summary><pre>{{ selected.lyrics }}</pre></details>{% endif %}
+      <dl class="kv" style="margin-top:12px">
+        {% if selected.duration_s %}<dt>Length</dt><dd>{{ '%.1f'|format(selected.duration_s) }} s{% if selected.sample_rate %} · {{ selected.sample_rate }} Hz · {{ 'stereo' if selected.channels == 2 else (selected.channels|string + ' ch') }}{% endif %}</dd>{% endif %}
+        {% if selected.seed is not none %}<dt>Seed</dt><dd><code>{{ selected.seed }}</code></dd>{% endif %}
+        {% if selected.params.STEPS %}<dt>Steps</dt><dd>{{ selected.params.STEPS }} · guidance {{ selected.params.CFG }}</dd>{% endif %}
+        {% if selected.took_s %}<dt>Took</dt><dd>{{ '%.1f'|format(selected.took_s) }} s</dd>{% endif %}
+        {% if parent %}<dt>Made from</dt><dd><a href="/ui/audio?clip={{ parent.id }}#selected">{{ parent.title or parent.kind|capitalize }}</a></dd>{% endif %}
+        {% if selected.project_id %}<dt>Video</dt><dd><a href="/ui/projects/{{ selected.project_id }}">{{ selected.project_id }}</a></dd>{% endif %}
+        {% if selected.request.rights_evidence %}<dt>Rights</dt><dd>{{ selected.request.rights_evidence }}</dd>{% endif %}
+        {% if selected.params._oom_steps %}<dt>Recovered</dt><dd class="hint">CUDA ran out of memory; the studio applied {{ selected.params._oom_steps|join(', ') }}</dd>{% endif %}
+      </dl>
+      {% if selected.status == 'done' %}
+      <div class="img-actions">
+        {% for op, label in [('trim', 'Trim'), ('fade', 'Fade'), ('gain', 'Level'), ('normalize', 'Loudness'), ('loop', 'Loop'), ('speed', 'Speed'), ('mix', 'Mix with…'), ('concat', 'Join with…')] %}<button type="button" class="secondary small" data-edit="{{ op }}" data-source="{{ selected.id }}">{{ label }}</button>{% endfor %}
+        <a class="btn secondary small" href="/audio/{{ selected.id }}/file" download="rokkur-{{ selected.id }}.flac">Download</a>
+      </div>
+      <form method="post" action="/ui/audio/{{ selected.id }}/soundtrack" class="card" style="margin-top:12px;padding:12px">
+        <label for="st_project">Use as the soundtrack of</label>
+        <select id="st_project" name="project_id">{% for pr in projects %}<option value="{{ pr.id }}" {% if for_project and pr.id == for_project.id %}selected{% endif %}>{{ pr.name }} · {{ pr.status|lower|replace('_',' ') }}</option>{% else %}<option value="">No video can take a soundtrack now</option>{% endfor %}</select>
+        <div class="form-pair" style="margin-top:8px"><div><label for="st_gain">Track level <output id="st-gain-value">25%</output></label><input id="st_gain" name="gain" type="range" min="0" max="1" step="0.05" value="0.25" oninput="document.getElementById('st-gain-value').textContent=Math.round(this.value*100)+'%'"></div>
+        <div><label class="check" style="margin-top:22px"><input type="checkbox" name="mute_source_audio" value="true"> Mute the footage's own sound</label></div></div>
+        <p class="hint">Before the edit stage the choice waits for it; on a finished video the edit runs again and the new cut becomes the latest final.</p>
+        <button class="secondary small" {% if not projects %}disabled{% endif %}>{{ icon('film') }} Use as soundtrack</button>
+      </form>
+      {% endif %}
+      <div class="row spread" style="margin-top:14px">
+        <form method="post" action="/ui/audio/{{ selected.id }}/verdict" class="rate compact" data-audio-rate>
+          <div class="rate-buttons" role="group" aria-label="Rate this clip">{% for v, name, ic in [(-2, 'Super dislike', 'nope'), (-1, 'Dislike', 'down'), (1, 'Like', 'up'), (2, 'Super like', 'star')] %}<button type="submit" class="rate-btn" name="value" value="{{ v }}" aria-pressed="{{ 'true' if selected.verdict == v else 'false' }}" aria-label="{{ name }}" title="{{ name }}">{{ icon(ic) }}<span>{{ name }}</span></button>{% endfor %}</div>
+        </form>
+        <form method="post" action="/ui/audio/{{ selected.id }}/delete" onsubmit="return confirm('Delete this clip and its file? Clips made from it stay.')"><button class="ghost small">Delete</button></form>
+      </div>
+      {% if children %}<p class="hint" style="margin-top:10px">Made from this one: {% for c in children %}<a href="/ui/audio?clip={{ c.id }}#selected">{{ c.kind }}</a>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<div class="create-layout">
+<div class="stack">
+<form method="post" action="/ui/audio" id="audio-form" class="card">
+  <div class="section-heading"><span class="step-number">01</span><div><h2>Make a sound</h2><p class="hint">One request, up to {{ settings.audio.max_batch }} clips with seeds counting up.</p></div></div>
+  <div class="seg img-ops" role="group" aria-label="Operation">
+    <label class="op"><input type="radio" name="operation" value="music" {% if form.operation != 'sound' %}checked{% endif %}><span>Music</span></label>
+    <label class="op"><input type="radio" name="operation" value="sound" {% if form.operation == 'sound' %}checked{% endif %}><span>Sound effect</span></label>
+  </div>
+  <p class="hint" id="op-hint"></p>
+  <label for="prompt" id="prompt-label">Style tags</label>
+  <textarea id="prompt" name="prompt" maxlength="4000" rows="3" placeholder="ambient, warm synth pads, slow, 80 bpm, cinematic, no drums">{{ form.prompt }}</textarea>
+  <div data-needs="music">
+    <label for="lyrics">Lyrics <span class="muted">optional; empty means instrumental</span></label>
+    <textarea id="lyrics" name="lyrics" maxlength="8000" rows="4" placeholder="[verse]&#10;…&#10;[chorus]&#10;…"></textarea>
+  </div>
+  <div data-needs="sound">
+    <label for="negative_prompt">Avoid <span class="muted">optional</span></label>
+    <input id="negative_prompt" name="negative_prompt" maxlength="2000" placeholder="music, voice, distortion">
+  </div>
+  <div class="form-pair"><div><label for="seconds">Length (seconds)</label><input id="seconds" name="seconds" type="number" min="1" max="{{ settings.audio.max_seconds|int }}" step="1" value="{{ form.seconds }}"><p class="hint" id="seconds-hint"></p></div>
+    <div><label for="count">How many</label><select id="count" name="count">{% for n in range(1, settings.audio.max_batch + 1) %}<option value="{{ n }}">{{ n }}</option>{% endfor %}</select></div></div>
+  <details><summary>Seed, steps, guidance, model{% if cloud %}, where to render{% endif %}</summary>
+    <div class="form-pair"><div><label for="seed">Seed</label><input id="seed" name="seed" type="number" min="0" placeholder="Random"></div><div><label for="steps">Steps</label><input id="steps" name="steps" type="number" min="1" max="200" placeholder="Model default (50)"></div></div>
+    <div class="form-pair"><div><label for="cfg">Guidance</label><input id="cfg" name="cfg" type="number" min="0" max="20" step="0.5" placeholder="Model default"></div>
+    <div data-needs="music"><label for="lyrics_strength">Lyrics strength</label><input id="lyrics_strength" name="lyrics_strength" type="number" min="0" max="1" step="0.01" value="0.99"></div></div>
+    <label for="profile">Model</label><select id="profile" name="profile"><option value="">The studio's choice</option>{% for name, pr in audio_profiles.items() %}<option value="{{ name }}" data-kind="{{ pr.kind }}" data-max="{{ pr.max_seconds }}" {% if audio_status[name] %}disabled{% endif %}>{{ name|replace('_',' ') }} · {{ pr.kind }} · up to {{ pr.max_seconds|int }} s{% if audio_status[name] %} · unavailable{% endif %}</option>{% endfor %}</select>
+    {% if cloud %}<label for="render_on">Where to render</label><select id="render_on" name="render_on"><option value="local" {% if cloud.default == 'local' %}selected{% endif %}>This PC</option><option value="cloud" {% if cloud.default == 'cloud' %}selected{% endif %}>Cloud server · {{ '%g'|format(cloud.vram_gb) }} GB</option></select>{% endif %}
+    <label for="project_id">For a video <span class="muted">optional</span></label><select id="project_id" name="project_id"><option value="">None</option>{% for pr in projects %}<option value="{{ pr.id }}" {% if pr.id == form.project_id %}selected{% endif %}>{{ pr.name }}</option>{% endfor %}</select>
+    <label for="title">Name <span class="muted">optional</span></label><input id="title" name="title" maxlength="200" placeholder="Shown in the library instead of the tags">
+  </details>
+  <p style="margin:16px 0 0"><button class="launch-button" id="audio-submit" {% if not music_available and not sound_available %}disabled{% endif %}>Make it <span aria-hidden="true">↗</span></button></p>
+</form>
+
+<form method="post" action="/ui/audio/edit" id="edit-form" class="card">
+  <div class="section-heading"><span class="step-number">02</span><div><h2>Shape a clip</h2><p class="hint">FFmpeg on the CPU, done at once; the result is a new clip, the original stays.</p></div></div>
+  <div class="seg img-ops" role="group" aria-label="Edit">
+    {% for op, label in [('trim', 'Trim'), ('fade', 'Fade'), ('gain', 'Level'), ('normalize', 'Loudness'), ('loop', 'Loop'), ('speed', 'Speed'), ('mix', 'Mix'), ('concat', 'Join')] %}<label class="op"><input type="radio" name="operation" value="{{ op }}" {% if loop.first %}checked{% endif %}><span>{{ label }}</span></label>{% endfor %}
+  </div>
+  <p class="hint" id="edit-hint"></p>
+  <div data-edit-needs="trim fade gain normalize loop speed">
+    <label for="edit_source">Clip</label>
+    <select id="edit_source" name="source_id">{% for c in library %}<option value="{{ c.id }}" {% if selected and c.id == selected.id %}selected{% endif %}>{{ c.title or c.prompt|truncate(40) or c.kind }} · {{ '%.1f'|format(c.duration_s or 0) }} s</option>{% else %}<option value="">The library is empty</option>{% endfor %}</select>
+  </div>
+  <div data-edit-needs="mix concat">
+    <label>Clips <span class="muted">two or more, in order</span></label>
+    <div class="aud-pick">{% for c in library %}<label class="check"><input type="checkbox" name="source_ids" value="{{ c.id }}" {% if selected and c.id == selected.id %}checked{% endif %}> {{ c.title or c.prompt|truncate(40) or c.kind }} <span class="hint">{{ '%.1f'|format(c.duration_s or 0) }} s</span></label>{% else %}<span class="hint">The library is empty.</span>{% endfor %}</div>
+  </div>
+  <div data-edit-needs="trim" class="form-pair"><div><label for="ed_start">Start (s)</label><input id="ed_start" name="start" type="number" min="0" step="0.1" value="0"></div><div><label for="ed_end">End (s)</label><input id="ed_end" name="end" type="number" min="0.1" step="0.1" placeholder="the end"></div></div>
+  <div data-edit-needs="fade" class="form-pair"><div><label for="ed_in">Fade in (s)</label><input id="ed_in" name="fade_in" type="number" min="0" max="60" step="0.1" value="1"></div><div><label for="ed_out">Fade out (s)</label><input id="ed_out" name="fade_out" type="number" min="0" max="60" step="0.1" value="2"></div></div>
+  <div data-edit-needs="gain"><label for="ed_db">Change by (dB)</label><input id="ed_db" name="db" type="number" min="-60" max="30" step="0.5" value="-6"></div>
+  <div data-edit-needs="normalize"><label for="ed_lufs">Target loudness (LUFS)</label><input id="ed_lufs" name="lufs" type="number" min="-40" max="-5" step="0.5" value="-14"><p class="hint">-14 is what YouTube plays at; -16 for calmer music beds.</p></div>
+  <div data-edit-needs="loop" class="form-pair"><div><label for="ed_secs">Loop until (s)</label><input id="ed_secs" name="seconds" type="number" min="1" max="3600" step="1" placeholder="the video's length"></div><div><label for="ed_cross">Fade out at the end (s)</label><input id="ed_cross" name="crossfade" type="number" min="0" max="10" step="0.1" value="0.5"></div></div>
+  <div data-edit-needs="speed" class="form-pair"><div><label for="ed_factor">Speed</label><input id="ed_factor" name="factor" type="number" min="0.25" max="4" step="0.05" value="1.25"></div><div><label class="check" style="margin-top:22px"><input type="checkbox" name="keep_pitch" value="true" checked> Keep the pitch</label></div></div>
+  <div data-edit-needs="mix"><div class="form-pair"><div><label for="ed_vol">Levels <span class="muted">one per clip, 1 = as is</span></label><input id="ed_vol" name="volumes" placeholder="1, 0.4"></div><div><label for="ed_off">Start offsets (s)</label><input id="ed_off" name="offsets" placeholder="0, 2.5"></div></div>
+    <label for="ed_dur">Length</label><select id="ed_dur" name="duration"><option value="longest">the longest clip</option><option value="first">the first clip</option><option value="shortest">the shortest clip</option></select></div>
+  <label for="ed_title">Name <span class="muted">optional</span></label><input id="ed_title" name="title" maxlength="200">
+  <p style="margin:14px 0 0"><button class="secondary" {% if not library %}disabled{% endif %}>Apply</button></p>
+</form>
+
+<form method="post" action="/ui/audio/upload" enctype="multipart/form-data" class="card">
+  <div class="section-heading"><span class="step-number">03</span><div><h2>Bring a sound in</h2><p class="hint">A sound file, or a video to take the sound from. Kept as FLAC.</p></div></div>
+  <input type="file" name="source_file" accept="audio/*,video/*,.m4a,.opus,.flac,.mp4,.mov,.mkv,.webm" required>
+  <label class="check"><input type="checkbox" name="extract" value="true"> It is a video; take its sound</label>
+  <label class="check"><input type="checkbox" name="rights_confirmed" value="true" required> I may use and change this sound</label>
+  <input name="rights_evidence" maxlength="1000" placeholder="My recording / licence / written permission" required>
+  <label for="up_title">Name <span class="muted">optional</span></label><input id="up_title" name="title" maxlength="200">
+  <p style="margin:14px 0 0"><button class="secondary">Add to the library</button></p>
+</form>
+
+<section class="card"><h2>Models</h2>
+  {% for name, pr in audio_profiles.items() %}<p><b>{{ name|replace('_',' ') }}</b> <span class="pill {{ 'warn' if audio_status[name] else 'ok' }}">{{ 'Unavailable' if audio_status[name] else 'Configured' }}</span><br><span class="hint">{{ audio_status[name] or pr.description }}</span></p>{% endfor %}
+  <p class="hint">Model files go into ComfyUI's models folder; <code>scripts\studio.ps1 comfy-check</code> confirms each workflow against your installation.</p>
+</section>
+</div>
+
+<div class="stack">
+<section class="card">
+  <div class="row spread"><h2>Library</h2><div class="chips" style="margin:0">{% for key, label in [('', 'All'), ('music', 'Music'), ('sound', 'Effects'), ('extract', 'From videos'), ('upload', 'Uploads'), ('mix', 'Mixes')] %}<a href="/ui/audio?kind={{ key }}" class="{{ 'on' if key == kind else '' }}">{{ label }}</a>{% endfor %}</div></div>
+  {% if gallery %}
+  <div class="aud-list">
+    {% for c in gallery %}
+    <a class="aud-card {{ c.status }}{% if selected and c.id == selected.id %} on{% endif %}" href="/ui/audio?clip={{ c.id }}{% if kind %}&kind={{ kind }}{% endif %}#selected" title="{{ c.title or c.prompt }}">
+      {% if c.rel_path %}<img class="wave small" src="/audio/{{ c.id }}/waveform.png" alt="" loading="lazy">
+      {% elif c.status == 'failed' %}<div class="img-placeholder bad">{{ icon('nope') }}<span>Failed</span></div>
+      {% else %}<div class="img-placeholder"><span class="pulse on"></span><span>{{ 'Generating' if c.status == 'running' else 'Queued' }}</span></div>{% endif %}
+      <div class="aud-cap"><span class="truncate">{{ c.title or c.prompt or c.kind }}</span><span class="hint">{{ '%.1f'|format(c.duration_s) + ' s' if c.duration_s else '' }}</span><span class="pill">{{ c.kind }}</span>{% if c.verdict %}<span class="{{ 'good' if c.verdict > 0 else 'poor' }}">{{ icon('star' if c.verdict == 2 else ('up' if c.verdict == 1 else ('down' if c.verdict == -1 else 'nope'))) }}</span>{% endif %}</div>
+    </a>
+    {% endfor %}
+  </div>
+  {% if more %}<p style="margin:14px 0 0"><a class="btn secondary small" href="/ui/audio?page={{ page + 1 }}{% if kind %}&kind={{ kind }}{% endif %}">Older clips</a></p>{% endif %}
+  {% else %}<p class="empty">No sound yet. Describe some on the left, or bring a file in.</p>{% endif %}
+</section>
+</div>
+</div>
+
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const HINTS = {{ hints|tojson }};
+  const EDIT_HINTS = {
+    trim: 'Keep the part between start and end.',
+    fade: 'Soften the start, the end or both.',
+    gain: 'Louder (+) or quieter (−) by so many decibels.',
+    normalize: 'Bring the loudness to a standard level so clips match.',
+    loop: 'Repeat the clip until it is long enough for the video, fading out at the end.',
+    speed: 'Faster or slower; with the pitch kept it sounds like the same recording, played quicker.',
+    mix: 'Play the clips on top of each other at the levels and offsets you give.',
+    concat: 'Play the clips one after another, in the order ticked.',
+  };
+  const MAX = {{ settings.audio.max_seconds }};
+  const form = $('#audio-form'), edit = $('#edit-form');
+  const op = () => form.querySelector('input[name=operation]:checked')?.value || 'music';
+  const sync = () => {
+    const current = op();
+    $$('[data-needs]', form).forEach(el => { el.hidden = !el.dataset.needs.split(' ').includes(current); });
+    $('#op-hint').textContent = HINTS[current];
+    $('#prompt-label').textContent = current === 'music' ? 'Style tags' : 'What does it sound like?';
+    $('#prompt').placeholder = current === 'music' ? 'ambient, warm synth pads, slow, 80 bpm, cinematic, no drums' : 'rain on a tin roof, distant thunder, no music';
+    const profile = $('#profile');
+    [...profile.options].forEach(o => { if (o.dataset.kind) o.hidden = o.dataset.kind !== current; });
+    if (profile.selectedOptions[0]?.dataset.kind && profile.selectedOptions[0].dataset.kind !== current) profile.value = '';
+    const chosen = profile.selectedOptions[0]?.dataset.max || [...profile.options].find(o => o.dataset.kind === current && !o.disabled)?.dataset.max;
+    const cap = Math.min(MAX, Number(chosen || MAX));
+    $('#seconds').max = cap; $('#seconds-hint').textContent = `Up to ${cap} s per clip; loop or join clips for more.`;
+  };
+  $$('input[name=operation]', form).forEach(r => r.addEventListener('change', sync));
+  $('#profile').addEventListener('change', sync);
+  const eop = () => edit.querySelector('input[name=operation]:checked')?.value || 'trim';
+  const esync = () => { const current = eop();
+    $$('[data-edit-needs]', edit).forEach(el => { el.hidden = !el.dataset.editNeeds.split(' ').includes(current); });
+    $('#edit-hint').textContent = EDIT_HINTS[current]; };
+  $$('input[name=operation]', edit).forEach(r => r.addEventListener('change', esync));
+  $$('[data-edit]').forEach(btn => btn.addEventListener('click', () => {
+    const radio = edit.querySelector(`input[name=operation][value=${btn.dataset.edit}]`);
+    if (radio) radio.checked = true;
+    const src = $('#edit_source'); if (src) src.value = btn.dataset.source;
+    $$('input[name=source_ids]', edit).forEach(c => { c.checked = c.value === btn.dataset.source; });
+    esync(); edit.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  const rate = $('[data-audio-rate]');
+  rate?.addEventListener('submit', async e => { e.preventDefault(); const v = e.submitter?.value; if (!v) return;
+    const body = new FormData(rate); body.set('value', v);
+    const r = await fetch(rate.action, { method: 'POST', body, headers: { Accept: 'application/json' } });
+    if (r.ok) { const d = await r.json(); $$('.rate-btn', rate).forEach(b => b.setAttribute('aria-pressed', String(String(d.verdict) === b.value))); } });
+  sync(); esync();
+})();
+</script>
+{% endblock %}

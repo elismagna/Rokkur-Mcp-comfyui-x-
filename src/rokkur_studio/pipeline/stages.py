@@ -48,6 +48,7 @@ from rokkur_studio.manifest.schema import ReconstructionManifest, ShotSpec, Subj
 from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline import qc as qc_mod
 from rokkur_studio.pipeline.analysis import analyze_video
+from rokkur_studio.pipeline.audio import audio_job
 from rokkur_studio.pipeline.context import StudioContext
 from rokkur_studio.pipeline.driver import autonomy_level
 from rokkur_studio.pipeline.extend import extend_job
@@ -960,10 +961,12 @@ def edit(ctx: StudioContext, job: Job) -> dict[str, Any]:
         bed_path_value = creative.get("audio_bed_path")
         bed_path: Path | None = None
         if bed_path_value:
-            uploads = (Path(ctx.settings.studio.data_dir) / "uploads").resolve()
+            data_dir = Path(ctx.settings.studio.data_dir).resolve()
+            allowed = (data_dir / "uploads", data_dir / "audio")  # an upload, or the sound library
             bed_path = Path(str(bed_path_value)).resolve()
-            if not bed_path.is_relative_to(uploads) or not bed_path.is_file():
-                raise JobError("audio_bed_missing", "The uploaded music or effects file is missing.")
+            if not any(bed_path.is_relative_to(root) for root in allowed) or not bed_path.is_file():
+                raise JobError("audio_bed_missing", "The music or effects file for the soundtrack "
+                               "is missing.")
             if not ctx.ffmpeg.has_audio(bed_path):
                 raise JobError("audio_bed_invalid", "The uploaded file has no audio stream.")
         source_audio = (ctx.ffmpeg.probe(source).has_audio
@@ -1032,7 +1035,7 @@ def _propose_upload(s: Session, p: Project, ctx: StudioContext, job: Job) -> Non
 
 
 HANDLERS: dict[str, Handler] = {
-    "image": image_job,
+    "image": image_job, "audio": audio_job,
     "extend": extend_job,
     "rights_check": rights_check,
     "ingest": ingest,

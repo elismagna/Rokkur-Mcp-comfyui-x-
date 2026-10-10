@@ -83,12 +83,15 @@
   </section>
   <section class="card"><h2>Sound</h2>
     <label class="check"><input type="checkbox" name="mute_source_audio" value="true"> Mute the original video's sound</label>
-    <label for="audio_bed_file">Add a music or effects track <span class="muted">optional</span></label>
+    <label for="audio_clip_id">Soundtrack from the sound library <span class="muted">optional</span></label>
+    <select id="audio_clip_id" name="audio_clip_id"><option value="">None</option>{% for c in library_sounds %}<option value="{{ c.id }}">{{ c.title or c.prompt|truncate(50) or c.kind }} · {{ '%.0f'|format(c.duration_s or 0) }} s</option>{% endfor %}</select>
+    <p class="hint">Make music or effects on the <a href="/ui/audio">Sound</a> page first, or add a file here. The soundtrack can also be set or changed later, on the project page, at any stage.</p>
+    <label for="audio_bed_file">Or add a music or effects file <span class="muted">optional</span></label>
     <input id="audio_bed_file" name="audio_bed_file" type="file" accept="audio/*,.m4a,.opus,.flac">
     <audio id="audio-preview" controls preload="metadata" hidden></audio>
     <label for="audio_bed_gain">Added track level <output id="audio-bed-value">25%</output></label>
     <input id="audio_bed_gain" name="audio_bed_gain" type="range" min="0" max="1" step="0.05" value="0.25">
-    <p class="hint">Original sound stays on by default. Add a generated or recorded music/effects file to mix underneath it. In-app sound generation is not enabled yet.</p>
+    <p class="hint">Original sound stays on by default; the added track is mixed underneath it at this level.</p>
     <label class="check"><input id="audio_bed_rights_confirmed" type="checkbox" name="audio_bed_rights_confirmed" value="true"> I have permission to use this added track</label>
     <label for="audio_bed_rights_evidence">Track license or permission details</label>
     <input id="audio_bed_rights_evidence" name="audio_bed_rights_evidence" maxlength="1000" placeholder="License, creator permission, or how you created it">

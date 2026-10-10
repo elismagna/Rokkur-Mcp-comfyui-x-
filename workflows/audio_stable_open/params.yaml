@@ -1,0 +1,28 @@
+# Stable Audio Open 1.0 sound effects and ambience, ComfyUI core nodes only.
+# Source: ComfyUI's audio example (https://comfyanonymous.github.io/ComfyUI_examples/audio/,
+#   stable_audio_example.flac carries the graph): CheckpointLoaderSimple (model + VAE),
+#   CLIPLoader t5_base type stable_audio, two CLIPTextEncode, ConditioningStableAudio
+#   (seconds_start/seconds_total), EmptyLatentAudio, KSampler dpmpp_3m_sde_gpu/exponential,
+#   VAEDecodeAudio, SaveAudio. Node and input names follow ComfyUI's comfy_extras/nodes_audio.py.
+# Models: checkpoints/stable_audio_open_1.0.safetensors (stabilityai/stable-audio-open-1.0,
+#   Stability AI Community License: free below US$1M yearly revenue, else a licence is needed)
+#   and text_encoders/t5_base.safetensors (google-t5/t5-base model.safetensors, Apache-2.0).
+# Best for sound effects, foley and ambience up to 47 s; weaker for full songs (use ACE-Step).
+# Untested on a real GPU (docs/audio.md).
+name: audio_stable_open
+version: 1
+description: Stable Audio Open 1.0 sound effects and ambience (up to 47 s)
+resource_class: GPU_MEDIUM
+input_kind: none
+output_kinds: [audio]
+parameters:
+  CHECKPOINT: {node: "1", input: ckpt_name, type: str, default: stable_audio_open_1.0.safetensors}
+  TEXT_ENCODER: {node: "2", input: clip_name, type: str, default: t5_base.safetensors}
+  PROMPT: {node: "3", input: text, type: str, required: true}
+  NEGATIVE_PROMPT: {node: "4", input: text, type: str, default: ""}
+  SECONDS: {targets: [{node: "5", input: seconds_total}, {node: "6", input: seconds}], type: float, default: 30, min: 1, max: 47}
+  BATCH: {node: "6", input: batch_size, type: int, default: 1, min: 1, max: 4}
+  SEED: {node: "7", input: seed, type: int, default: 0, min: 0}
+  STEPS: {node: "7", input: steps, type: int, default: 50, min: 1, max: 100}
+  CFG: {node: "7", input: cfg, type: float, default: 4.98, min: 0, max: 20}
+  OUTPUT_PREFIX: {node: "9", input: filename_prefix, type: str, default: rokkur/audio}

@@ -252,6 +252,36 @@ class ImageProfile(BaseModel):
                              f"{', '.join(sorted(self.workflows)) or 'nothing'}") from exc
 
 
+AUDIO_OPERATIONS = ("music", "sound")
+AudioOperation = Literal["music", "sound"]
+AUDIO_EDITS = ("trim", "fade", "gain", "normalize", "loop", "speed", "mix", "extract")
+
+
+class AudioSection(BaseModel):
+    """Sound: music and effects generation, FFmpeg editing, soundtracks (docs/audio.md)."""
+
+    music_profile: str = "ACE_STEP"
+    sound_profile: str = "STABLE_AUDIO"
+    default_seconds: float = Field(30, ge=1, le=600)
+    max_batch: int = Field(2, ge=1, le=4)
+    max_seconds: float = Field(240, ge=1, le=600)   # hard cap on top of each profile's own
+
+
+class AudioProfile(BaseModel):
+    """One audio profile from ``config/audio_profiles.yaml``: a model and its workflow."""
+
+    name: str = ""
+    description: str = ""
+    kind: AudioOperation = "music"
+    workflow: str
+    max_seconds: float = Field(47, ge=1, le=600)
+    steps: int = Field(50, ge=1, le=200)
+    cfg: float = Field(5.0, ge=0, le=30)
+    resource_class: ResourceClass = "GPU_HEAVY"
+    min_vram_gb: float = Field(0, ge=0)
+    degrade: list[str] = Field(default_factory=list)
+
+
 class RenderProfile(BaseModel):
     """One render profile from ``config/render_profiles.yaml``."""
 
@@ -297,8 +327,10 @@ class Settings(BaseModel):
     costs: CostsSection = CostsSection()
     jobs: JobsSection = JobsSection()
     images: ImagesSection = ImagesSection()
+    audio: AudioSection = AudioSection()
     profiles: dict[str, RenderProfile] = Field(default_factory=dict)
     image_profiles: dict[str, ImageProfile] = Field(default_factory=dict)
+    audio_profiles: dict[str, AudioProfile] = Field(default_factory=dict)
     config_dir: Path = Path("config")
     workflows_dir: Path = Path("workflows")
 
@@ -352,6 +384,49 @@ class Settings(BaseModel):
             problems = validate_against_object_info(template, object_info)
             if problems:
                 return f"workflow {workflow} is unavailable: {problems[0]}"
+        return None
+
+    def audio_profile(self, name: str) -> AudioProfile:
+        try:
+            return self.audio_profiles[name]
+        except KeyError as exc:
+            raise KeyError(f"unknown audio profile {name!r}; known: "
+                           f"{sorted(self.audio_profiles)}") from exc
+
+    def audio_profile_problem(self, name: str, *, object_info: dict[str, Any] | None = None,
+                              target: str = "local") -> str | None:
+        """Why an audio profile cannot generate right now, or None."""
+        from rokkur_studio.comfyui.compiler import (
+            TemplateError,
+            TemplateRegistry,
+            validate_against_object_info,
+        )
+
+        try:
+            profile = self.audio_profile(name)
+        except KeyError as exc:
+            return str(exc)
+        cloud = target == "cloud"
+        if cloud and not self.cloud.ready:
+            return ("Cloud rendering is not set up: set STUDIO_CLOUD__ENABLED and "
+                    "STUDIO_CLOUD__URL in .env (docs/cloud.md).")
+        if self.render.renderer != "comfyui":
+            return ("Sound generation needs the ComfyUI renderer (render.renderer: comfyui); "
+                    "editing sound with FFmpeg works without it.")
+        vram = self.cloud.vram_gb if cloud else self.gpu.vram_gb
+        if profile.min_vram_gb > vram:
+            where = "the cloud server is" if cloud else "this studio is"
+            return f"Needs {profile.min_vram_gb:g} GB VRAM; {where} configured for {vram:g} GB."
+        try:
+            template = TemplateRegistry(self.workflows_dir).get(profile.workflow)
+        except (TemplateError, OSError, ValueError) as exc:
+            return str(exc)
+        except Exception as exc:  # a YAML typo in params.yaml: report it, don't 500
+            return f"workflow {profile.workflow} could not be loaded: {exc}"
+        if object_info is not None:
+            problems = validate_against_object_info(template, object_info)
+            if problems:
+                return f"workflow {profile.workflow} is unavailable: {problems[0]}"
         return None
 
     def profile(self, name: str) -> RenderProfile:
@@ -424,7 +499,8 @@ def env_overrides(environ: dict[str, str]) -> dict[str, Any]:
         if not name.startswith(ENV_PREFIX) or "__" not in name:
             continue
         parts = name[len(ENV_PREFIX):].split("__")
-        keys = [k if i > 0 and parts[i - 1].lower() in ("profiles", "image_profiles")
+        keys = [k if i > 0 and parts[i - 1].lower() in ("profiles", "image_profiles",
+                                                           "audio_profiles")
                 else k.lower() for i, k in enumerate(parts)]  # profile names keep their case
         # a token stays text: YAML would turn "1234" into a number and "a: b" into a mapping
         value = raw if keys[-1] in _TEXT_KEYS or raw == "" else yaml.safe_load(raw)
@@ -463,6 +539,12 @@ def load_settings(
             "profiles", {})
         raw["image_profiles"] = {name: {**p, "name": name}
                                  for name, p in image_profiles.items()}
+    audio_file = config_dir / "audio_profiles.yaml"
+    if audio_file.exists():
+        audio_profiles = (yaml.safe_load(audio_file.read_text(encoding="utf-8")) or {}).get(
+            "profiles", {})
+        raw["audio_profiles"] = {name: {**p, "name": name}
+                                 for name, p in audio_profiles.items()}
     raw = _merge(raw, env_overrides(environ))
     raw.setdefault("config_dir", str(config_dir))
     if "STUDIO_WORKFLOWS_DIR" in environ:

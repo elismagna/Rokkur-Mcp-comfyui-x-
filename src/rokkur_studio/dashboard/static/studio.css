@@ -408,3 +408,18 @@ a.now:hover, a.card:hover, a.callout:hover { text-decoration: none; border-color
 .characters { display: grid; gap: 10px; margin-top: 12px }
 .character-card { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: start; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-2) }
 .character-card img { width: 96px; height: 96px; object-fit: contain; border-radius: 8px; background: #fff }
+
+/* sound */
+.aud-stage { background: var(--bg-2); border-radius: 14px; border: 1px solid var(--line); min-height: 200px; display: flex; flex-direction: column; gap: 12px; justify-content: center; padding: 14px; overflow: hidden }
+.wave { display: block; width: 100%; height: auto; border-radius: 8px; background: var(--bg) }
+.wave.small { height: 48px; object-fit: cover }
+.aud-list { display: grid; gap: 10px }
+.aud-card { display: block; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--bg-2); color: var(--fg); padding: 8px; transition: border-color .15s }
+.aud-card:hover { border-color: var(--line-2); text-decoration: none }
+.aud-card.on { border-color: var(--ember); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ember) 35%, transparent) }
+.aud-card .img-placeholder { height: 48px; flex-direction: row }
+.aud-cap { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px }
+.aud-cap .truncate { flex: 1; min-width: 0 }
+.aud-cap .good { color: var(--like) } .aud-cap .poor { color: var(--hate) } .aud-cap .i { width: 14px; height: 14px }
+.aud-pick { display: grid; gap: 4px; max-height: 220px; overflow: auto; padding: 4px 2px }
+.aud-pick .check { margin: 0 }

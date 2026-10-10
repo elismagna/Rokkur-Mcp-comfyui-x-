@@ -12,7 +12,7 @@ from rokkur_studio.config import Settings, project_target
 from rokkur_studio.db.models import ApprovalRequest, Channel, Job, Project, Render, utcnow
 from rokkur_studio.domain.rights import RightsCategory, RightsStatus
 from rokkur_studio.domain.states import TERMINAL, InvalidTransition, ProjectStatus
-from rokkur_studio.jobs.queue import cancel_project_jobs
+from rokkur_studio.jobs.queue import cancel_project_jobs, enqueue
 from rokkur_studio.manifest.schema import ReconstructionManifest
 from rokkur_studio.pipeline.driver import advance
 from rokkur_studio.services import ratings
@@ -322,6 +322,68 @@ def adjust_remaining_shots(session: Session, project: Project, *, changes: dict[
                        "reference": reference_image, "clear_reference": clear_reference})
     return {"shots": remaining, "changes": applied, "manifest_version": doc.version,
             "rendered_untouched": sorted(done)}
+
+
+def set_soundtrack(session: Session, project: Project, settings: Settings, *, actor: str,
+                   bed_path: str | None, rights: str | None, clip_id: str | None = None,
+                   gain: float | None = None, keep_source_audio: bool | None = None
+                   ) -> dict[str, Any]:
+    """Give a video its soundtrack at any stage (docs/audio.md).
+
+    ``bed_path`` is a sound file (a clip from the sound library or an upload) mixed under the
+    original sound in the edit stage, or None to remove the added track; ``rights`` says where
+    it comes from. Before the edit stage the choice is saved and used when the edit runs. On a
+    finished video the edit runs again now and the new final replaces the old one; the earlier
+    final stays in Renders. A published video keeps its sound.
+    """
+    status = project.status
+    if status in (S.PUBLISHED.value, S.MONITORING.value):
+        raise InvalidTransition(S(status), S.EDITING,
+                                "a published video keeps its sound; make a new video for a "
+                                "different soundtrack")
+    if status in (S.EDITING.value, S.PUBLISHING.value, S.ARCHIVED.value, S.CANCELLED.value):
+        raise InvalidTransition(S(status), S.EDITING, f"the soundtrack cannot change in {status}")
+    if bed_path and not (rights or "").strip():
+        raise ValueError("Say where the soundtrack comes from (its rights or how it was made).")
+    creative = dict(project.creative_input or {})
+    changes: dict[str, Any] = {}
+    if bed_path:
+        changes.update(audio_bed_path=bed_path, audio_bed_rights_confirmed=True,
+                       audio_bed_rights_evidence=(rights or "").strip(), audio_clip_id=clip_id)
+    else:
+        for key in ("audio_bed_path", "audio_bed_rights_confirmed", "audio_bed_rights_evidence",
+                    "audio_clip_id"):
+            creative.pop(key, None)
+        changes["audio_bed_path"] = None
+    if gain is not None:
+        if not 0 <= gain <= 2:
+            raise ValueError("the track level is between 0 and 2")
+        changes["audio_bed_gain"] = gain
+    if keep_source_audio is not None:
+        changes["keep_source_audio"] = keep_source_audio
+    creative.update({k: v for k, v in changes.items() if v is not None or k == "audio_bed_path"})
+    if creative.get("audio_bed_path") is None:
+        creative.pop("audio_bed_path", None)
+    project.creative_input = creative
+    re_edit = status == S.READY_TO_PUBLISH.value
+    job = None
+    if re_edit:
+        for req in session.query(ApprovalRequest).filter_by(project_id=project.id, kind="publish",
+                                                            status="pending"):
+            req.status, req.decided_by, req.decided_at = "rejected", actor, utcnow()
+            req.note = "superseded: the soundtrack changed, a new video will be proposed"
+        transition(session, project, S.EDITING, actor=actor, reason="soundtrack changed",
+                   data=changes)
+        job = enqueue(session, "edit", project_id=project.id, stage=S.EDITING.value,
+                      dedupe_key=f"{project.id}:stage",
+                      max_attempts=settings.jobs.default_max_attempts)
+    elif status == S.FAILED.value:
+        pass  # saved; it is used when the video is resumed and reaches the edit stage
+    record_event(session, EventType.SOUNDTRACK_SET, project_id=project.id, actor=actor,
+                 job_id=job.id if job else None,
+                 data={**changes, "re_edit": re_edit, "state": status})
+    return {"changes": changes, "re_edit": re_edit, "job_id": job.id if job else None,
+            "state": project.status}
 
 
 def decide_rights(session: Session, project: Project, settings: Settings, *, approve: bool,

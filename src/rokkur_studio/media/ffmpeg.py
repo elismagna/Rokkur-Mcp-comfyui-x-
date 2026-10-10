@@ -62,6 +62,25 @@ class MediaInfo:
 
 
 @dataclass
+class AudioInfo:
+    path: str
+    duration: float
+    sample_rate: int
+    channels: int
+    codec: str | None = None
+    has_video: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self.__dict__)
+
+
+_AUDIO_CODECS = {".flac": ["-c:a", "flac"], ".wav": ["-c:a", "pcm_s16le"],
+                 ".mp3": ["-c:a", "libmp3lame", "-q:a", "2"], ".m4a": ["-c:a", "aac", "-b:a", "192k"],
+                 ".aac": ["-c:a", "aac", "-b:a", "192k"], ".ogg": ["-c:a", "libvorbis", "-q:a", "6"],
+                 ".opus": ["-c:a", "libopus", "-b:a", "128k"]}
+
+
+@dataclass
 class FFmpeg:
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
@@ -382,4 +401,152 @@ class FFmpeg:
         # FFmpeg-version-dependent rounding from changing the fixture's frame rate.
         args += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps), "-t", str(seconds)]
         self._run(self._ff(*args, str(out)))
+        return out
+
+    # -- sound ------------------------------------------------------------------------------
+    def audio_info(self, path: Path) -> AudioInfo:
+        """The first audio stream of a file (a sound file or a video with sound)."""
+        cmd = [self.ffprobe_bin, "-v", "error", "-print_format", "json", "-show_format",
+               "-show_streams", str(path)]
+        data = json.loads(self._run(cmd).stdout or b"{}")
+        streams = data.get("streams", [])
+        audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+        if audio is None:
+            raise FFmpegError(cmd, 0, f"no audio stream in {path}")
+        duration = float(audio.get("duration") or _tag_seconds(audio.get("tags", {}))
+                         or data.get("format", {}).get("duration") or 0)
+        return AudioInfo(path=str(path), duration=duration,
+                         sample_rate=int(audio.get("sample_rate") or 0),
+                         channels=int(audio.get("channels") or 0), codec=audio.get("codec_name"),
+                         has_video=any(s.get("codec_type") == "video"
+                                       and s.get("disposition", {}).get("attached_pic", 0) == 0
+                                       for s in streams))
+
+    def _audio_out(self, out: Path) -> list[str]:
+        return [*_AUDIO_CODECS.get(out.suffix.lower(), ["-c:a", "flac"]), str(out)]
+
+    def transcode_audio(self, path: Path, out: Path, *, filters: list[str] | None = None,
+                        start: float | None = None, end: float | None = None,
+                        sample_rate: int | None = None) -> Path:
+        """Write ``path``'s sound as ``out`` (format from its suffix), optionally cut to
+        ``start``..``end`` seconds and filtered. Video streams are dropped."""
+        args = []
+        if start is not None:
+            args += ["-ss", f"{max(0.0, start):.3f}"]
+        args += ["-i", str(path), "-vn", "-map", "0:a:0"]
+        if end is not None:
+            args += ["-t", f"{max(0.01, end - (start or 0.0)):.3f}"]
+        if filters:
+            args += ["-af", ",".join(filters)]
+        if sample_rate:
+            args += ["-ar", str(sample_rate)]
+        self._run(self._ff(*args, *self._audio_out(out)))
+        return out
+
+    def trim_audio(self, path: Path, out: Path, *, start: float, end: float) -> Path:
+        if end <= start:
+            raise ValueError("the end must come after the start")
+        return self.transcode_audio(path, out, start=start, end=end)
+
+    def fade_audio(self, path: Path, out: Path, *, fade_in: float = 0.0,
+                   fade_out: float = 0.0) -> Path:
+        info = self.audio_info(path)
+        filters = []
+        if fade_in > 0:
+            filters.append(f"afade=t=in:st=0:d={min(fade_in, info.duration):.3f}")
+        if fade_out > 0:
+            d = min(fade_out, info.duration)
+            filters.append(f"afade=t=out:st={max(0.0, info.duration - d):.3f}:d={d:.3f}")
+        return self.transcode_audio(path, out, filters=filters or None)
+
+    def gain_audio(self, path: Path, out: Path, *, db: float) -> Path:
+        return self.transcode_audio(path, out, filters=[f"volume={db:.2f}dB"])
+
+    def normalize_audio(self, path: Path, out: Path, *, lufs: float = -14.0) -> Path:
+        """Loudness-normalise to ``lufs`` (EBU R128; -14 is what streaming sites play at)."""
+        return self.transcode_audio(path, out, filters=[f"loudnorm=I={lufs}:TP=-1.5:LRA=11"])
+
+    def loop_audio(self, path: Path, out: Path, *, seconds: float, crossfade: float = 0.0
+                   ) -> Path:
+        """Repeat a clip until it lasts ``seconds``, with a short fade at the end."""
+        if seconds <= 0:
+            raise ValueError("seconds must be positive")
+        filters = []
+        if crossfade > 0:
+            filters.append(f"afade=t=out:st={max(0.0, seconds - crossfade):.3f}:d={crossfade:.3f}")
+        args = ["-stream_loop", "-1", "-i", str(path), "-vn", "-map", "0:a:0", "-t", f"{seconds:.3f}"]
+        if filters:
+            args += ["-af", ",".join(filters)]
+        self._run(self._ff(*args, *self._audio_out(out)))
+        return out
+
+    def speed_audio(self, path: Path, out: Path, *, factor: float, keep_pitch: bool = True) -> Path:
+        """Play ``factor`` times faster (slower below 1). ``keep_pitch`` stretches time only;
+        otherwise the pitch changes with the speed, like a tape."""
+        if not 0.25 <= factor <= 4:
+            raise ValueError("speed must be between 0.25 and 4")
+        if keep_pitch:
+            filters, remaining = [], factor
+            while remaining < 0.5:      # atempo takes 0.5..100 per stage
+                filters.append("atempo=0.5")
+                remaining /= 0.5
+            filters.append(f"atempo={remaining:.4f}")
+        else:
+            rate = self.audio_info(path).sample_rate or 48000
+            filters = [f"asetrate={rate * factor:.0f}", f"aresample={rate}"]
+        return self.transcode_audio(path, out, filters=filters)
+
+    def mix_audios(self, paths: list[Path], out: Path, *, volumes: list[float] | None = None,
+                   duration: str = "longest", offsets: list[float] | None = None) -> Path:
+        """Mix clips on top of each other. ``offsets`` delay each clip's start (seconds);
+        ``duration`` is ``longest``, ``shortest`` or ``first``."""
+        if len(paths) < 2:
+            raise ValueError("mixing needs at least two clips")
+        if duration not in ("longest", "shortest", "first"):
+            raise ValueError("duration is longest, shortest or first")
+        volumes = volumes or [1.0] * len(paths)
+        offsets = offsets or [0.0] * len(paths)
+        args: list[str] = []
+        chain: list[str] = []
+        for i, path in enumerate(paths):
+            args += ["-i", str(path)]
+            steps = [f"volume={volumes[i]:.3f}"]
+            if offsets[i] > 0:
+                ms = int(offsets[i] * 1000)
+                steps.append(f"adelay={ms}|{ms}")
+            chain.append(f"[{i}:a:0]{','.join(steps)}[a{i}]")
+        labels = "".join(f"[a{i}]" for i in range(len(paths)))
+        chain.append(f"{labels}amix=inputs={len(paths)}:duration={duration}:dropout_transition=2:"
+                     "normalize=0,alimiter=limit=0.95[aout]")
+        self._run(self._ff(*args, "-filter_complex", ";".join(chain), "-map", "[aout]",
+                           *self._audio_out(out)))
+        return out
+
+    def concat_audio(self, paths: list[Path], out: Path) -> Path:
+        """Play clips one after another."""
+        if len(paths) < 2:
+            raise ValueError("joining needs at least two clips")
+        args: list[str] = []
+        for path in paths:
+            args += ["-i", str(path)]
+        chain = "".join(f"[{i}:a:0]" for i in range(len(paths)))
+        chain += f"concat=n={len(paths)}:v=0:a=1[aout]"
+        self._run(self._ff(*args, "-filter_complex", chain, "-map", "[aout]",
+                           *self._audio_out(out)))
+        return out
+
+    def waveform(self, path: Path, out: Path, *, width: int = 900, height: int = 160,
+                 colour: str = "0xf2a65a") -> Path:
+        """A picture of the sound's waveform (what a person sees of a clip on a page)."""
+        self._run(self._ff("-i", str(path), "-filter_complex",
+                           f"[0:a:0]aformat=channel_layouts=mono,showwavespic=s={width}x{height}:"
+                           f"colors={colour}:scale=sqrt[v]", "-map", "[v]", "-frames:v", "1",
+                           str(out)))
+        return out
+
+    def make_test_audio(self, out: Path, *, seconds: float = 3, frequency: int = 440,
+                        sample_rate: int = 44100) -> Path:
+        """Synthetic, rights-free tone fixture."""
+        self._run(self._ff("-f", "lavfi", "-i", f"sine=frequency={frequency}:duration={seconds}"
+                           f":sample_rate={sample_rate}", "-ac", "2", *self._audio_out(out)))
         return out

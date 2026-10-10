@@ -705,6 +705,96 @@ def cmd_image(args: argparse.Namespace) -> int:
                     for i in ids) else 1
 
 
+def cmd_audio(args: argparse.Namespace) -> int:
+    """Queue music or a sound effect; --wait makes it in this process."""
+    from rokkur_studio.db.models import AudioClip
+    from rokkur_studio.jobs.worker import Worker
+    from rokkur_studio.pipeline.context import build_context
+    from rokkur_studio.services import audio as svc
+    from rokkur_studio.services.audio import AudioRequest, AudioStore
+
+    settings = _settings(args)
+    ctx = build_context(settings)
+    store = AudioStore(settings.studio.data_dir)
+    lyrics = Path(args.lyrics).read_text(encoding="utf-8") if args.lyrics else ""
+    request = AudioRequest(
+        operation=args.op, prompt=args.prompt, lyrics=lyrics, negative_prompt=args.avoid or "",
+        seconds=args.seconds, count=args.count, steps=args.steps, cfg=args.cfg, seed=args.seed,
+        profile=args.profile, render_on="cloud" if args.cloud else None,
+        project_id=args.project, title=args.title or "")
+    try:
+        with ctx.db.transaction() as s:
+            rows = svc.request_audio(s, settings, store, request, actor="cli")
+            ids = [r.id for r in rows]
+    except (ValueError, LookupError) as exc:
+        print(f"error: {exc}")
+        return 1
+    print(f"queued {len(ids)} clip(s): {' '.join(ids)}")
+    if not args.wait:
+        print("A running worker makes them; `rokkur-studio audio-list` shows the result.")
+        return 0
+    Worker(ctx, kinds=["audio"], worker_id="cli-audio").drain(max_jobs=1)
+    ok = True
+    with ctx.db.session() as s:
+        for clip_id in ids:
+            row = s.get(AudioClip, clip_id)
+            if row is None:
+                continue
+            where = store.path_for(row.rel_path) if row.rel_path else ""
+            detail = (row.error or {}).get("message", "") if row.status != "done" else str(where)
+            ok = ok and row.status == "done"
+            print(f"  {row.id}  {row.status:<8} {detail}")
+    return 0 if ok else 1
+
+
+def cmd_audio_edit(args: argparse.Namespace) -> int:
+    """Trim, fade, change the level or loudness, loop, speed up, mix, join or extract."""
+    from rokkur_studio.pipeline.context import build_context
+    from rokkur_studio.services import audio as svc
+    from rokkur_studio.services.audio import AudioEdit, AudioStore
+
+    settings = _settings(args)
+    ctx = build_context(settings)
+    clips = [c for c in args.clips if c.startswith("aud_")]
+    files = [c for c in args.clips if not c.startswith("aud_")]
+    if len(files) > 1:
+        print("error: one file at a time; put other inputs into the library first")
+        return 1
+    many = args.op in ("mix", "concat")
+    edit = AudioEdit(
+        operation=args.op, source_id=clips[0] if len(clips) == 1 and not many else None,
+        source_ids=clips if many else [],
+        source_path=files[0] if files else None, start=args.start, end=args.end,
+        fade_in=args.fade_in, fade_out=args.fade_out, db=args.db, lufs=args.lufs,
+        seconds=args.seconds, crossfade=args.crossfade, factor=args.factor,
+        keep_pitch=not args.change_pitch,
+        volumes=[float(v) for v in (args.volumes or "").split(",") if v.strip()],
+        offsets=[float(v) for v in (args.offsets or "").split(",") if v.strip()],
+        title=args.title or "", rights_confirmed=bool(args.rights), rights_evidence=args.rights or "")
+    try:
+        with ctx.db.transaction() as s:
+            clip = svc.edit_audio(s, AudioStore(settings.studio.data_dir), ctx.ffmpeg, edit, actor="cli")
+            print(f"{clip.id}  {clip.kind:<10} {clip.duration_s} s  "
+                  f"{AudioStore(settings.studio.data_dir).path_for(clip.rel_path or '')}")
+    except (ValueError, LookupError) as exc:
+        print(f"error: {exc}")
+        return 1
+    return 0
+
+
+def cmd_audio_list(args: argparse.Namespace) -> int:
+    from rokkur_studio.db.session import Database
+    from rokkur_studio.services import audio as svc
+
+    settings = _settings(args)
+    db = Database(settings.database.url)
+    with db.session() as s:
+        for row in svc.list_clips(s, limit=args.limit):
+            length = f"{row.duration_s:.1f}s" if row.duration_s else "?"
+            print(f"{row.id}  {row.status:<8} {row.kind:<10} {length:>8}  {row.title or row.prompt[:60]}")
+    return 0
+
+
 def cmd_image_list(args: argparse.Namespace) -> int:
     from rokkur_studio.db.session import Database
     from rokkur_studio.services import images as svc
@@ -816,6 +906,45 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("image-list", help="list the picture library")
     p.add_argument("--limit", type=int, default=30)
     p.set_defaults(func=cmd_image_list)
+    p = sub.add_parser("audio", help="make music (ACE-Step) or a sound effect (Stable Audio Open)")
+    p.add_argument("prompt", help="music: style tags; sound: what it sounds like")
+    p.add_argument("--op", default="music", choices=["music", "sound"])
+    p.add_argument("--lyrics", help="music: a text file with the lyrics ([verse], [chorus]…)")
+    p.add_argument("--avoid", help="sound: what to avoid (negative prompt)")
+    p.add_argument("--seconds", type=float)
+    p.add_argument("--count", type=int, default=1)
+    p.add_argument("--steps", type=int)
+    p.add_argument("--cfg", type=float)
+    p.add_argument("--seed", type=int)
+    p.add_argument("--profile")
+    p.add_argument("--project", help="the video this sound is for")
+    p.add_argument("--title")
+    p.add_argument("--cloud", action="store_true", help="render on the cloud server")
+    p.add_argument("--wait", action="store_true", help="make it in this process instead of a worker")
+    p.set_defaults(func=cmd_audio)
+    p = sub.add_parser("audio-edit", help="trim, fade, level, loudness, loop, speed, mix, join or "
+                                          "extract a clip's sound with FFmpeg")
+    p.add_argument("op", choices=["trim", "fade", "gain", "normalize", "loop", "speed", "mix",
+                                  "concat", "extract"])
+    p.add_argument("clips", nargs="+", help="library clip ids (aud_…) or one file you may use")
+    p.add_argument("--rights", help="for a file: where it comes from")
+    p.add_argument("--start", type=float, default=0.0)
+    p.add_argument("--end", type=float)
+    p.add_argument("--fade-in", type=float, default=0.0)
+    p.add_argument("--fade-out", type=float, default=0.0)
+    p.add_argument("--db", type=float, default=0.0, help="gain: change in decibels")
+    p.add_argument("--lufs", type=float, default=-14.0, help="normalize: target loudness")
+    p.add_argument("--seconds", type=float, help="loop: the length to reach")
+    p.add_argument("--crossfade", type=float, default=0.5)
+    p.add_argument("--factor", type=float, default=1.0, help="speed: 2 = twice as fast")
+    p.add_argument("--change-pitch", action="store_true", help="speed: let the pitch change too")
+    p.add_argument("--volumes", help="mix: levels per clip, e.g. 1,0.4")
+    p.add_argument("--offsets", help="mix: start offsets in seconds, e.g. 0,2.5")
+    p.add_argument("--title")
+    p.set_defaults(func=cmd_audio_edit)
+    p = sub.add_parser("audio-list", help="list the sound library")
+    p.add_argument("--limit", type=int, default=30)
+    p.set_defaults(func=cmd_audio_list)
     p = sub.add_parser("prompt-schedule", help="print a project's Batch Prompt Schedule")
     p.add_argument("project_id")
     p.set_defaults(func=cmd_prompt_schedule)

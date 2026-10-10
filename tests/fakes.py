@@ -27,6 +27,20 @@ def _png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
 PNG_32 = _png(32, 32, (120, 80, 200))
 
 
+def _wav(seconds: float, rate: int = 8000, frequency: float = 220.0) -> bytes:
+    """A mono 16-bit tone of ``seconds``; what the fake serves for a generated clip."""
+    import math
+    import struct
+
+    n = int(seconds * rate)
+    samples = b"".join(struct.pack("<h", int(12000 * math.sin(2 * math.pi * frequency * i / rate)))
+                       for i in range(n))
+    header = (b"RIFF" + struct.pack("<I", 36 + len(samples)) + b"WAVEfmt "
+              + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+              + b"data" + struct.pack("<I", len(samples)))
+    return header + samples
+
+
 class FakeComfyUI:
     """Implements the subset of ComfyUI's HTTP API that Studio uses.
 
@@ -45,6 +59,7 @@ class FakeComfyUI:
         self.deleted: list[str] = []
         self.object_info_data = object_info or {}
         self.image_sources: dict[str, str | None] = {}
+        self.audio_seconds: dict[str, float] = {}
         self.down = False
 
     def transport(self) -> httpx.MockTransport:
@@ -61,6 +76,9 @@ class FakeComfyUI:
                                              "exception_message": msg, "traceback": []}])
             self.history_store[prompt_id] = {"prompt": [], "outputs": {}, "status": {
                 "status_str": "error", "completed": False, "messages": msgs}}
+            return
+        if any(n["class_type"] == "SaveAudio" for n in workflow.values()):
+            self._complete_audio(prompt_id, workflow, msgs)
             return
         if not any(n["class_type"] == "LoadVideo" for n in workflow.values()):
             self._complete_images(prompt_id, workflow, msgs)
@@ -89,6 +107,20 @@ class FakeComfyUI:
         msgs.append(["execution_success", {"prompt_id": prompt_id, "timestamp": 2200}])
         self.history_store[prompt_id] = {"prompt": [], "outputs": {"9": {"images": [
             {"filename": f"img_{prompt_id}_{i:05d}.png", "subfolder": "rokkur", "type": "output"}
+            for i in range(1, batch + 1)]}}, "status": {
+            "status_str": "success", "completed": True, "messages": msgs}}
+
+    def _complete_audio(self, prompt_id: str, workflow: dict[str, Any], msgs: list[Any]) -> None:
+        """A sound graph: one FLAC per clip in the batch, as long as the latent asks for."""
+        batch, seconds = 1, 1.0
+        for n in workflow.values():
+            if n["class_type"] in ("EmptyAceStepLatentAudio", "EmptyLatentAudio"):
+                batch = int(n["inputs"].get("batch_size", 1))
+                seconds = float(n["inputs"].get("seconds", 1.0))
+        self.audio_seconds[prompt_id] = seconds
+        msgs.append(["execution_success", {"prompt_id": prompt_id, "timestamp": 2600}])
+        self.history_store[prompt_id] = {"prompt": [], "outputs": {"60": {"audio": [
+            {"filename": f"aud_{prompt_id}_{i:05d}.flac", "subfolder": "rokkur", "type": "output"}
             for i in range(1, batch + 1)]}}, "status": {
             "status_str": "success", "completed": True, "messages": msgs}}
 
@@ -143,6 +175,9 @@ class FakeComfyUI:
             return httpx.Response(200, json={})
         if path == "/view":
             filename = request.url.params["filename"]
+            if filename.startswith("aud_"):
+                pid = filename[4:].rsplit("_", 1)[0]
+                return httpx.Response(200, content=_wav(min(self.audio_seconds.get(pid, 1.0), 60)))
             if filename.startswith("img_"):
                 pid = filename[4:].rsplit("_", 1)[0]
                 source = self.image_sources.get(pid)

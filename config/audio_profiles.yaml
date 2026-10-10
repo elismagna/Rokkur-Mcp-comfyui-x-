@@ -1,0 +1,26 @@
+# Audio profiles: which workflow template makes each kind of sound (docs/audio.md).
+# A profile is one model. "kind" is what it is good at: music (songs, scores with optional
+# lyrics) or sound (effects, foley, ambience). max_seconds caps one clip; "degrade" is the
+# CUDA-OOM ladder: each step once, never the same work twice.
+profiles:
+  ACE_STEP:
+    description: ACE-Step v1 3.5B (Apache-2.0) music from style tags and optional lyrics, up to 4 minutes
+    kind: music
+    workflow: audio_ace_step
+    max_seconds: 240
+    steps: 50
+    cfg: 5.0
+    resource_class: GPU_HEAVY
+    min_vram_gb: 0          # about 7 GB in fp16; ComfyUI offloads the rest on an 8 GB card
+    degrade: [clear_cache, single_clip, shorter]
+
+  STABLE_AUDIO:
+    description: Stable Audio Open 1.0 (Stability AI Community License) sound effects and ambience, up to 47 s
+    kind: sound
+    workflow: audio_stable_open
+    max_seconds: 47
+    steps: 50
+    cfg: 4.98
+    resource_class: GPU_MEDIUM
+    min_vram_gb: 0
+    degrade: [clear_cache, single_clip, shorter]

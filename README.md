@@ -49,12 +49,19 @@ effective Wan controls, timing fixes, render comparisons and real RTX 3070 findi
 - **Home**: what is rendering right now, what needs you, finished videos with your verdicts,
   shots waiting for a rating, and whether ComfyUI, Ollama and YouTube are reachable.
 - **New video**: pick a clip from the `media` folder (or upload one), describe the look,
-  declare the rights, choose the quality, start.
+  declare the rights, choose the quality, start. Find the characters in the clip first,
+  extend the clip first, pick a soundtrack from the sound library, or tick Stable mode for
+  coherent shots.
+- **Pictures**: make, change, repaint, extend, upscale and vary still pictures through the
+  same ComfyUI; use them as video references and thumbnails (`docs/images.md`).
+- **Sound**: make music and sound effects, shape any clip (trim, fade, level, loudness, loop,
+  speed, mix, join), and set a video's soundtrack at any stage (`docs/audio.md`).
 - **Project page**: rate the video and every shot (render, original or side by side), pick
   shots to redo, pipeline progress, the final video, the model-written brief with each
   shot's frame, framing and prompt, the prompt schedule, QC scores, and an editable
   title/description/tags with Dry run and Upload to YouTube buttons: upload now, or private
-  now and public at a set time, optionally into a playlist.
+  now and public at a set time, optionally into a playlist. While it renders, adjust the
+  shots still to come; when it is done, extend it or change its soundtrack.
 - **Your taste**: what your ratings say you like and dislike, how settings did, where QC
   disagrees with you, suggestions for the next video, and a queue of shots to rate.
 - **Director**: the global look, your characters, the allowed cinematography terms, and a
@@ -111,7 +118,7 @@ curl -X POST localhost:8400/projects -H 'content-type: application/json' -d '{
 ## Commands
 
 `make up | down | logs | test | migrate | studio | worker | comfy-check | agent-check |
-render | youtube-auth | publish | youtube-playlists | prompt-schedule | taste | smoke-test | audit | lint` — or the same
+render | image | image-list | audio | audio-edit | audio-list | youtube-auth | publish | youtube-playlists | prompt-schedule | taste | smoke-test | audit | lint` — or the same
 names via `scripts\studio.ps1`.
 
 ## Documentation
@@ -124,6 +131,10 @@ names via `scripts\studio.ps1`.
 - `docs/subject.md` – keeping the real main subject or restyling it, and how the app decides
 - `docs/ratings.md` – your ratings, redo, and the taste profile built from them
 - `docs/cloud.md` – render a video on a cloud ComfyUI server instead of this PC
+- `docs/images.md` – the picture studio: generate, change, repaint, extend, upscale, characters, storyboards
+- `docs/audio.md` – the sound studio: music and effects generation, editing, soundtracks at any stage
+- `docs/stability.md` – Stable mode and changing the shots still to render
+- `docs/video-tools.md` – extending a clip or a finished video with Wan VACE
 - `docs/ROKKUR_ENTERPRISE.md` – where Rökkur is going: the vision prompt and what works today
 - `docs/research/` – online research behind the workflows (official templates, Civitai)
 - `docs/architecture.md`, `docs/state-machine.md`, `docs/comfyui.md`, `docs/agents.md`,

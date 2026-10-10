@@ -60,8 +60,15 @@ foreach ($name in $Files.Keys) {
 # Optional: the picture models (docs/images.md). FLUX.2 [klein] 4B fp8 (Apache-2.0) from
 # huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8, its VAE from Comfy-Org/flux2-dev,
 # Z-Image's VAE from Comfy-Org/z_image_turbo, RealESRGAN x4plus (BSD-3) from the Real-ESRGAN releases.
+# Optional: the sound models (docs/audio.md). ACE-Step v1 3.5B (Apache-2.0) from
+# huggingface.co/Comfy-Org/ACE-Step_ComfyUI_repackaged, Stable Audio Open 1.0 (Stability AI
+# Community License, gated download) from stabilityai/stable-audio-open-1.0, and its T5-base
+# text encoder (google-t5/t5-base model.safetensors, renamed t5_base.safetensors).
 $Optional = [ordered]@{
   "Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors" = "loras"
+  "ace_step_v1_3.5b.safetensors" = "checkpoints"
+  "stable_audio_open_1.0.safetensors" = "checkpoints"
+  "t5_base.safetensors" = "text_encoders"
   "flux-2-klein-4b-fp8.safetensors" = "diffusion_models"
   "flux2-vae.safetensors" = "vae"
   "ae.safetensors" = "vae"
@@ -72,7 +79,7 @@ foreach ($name in $Optional.Keys) {
   if (Test-Path $dest) { Write-Host "  [in place] $($Optional[$name])\$name (optional)"; continue }
   $src = Get-ChildItem -Path $From -Filter $name -Recurse -File -Depth 3 -ErrorAction SilentlyContinue |
     Select-Object -First 1
-  if (-not $src) { Write-Host "  [optional, not found] $name (RTX3070_DRAFT or the picture profiles)"; continue }
+  if (-not $src) { Write-Host "  [optional, not found] $name (RTX3070_DRAFT, the picture or the sound profiles)"; continue }
   New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
   Move-Item -Path $src.FullName -Destination $dest
   Write-Host "  [moved] $name -> $($Optional[$name])\"

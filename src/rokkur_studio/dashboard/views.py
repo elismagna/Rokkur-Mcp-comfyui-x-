@@ -46,6 +46,7 @@ from rokkur_studio.config import Settings, project_target
 from rokkur_studio.db.models import (
     ApprovalRequest,
     Asset,
+    AudioClip,
     CostEntry,
     Event,
     Image,
@@ -70,6 +71,7 @@ from rokkur_studio.director.prompt_editor import (
 from rokkur_studio.director.prompts import Weights, preview
 from rokkur_studio.director.vocabulary import VOCABULARY
 from rokkur_studio.domain.rights import RightsCategory
+from rokkur_studio.domain.states import InvalidTransition
 from rokkur_studio.domain.states import ProjectStatus as S
 from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline.context import StudioContext, profile_availability, supported_controls
@@ -81,10 +83,12 @@ from rokkur_studio.pipeline.subject import (
     decide_subject,
     resize,
 )
+from rokkur_studio.services import audio as audio_svc
 from rokkur_studio.services import characters as character_svc
 from rokkur_studio.services import commands, publishing, ratings, taste
 from rokkur_studio.services import images as image_svc
 from rokkur_studio.services.assets import import_file
+from rokkur_studio.services.audio import OPERATION_HINTS, AudioEdit, AudioRequest, AudioStore
 from rokkur_studio.services.images import SIZE_PRESETS, ImageRequest, ImageStore
 from rokkur_studio.services.projects import (
     at_budget_limit,
@@ -370,7 +374,7 @@ def new_page(request: Request, ctx: Ctx, session: Db, reference_image: str = "",
             reference = {"id": picture.id, "title": picture.title or picture.prompt or picture.kind,
                          "path": str(_images(ctx).path_for(picture.rel_path))}
     return _page(request, "new.html", ctx, media=media_files(ctx), reference=reference,
-                 source_video=source_video,
+                 source_video=source_video, library_sounds=_library_sounds(session),
                  suggestions=taste.suggestions(profile), taste=profile,
                  profile_status=profile_availability(ctx),
                  cloud=cloud if cloud.ready else None,
@@ -541,6 +545,7 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                      source_file: Annotated[UploadFile | None, File()] = None,
                      reference_file: Annotated[UploadFile | None, File()] = None,
                      audio_bed_file: Annotated[UploadFile | None, File()] = None,
+                     audio_clip_id: Annotated[str, Form()] = "",
                      reference_mode: Annotated[str, Form()] = "auto",
                      mute_source_audio: Annotated[bool, Form()] = False,
                      audio_bed_gain: Annotated[float, Form()] = 0.25,
@@ -612,6 +617,14 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
     if has_reference and reference_file is not None:
         character_reference_path = save_upload(reference_file, f"reference{ref_suffix}")
     audio_bed_path: str | None = None
+    audio_clip: AudioClip | None = None
+    if audio_clip_id and not (audio_bed_file is not None and audio_bed_file.filename):
+        audio_clip = session.get(AudioClip, audio_clip_id)
+        if audio_clip is None or not audio_clip.rel_path:
+            return fail("That sound is not in the library (or has no file yet).")
+        audio_bed_path = str(_audio(ctx).path_for(audio_clip.rel_path))
+        audio_bed_rights_confirmed = True
+        audio_bed_rights_evidence = audio_svc.rights_line(audio_clip)
     if audio_bed_file is not None and audio_bed_file.filename:
         audio_suffix = Path(audio_bed_file.filename).suffix.lower()
         if audio_suffix not in AUDIO_EXTS:
@@ -641,6 +654,7 @@ def create_from_form(ctx: Ctx, session: Db, theme: Annotated[str, Form()],
                                 audio_bed_gain=audio_bed_gain,
                                 audio_bed_rights_confirmed=audio_bed_rights_confirmed,
                                 audio_bed_rights_evidence=audio_bed_rights_evidence or None,
+                                audio_clip_id=audio_clip.id if audio_clip else None,
                                 character_key=character_key or None,
                                 character_description=character_description or None,
                                 use_global_look=use_global_look, stable=stable,
@@ -760,6 +774,9 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
                  rendered_shot_ids=sorted(commands.rendered_shots(session, project_id)),
                  library_pictures=[i for i in image_svc.list_images(session, limit=40)
                                    if i.status == "done" and i.rel_path],
+                 library_sounds=_library_sounds(session), sound=_sound_state(session, project),
+                 video_seconds=_video_seconds(detail),
+                 project_sounds=audio_svc.list_clips(session, project_id=project_id, limit=12),
                  can_storyboard=detail.documents.get("creative_brief") is not None
                  and not image_availability(ctx).get(ctx.settings.images.default_profile),
                  video_asset=video_asset, video_rating=video_rating,
@@ -943,6 +960,97 @@ def extend_clip_from_ui(ctx: Ctx, session: Db, media_file: Annotated[str, Form()
     return _back("/ui/new", msg=f"Extending {Path(media_file).name} by {seconds:g} s (job "
                                f"{job.id[-8:]}); the longer clip appears in the media folder "
                                "list when it is done")
+
+
+def _video_seconds(detail: Any) -> float | None:
+    """The video's length: the final cut's, else the analysed source's."""
+    for asset in reversed(detail.assets):
+        if asset.kind == "final" and (asset.meta or {}).get("probe", {}).get("duration"):
+            return float(asset.meta["probe"]["duration"])
+    analysis = (detail.documents.get("analysis") or {}).get("data") or {}
+    try:
+        return float(analysis["duration"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _sound_state(session: Session, project: Project) -> dict[str, Any]:
+    """What the project page shows about the video's sound and what can change now."""
+    creative = project.creative_input or {}
+    clip = session.get(AudioClip, creative["audio_clip_id"]) if creative.get("audio_clip_id") else None
+    bed = creative.get("audio_bed_path")
+    changeable = project.status not in (S.EDITING.value, S.PUBLISHING.value, S.PUBLISHED.value,
+                                        S.MONITORING.value, S.ARCHIVED.value, S.CANCELLED.value)
+    return {"clip": clip, "bed_name": Path(str(bed)).name if bed and clip is None else None,
+            "gain": float(creative.get("audio_bed_gain", 0.25)),
+            "keep_source": bool(creative.get("keep_source_audio", True)),
+            "changeable": changeable, "re_edits": project.status == S.READY_TO_PUBLISH.value,
+            "evidence": creative.get("audio_bed_rights_evidence")}
+
+
+def _library_sounds(session: Session) -> list[AudioClip]:
+    return [c for c in audio_svc.list_clips(session, limit=60) if c.status == "done" and c.rel_path]
+
+
+@router.post("/projects/{project_id}/sound")
+def set_sound_from_ui(project_id: str, ctx: Ctx, session: Db,
+                      clip_id: Annotated[str, Form()] = "",
+                      gain: Annotated[float, Form()] = 0.25,
+                      mute_source_audio: Annotated[bool, Form()] = False,
+                      remove: Annotated[bool, Form()] = False) -> RedirectResponse:
+    """Set or remove the video's added soundtrack from the library (docs/audio.md)."""
+    url = f"/ui/projects/{project_id}#sound"
+    try:
+        project = get_project(session, project_id, for_update=True)
+    except LookupError as exc:
+        raise HTTPException(404) from exc
+    bed_path = rights = None
+    clip = None
+    if clip_id and not remove:
+        clip = session.get(AudioClip, clip_id)
+        if clip is None or not clip.rel_path:
+            return _back(url, err="That sound is not in the library.")
+        bed_path, rights = str(_audio(ctx).path_for(clip.rel_path)), audio_svc.rights_line(clip)
+    elif not remove:
+        current = (project.creative_input or {}).get("audio_bed_path")
+        if not current:
+            return _back(url, err="Pick a sound from the library first.")
+        bed_path, rights = current, (project.creative_input or {}).get("audio_bed_rights_evidence")
+    try:
+        result = commands.set_soundtrack(session, project, ctx.settings, actor="dashboard",
+                                        bed_path=bed_path, rights=rights,
+                                        clip_id=clip.id if clip else None, gain=gain,
+                                        keep_source_audio=not mute_source_audio)
+    except (ValueError, LookupError, InvalidTransition) as exc:
+        return _back(url, err=str(exc))
+    what = "Soundtrack removed" if remove else "Soundtrack set"
+    return _back(url, msg=what + ("; the video is being edited again with it"
+                                  if result["re_edit"] else "; it is used when the video is edited"))
+
+
+@router.post("/projects/{project_id}/sound/extract")
+def extract_sound_from_ui(project_id: str, ctx: Ctx, session: Db,
+                          which: Annotated[str, Form()] = "final") -> RedirectResponse:
+    """Put the video's sound (the final cut's, or the original footage's) into the library."""
+    try:
+        project = get_project(session, project_id)
+    except LookupError as exc:
+        raise HTTPException(404) from exc
+    kind = "final" if which == "final" else "source"
+    assets = [a for a in session.scalars(select(Asset).where(Asset.project_id == project_id,
+                                                              Asset.kind == kind)
+                                          .order_by(Asset.created_at))]
+    if not assets:
+        return _back(f"/ui/projects/{project_id}#sound", err=f"This video has no {kind} yet.")
+    try:
+        clip = audio_svc.import_audio(
+            session, _audio(ctx), ctx.ffmpeg, ctx.store.path_for(assets[-1].rel_path),
+            kind="extract", title=f"{project.name} ({kind})", project_id=project_id,
+            request={"asset_id": assets[-1].id, "which": kind,
+                     "rights_evidence": f"sound of video {project_id} ({kind})"})
+    except ValueError as exc:
+        return _back(f"/ui/projects/{project_id}#sound", err=str(exc))
+    return _back(f"/ui/audio?clip={clip.id}#selected", msg="The video's sound is in the library")
 
 
 @router.post("/projects/{project_id}/adjust")
@@ -1184,6 +1292,205 @@ def image_as_thumbnail(image_id: str, ctx: Ctx, session: Db,
                 meta={"image_id": image.id, "source": "pictures"})
     return _back(f"/ui/projects/{project.id}#publish",
                  msg="Thumbnail set from the picture; the next upload uses it")
+
+
+def _audio(ctx: StudioContext) -> AudioStore:
+    return AudioStore(ctx.settings.studio.data_dir)
+
+
+def _clip_or_404(session: Session, clip_id: str) -> AudioClip:
+    try:
+        return audio_svc.get_clip(session, clip_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+def audio_availability(ctx: StudioContext, target: str = "local") -> dict[str, str | None]:
+    """Why each audio profile cannot generate right now; None when it can."""
+    return {name: ctx.settings.audio_profile_problem(name, target=target)
+            for name in ctx.settings.audio_profiles}
+
+
+@router.get("/audio", response_class=HTMLResponse)
+def audio_page(request: Request, ctx: Ctx, session: Db, clip: str = "", kind: str = "",
+               page: int = 1, project: str = "", seconds: str = "") -> HTMLResponse:
+    page = max(1, page)
+    gallery = audio_svc.list_clips(session, limit=PAGE_SIZE + 1, offset=(page - 1) * PAGE_SIZE,
+                                   kind=kind or None)
+    more = len(gallery) > PAGE_SIZE
+    gallery = gallery[:PAGE_SIZE]
+    selected = session.get(AudioClip, clip) if clip else None
+    status = audio_availability(ctx)
+    music, sound = ctx.settings.audio.music_profile, ctx.settings.audio.sound_profile
+    cloud = ctx.settings.cloud
+    projects = list(session.scalars(select(Project).where(Project.status.notin_(
+        [S.PUBLISHED.value, S.MONITORING.value, S.ARCHIVED.value, S.CANCELLED.value,
+         S.EDITING.value, S.PUBLISHING.value])).order_by(Project.updated_at.desc()).limit(50)))
+    for_project = session.get(Project, project) if project else None
+    form = {"operation": request.query_params.get("op", "music"),
+            "prompt": request.query_params.get("prompt", ""),
+            "seconds": seconds or f"{ctx.settings.audio.default_seconds:g}",
+            "project_id": for_project.id if for_project else ""}
+    return _page(request, "audio.html", ctx, gallery=gallery, more=more, page=page, kind=kind,
+                 selected=selected, library=_library_sounds(session),
+                 audio_profiles=ctx.settings.audio_profiles, audio_status=status,
+                 music_available=not status.get(music), sound_available=not status.get(sound),
+                 unavailable_reason=status.get(music) or status.get(sound), hints=OPERATION_HINTS,
+                 cloud=cloud if cloud.ready else None, projects=projects, form=form,
+                 for_project=for_project,
+                 busy=any(c.status in ("queued", "running") for c in gallery),
+                 parent=(session.get(AudioClip, selected.parent_id)
+                         if selected and selected.parent_id else None),
+                 children=(list(session.scalars(select(AudioClip)
+                                                .where(AudioClip.parent_id == selected.id)
+                                                .order_by(AudioClip.created_at)))
+                           if selected else []))
+
+
+@router.post("/audio")
+def create_audio_from_form(ctx: Ctx, session: Db, operation: Annotated[str, Form()] = "music",
+                           prompt: Annotated[str, Form()] = "", lyrics: Annotated[str, Form()] = "",
+                           negative_prompt: Annotated[str, Form()] = "",
+                           seconds: Annotated[str, Form()] = "",
+                           count: Annotated[int, Form()] = 1,
+                           steps: Annotated[str, Form()] = "", cfg: Annotated[str, Form()] = "",
+                           seed: Annotated[str, Form()] = "",
+                           lyrics_strength: Annotated[float, Form()] = 0.99,
+                           profile: Annotated[str, Form()] = "",
+                           render_on: Annotated[str, Form()] = "",
+                           project_id: Annotated[str, Form()] = "",
+                           title: Annotated[str, Form()] = "") -> RedirectResponse:
+    try:
+        body = AudioRequest(
+            operation=operation, prompt=prompt, lyrics=lyrics,  # type: ignore[arg-type]
+            negative_prompt=negative_prompt,
+            seconds=float(seconds) if seconds.strip() else None, count=count,
+            steps=int(steps) if steps.strip() else None,
+            cfg=float(cfg) if cfg.strip() else None, seed=int(seed) if seed.strip() else None,
+            lyrics_strength=lyrics_strength, profile=profile or None,
+            render_on=render_on or None,  # type: ignore[arg-type]
+            project_id=project_id or None, title=title)
+        rows = audio_svc.request_audio(session, ctx.settings, _audio(ctx), body, actor="dashboard")
+    except (ValueError, LookupError, ValidationError) as exc:
+        return _back("/ui/audio", err=str(exc).splitlines()[0]
+                     if isinstance(exc, ValidationError) else str(exc))
+    n = len(rows)
+    return _back(f"/ui/audio?clip={rows[0].id}#selected",
+                 msg=f"{n} clip{'s' if n > 1 else ''} queued; the worker makes "
+                     f"{'them' if n > 1 else 'it'} now")
+
+
+@router.post("/audio/edit")
+def edit_audio_from_form(ctx: Ctx, session: Db, operation: Annotated[str, Form()],
+                         source_id: Annotated[str, Form()] = "",
+                         source_ids: Annotated[list[str], Form()] = [],  # noqa: B006
+                         start: Annotated[float, Form()] = 0.0,
+                         end: Annotated[str, Form()] = "",
+                         fade_in: Annotated[float, Form()] = 0.0,
+                         fade_out: Annotated[float, Form()] = 0.0,
+                         db: Annotated[float, Form()] = 0.0,
+                         lufs: Annotated[float, Form()] = -14.0,
+                         seconds: Annotated[str, Form()] = "",
+                         crossfade: Annotated[float, Form()] = 0.5,
+                         factor: Annotated[float, Form()] = 1.0,
+                         keep_pitch: Annotated[bool, Form()] = True,
+                         volumes: Annotated[str, Form()] = "",
+                         offsets: Annotated[str, Form()] = "",
+                         duration: Annotated[str, Form()] = "longest",
+                         title: Annotated[str, Form()] = "") -> RedirectResponse:
+    def numbers(text: str) -> list[float]:
+        return [float(v) for v in text.replace(";", ",").split(",") if v.strip()]
+
+    back = f"/ui/audio?clip={source_id}#selected" if source_id else "/ui/audio"
+    try:
+        body = AudioEdit(
+            operation=operation, source_id=source_id or None,  # type: ignore[arg-type]
+            source_ids=[i for i in source_ids if i], start=start,
+            end=float(end) if end.strip() else None, fade_in=fade_in, fade_out=fade_out, db=db,
+            lufs=lufs, seconds=float(seconds) if seconds.strip() else None, crossfade=crossfade,
+            factor=factor, keep_pitch=keep_pitch, volumes=numbers(volumes),
+            offsets=numbers(offsets), duration=duration, title=title)  # type: ignore[arg-type]
+        clip = audio_svc.edit_audio(session, _audio(ctx), ctx.ffmpeg, body, actor="dashboard")
+    except (ValueError, LookupError, ValidationError) as exc:
+        return _back(back, err=str(exc).splitlines()[0]
+                     if isinstance(exc, ValidationError) else str(exc))
+    return _back(f"/ui/audio?clip={clip.id}#selected", msg=f"{operation.capitalize()} done")
+
+
+@router.post("/audio/upload")
+def upload_audio_from_form(ctx: Ctx, session: Db, source_file: Annotated[UploadFile, File()],
+                           rights_confirmed: Annotated[bool, Form()] = False,
+                           rights_evidence: Annotated[str, Form()] = "",
+                           title: Annotated[str, Form()] = "",
+                           extract: Annotated[bool, Form()] = False) -> RedirectResponse:
+    """Your own sound file, or the sound of a video file you may use."""
+    suffix = Path(source_file.filename or "").suffix.lower()
+    allowed = audio_svc.AUDIO_EXTS | (audio_svc.VIDEO_EXTS if extract else frozenset())
+    if suffix not in allowed:
+        return _back("/ui/audio", err="Use a sound file such as MP3, WAV, FLAC, M4A or OGG"
+                                      + (", or a video to take the sound from." if extract else "."))
+    if not rights_confirmed or not rights_evidence.strip():
+        return _back("/ui/audio", err="Confirm that you may use and change this file and say "
+                                      "where it comes from.")
+    uploads = Path(ctx.settings.studio.data_dir) / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    dest = uploads / f"{uuid.uuid4().hex[:12]}{suffix}"
+    with dest.open("wb") as fh:
+        shutil.copyfileobj(source_file.file, fh)
+    try:
+        clip = audio_svc.import_audio(
+            session, _audio(ctx), ctx.ffmpeg, dest, kind="extract" if suffix in audio_svc.VIDEO_EXTS
+            else "upload", title=title or Path(source_file.filename or "").stem,
+            request={"rights_confirmed": True, "rights_evidence": rights_evidence.strip(),
+                     "file": source_file.filename})
+    except ValueError as exc:
+        return _back("/ui/audio", err=str(exc))
+    finally:
+        dest.unlink(missing_ok=True)
+    return _back(f"/ui/audio?clip={clip.id}#selected", msg="The sound is in the library")
+
+
+@router.post("/audio/{clip_id}/verdict")
+def audio_verdict(clip_id: str, request: Request, session: Db,
+                  value: Annotated[int, Form()] = 0) -> Response:
+    clip = _clip_or_404(session, clip_id)
+    new_value = None if value == 0 or clip.verdict == value else value
+    try:
+        audio_svc.set_verdict(session, clip, new_value)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"verdict": clip.verdict})
+    return _back(f"/ui/audio?clip={clip_id}#selected")
+
+
+@router.post("/audio/{clip_id}/delete")
+def audio_delete(clip_id: str, ctx: Ctx, session: Db) -> RedirectResponse:
+    audio_svc.delete_clip(session, _audio(ctx), _clip_or_404(session, clip_id))
+    return _back("/ui/audio", msg="Clip deleted")
+
+
+@router.post("/audio/{clip_id}/soundtrack")
+def audio_as_soundtrack(clip_id: str, ctx: Ctx, session: Db, project_id: Annotated[str, Form()],
+                        gain: Annotated[float, Form()] = 0.25,
+                        mute_source_audio: Annotated[bool, Form()] = False) -> RedirectResponse:
+    """Make a library clip a video's soundtrack, from the sound page."""
+    clip = _clip_or_404(session, clip_id)
+    if not clip.rel_path:
+        return _back(f"/ui/audio?clip={clip_id}#selected", err="This clip has no file yet.")
+    try:
+        project = get_project(session, project_id, for_update=True)
+        result = commands.set_soundtrack(
+            session, project, ctx.settings, actor="dashboard",
+            bed_path=str(_audio(ctx).path_for(clip.rel_path)), rights=audio_svc.rights_line(clip),
+            clip_id=clip.id, gain=gain, keep_source_audio=not mute_source_audio)
+    except LookupError:
+        return _back(f"/ui/audio?clip={clip_id}#selected", err="Pick a video.")
+    except (ValueError, InvalidTransition) as exc:
+        return _back(f"/ui/audio?clip={clip_id}#selected", err=str(exc))
+    return _back(f"/ui/projects/{project.id}#sound",
+                 msg="Soundtrack set" + ("; the video is being edited again with it"
+                                         if result["re_edit"] else "; it is used when the video is edited"))
 
 
 @router.get("/images/{image_id}/automask")

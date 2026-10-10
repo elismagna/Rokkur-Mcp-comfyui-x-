@@ -231,6 +231,46 @@ class Image(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AudioClip(Base):
+    """One sound the studio made, edited or was given: generated music or effects, an upload,
+    sound taken from a video, or an FFmpeg edit of another clip (docs/audio.md).
+
+    Files live under ``<data_dir>/audio/<id>/``; ``rel_path`` is relative to that folder.
+    ``parent_id`` points at the clip this one was made from; a mix records every input in
+    ``request``.
+    """
+
+    __tablename__ = "audio_clips"
+    __table_args__ = (Index("ix_audio_clips_listing", "status", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("aud"))
+    # music | sound | upload | extract | trim | fade | gain | normalize | loop | speed | mix
+    kind: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued | running | done | failed
+    profile: Mapped[str | None] = mapped_column(String(32))
+    workflow: Mapped[str | None] = mapped_column(String(64))
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    lyrics: Mapped[str] = mapped_column(Text, default="")
+    params: Mapped[dict[str, Any]] = mapped_column(default=dict)   # semantic parameters sent
+    request: Mapped[dict[str, Any]] = mapped_column(default=dict)  # what was asked (for redo)
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey("audio_clips.id"), index=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), index=True)
+    job_id: Mapped[str | None] = mapped_column(String(64))
+    rel_path: Mapped[str | None] = mapped_column(Text)
+    duration_s: Mapped[float | None] = mapped_column(Float)
+    sample_rate: Mapped[int | None] = mapped_column(Integer)
+    channels: Mapped[int | None] = mapped_column(Integer)
+    seed: Mapped[int | None] = mapped_column(BigInteger)
+    render_on: Mapped[str] = mapped_column(String(8), default="local")
+    remote_id: Mapped[str | None] = mapped_column(String(64))
+    took_s: Mapped[float | None] = mapped_column(Float)
+    error: Mapped[dict[str, Any] | None] = mapped_column()
+    verdict: Mapped[int | None] = mapped_column(Integer)   # -2 .. 2, a person's judgement
+    title: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Job(Base):
     __tablename__ = "jobs"
     __table_args__ = (

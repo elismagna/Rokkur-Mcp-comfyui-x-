@@ -1,0 +1,31 @@
+# ACE-Step v1 3.5B (Apache-2.0) music generation, ComfyUI core nodes only.
+# Source: Comfy-Org's example workflow ace_step_1_t2m.json
+#   (https://raw.githubusercontent.com/Comfy-Org/example_workflows/main/audio/ace-step/ace_step_1_t2m.json;
+#   tutorial https://docs.comfy.org/tutorials/audio/ace-step/ace-step-v1): CheckpointLoaderSimple ->
+#   ModelSamplingSD3 shift 5 -> LatentApplyOperationCFG with LatentOperationTonemapReinhard 1.0;
+#   TextEncodeAceStepAudio (tags, lyrics, lyrics_strength 0.99), negative = ConditioningZeroOut;
+#   EmptyAceStepLatentAudio; KSampler euler/simple 50 steps cfg 5; VAEDecodeAudio; SaveAudio
+#   (the example's MP3/Opus savers are left out: the studio keeps FLAC and converts with FFmpeg).
+# Model: checkpoints/ace_step_v1_3.5b.safetensors from
+#   https://huggingface.co/Comfy-Org/ACE-Step_ComfyUI_repackaged/tree/main/all_in_one (Apache-2.0).
+# TAGS: style, scene, instruments and vocals in English, comma separated. LYRICS: optional, with
+# [verse] [chorus] [bridge] tags; "[inst]" for instrumental. Untested on a real GPU (docs/audio.md).
+name: audio_ace_step
+version: 1
+description: ACE-Step v1 3.5B music from tags and lyrics
+resource_class: GPU_HEAVY
+input_kind: none
+output_kinds: [audio]
+parameters:
+  CHECKPOINT: {node: "40", input: ckpt_name, type: str, default: ace_step_v1_3.5b.safetensors}
+  TAGS: {node: "14", input: tags, type: str, required: true}
+  LYRICS: {node: "14", input: lyrics, type: str, default: "[inst]"}
+  LYRICS_STRENGTH: {node: "14", input: lyrics_strength, type: float, default: 0.99, min: 0, max: 1}
+  SECONDS: {node: "17", input: seconds, type: float, default: 30, min: 1, max: 240}
+  BATCH: {node: "17", input: batch_size, type: int, default: 1, min: 1, max: 4}
+  SHIFT: {node: "51", input: shift, type: float, default: 5.0, min: 0.5, max: 20}
+  VOCALS: {node: "50", input: multiplier, type: float, default: 1.0, min: 0.5, max: 2}
+  SEED: {node: "52", input: seed, type: int, default: 0, min: 0}
+  STEPS: {node: "52", input: steps, type: int, default: 50, min: 1, max: 100}
+  CFG: {node: "52", input: cfg, type: float, default: 5.0, min: 0, max: 20}
+  OUTPUT_PREFIX: {node: "60", input: filename_prefix, type: str, default: rokkur/audio}
