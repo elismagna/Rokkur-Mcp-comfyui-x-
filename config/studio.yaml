@@ -90,6 +90,22 @@ costs:
   max_cloud_gpu_minutes: 60       # per video rendered on the cloud server (docs/cloud.md)
   max_cost_per_project_usd: 0     # estimated cloud cost cap per video; 0 = no dollar cap
 
+images:                      # still pictures (docs/images.md); profiles in image_profiles.yaml
+  default_profile: KLEIN_4B
+  upscale_profile: UPSCALE
+  max_batch: 4
+
+audio:                       # music and effects (docs/audio.md); profiles in audio_profiles.yaml
+  music_profile: ACE_STEP
+  sound_profile: STABLE_AUDIO
+  default_seconds: 30
+  max_batch: 2
+
+rea:                         # the REA reverse-engineering CLI (docs/rea.md)
+  command: rea               # or "npx -y rea-agents@latest"; needs Node.js 22+ where the worker runs
+  timeout_s: 1800
+  provider: ""               # a standing --provider for native targets (ghidra, hopper), or empty
+
 jobs:
   default_max_attempts: 3
   lease_seconds: 900

@@ -316,6 +316,15 @@ def upload_source(project_id: str, ctx: Ctx, session: Db,
     return asset
 
 
+@router.get("/{project_id}/live", summary="The live view: what runs now, what each stage "
+                                            "produced and by whom, decisions waiting, shots, events")
+def live_view(project_id: str, ctx: Ctx, session: Db, events: int = Query(60, le=500)
+              ) -> dict[str, object]:
+    from rokkur_studio.services.live import snapshot
+
+    return snapshot(session, ctx, _project(session, project_id), events_limit=events)
+
+
 @router.get("/{project_id}/events", response_model=list[EventOut])
 def project_events(project_id: str, session: Db) -> list[Event]:
     _project(session, project_id)

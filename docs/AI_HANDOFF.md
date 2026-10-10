@@ -70,6 +70,8 @@ shot-level repair → encode → metadata/thumbnail → publish.
 | Pictures: generate, change, repaint, extend, upscale, vary; characters from a clip; storyboard stills | `services/images.py`, `pipeline/images.py`, `services/characters.py`, `config/image_profiles.yaml` | `docs/images.md` |
 | Sound: music and effects generation, FFmpeg edits, soundtracks at any stage | `services/audio.py`, `pipeline/audio.py`, `commands.set_soundtrack`, `config/audio_profiles.yaml` | `docs/audio.md` |
 | Stable mode and adjusting the shots still to render | `pipeline/stages.py` (`stable_overrides`), `commands.adjust_remaining_shots` | `docs/stability.md` |
+| Live view: pipeline graph, what runs now, stage trace, decisions with evidence, events | `services/live.py`, `dashboard/templates/live.html` | `docs/live.md` |
+| REA (reverse engineering) runs on local files, kept with their output | `services/rea.py`, `pipeline/rea.py`, `config/studio.yaml` `rea:` | `docs/rea.md` |
 | Extending a clip or a finished video | `pipeline/extend.py`, `workflows/v2v_3070_extend` | `docs/video-tools.md` |
 | Dashboard | `dashboard/views.py`, `dashboard/templates/`, `dashboard/static/` (one CSS, one JS) | `README.md` |
 | CLI | `cli.py`; Windows wrapper `scripts/studio.ps1`, Linux `Makefile` | `README.md` |
@@ -525,7 +527,10 @@ decision the studio makes is recorded with what produced it (events, documents, 
 change a person makes is visible where it applies, and the studio shows its work so the person
 can decide visually or with a tool, at the point where the decision is needed. New features
 are judged by that: a feature that hides a step, or quietly changes what the person chose,
-goes against the goal. The live workflow view (next) is the direct expression of it.
+goes against the goal. The live view (`/ui/projects/{id}/live`, `docs/live.md`) is the direct
+expression of it: the pipeline as a graph, what runs now, what each stage produced and who
+produced it, the decisions waiting for a person with the frames and renders they are about,
+and the event stream in words.
 
 ## Current work
 
@@ -568,10 +573,17 @@ goes against the goal. The live workflow view (next) is the direct expression of
     4. Extension: extend a finished video by 3 s; look at the seam at the overlap.
     5. Sound: one ACE-Step 30 s clip and one Stable Audio 10 s effect; then set the music as
        a finished video's soundtrack and check the new final.
-  - **Next, not built yet** (Elis's requests, in order): a live workflow view per video
-    (`/ui/projects/{id}/live`: the pipeline as a graph with the current stage and shot, the
-    ComfyUI queue position, the event stream, and the decisions waiting for a person shown
-    with their frames and renders), a **REA** tab that runs the real `rea` CLI on local files
+  - *See the workflow of each tool visually, decide visually or with a tool* → **Live view**
+    (`docs/live.md`, "Watch it work" on every project page): the graph, the running job and
+    shot with ComfyUI's queue, one card per shot with the original frame and the latest
+    render, the stage trace with authorship, the decisions with evidence and the project
+    page's own buttons, the events in words; polled as JSON every 3 s.
+  - *REA as a tool in its own tab* → **REA** (`docs/rea.md`): presets for the real `rea` CLI
+    (analyze, inspect, search, function, decompile, xrefs, trace, instructions, doctor,
+    providers, capabilities), run by the worker with `--json`, output kept per run, honest
+    summaries, migration `0005`; checked against the real rea-agents 6.3.0 here. Needs Node.js
+    22+ where the worker runs (not in the Docker image).
+  - **Next, not built yet** (Elis's requests, in order): the REA tab's uses beyond local files
     and keeps its reports, a **3D studio** (STL/OBJ/PLY inspect, edit, view; photo stack,
     video and LiDAR reconstruction only through installed providers, never faked), and the
     research write-up of the top image and video tools' features with what maps onto Rökkur.
@@ -601,6 +613,13 @@ goes against the goal. The live workflow view (next) is the direct expression of
 
 ## Log (newest first)
 
+- 2026-10-10 Claude: **REA tab** (`docs/rea.md`): `ReaRun` + migration `0005`, `services/rea.py`
+  (presets, argument building, execution, summaries), `pipeline/rea.py` (`rea` job), REA page,
+  `/rea` API, CLI `rea-run`/`rea-list`, `tests/test_rea.py` (4 tests, fake rea).
+- 2026-10-10 Claude: **Live view** (`docs/live.md`): `services/live.py:snapshot` (read-only,
+  from states, events, documents, renders, assets, approvals and costs), page
+  `/ui/projects/{id}/live` + `live.json`, API `GET /projects/{id}/live`, `tests/test_live.py`
+  (3 tests). Rendered in Chromium for a stuck, a planned and a finished video.
 - 2026-10-10 Claude: **Sound studio** (`docs/audio.md`): `audio_ace_step` and
   `audio_stable_open` workflows (core nodes, sources in their headers), `config/audio_profiles.yaml`,
   `AudioClip` + migration `0004`, `services/audio.py` (generation requests, FFmpeg edits,

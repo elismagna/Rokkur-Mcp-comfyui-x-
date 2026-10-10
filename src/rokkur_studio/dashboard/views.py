@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import io
 import json
+import shlex
 import shutil
 import uuid
 from datetime import UTC, datetime
@@ -53,6 +54,7 @@ from rokkur_studio.db.models import (
     Job,
     Project,
     Publication,
+    ReaRun,
     Render,
 )
 from rokkur_studio.director.assets import (
@@ -87,6 +89,8 @@ from rokkur_studio.services import audio as audio_svc
 from rokkur_studio.services import characters as character_svc
 from rokkur_studio.services import commands, publishing, ratings, taste
 from rokkur_studio.services import images as image_svc
+from rokkur_studio.services import live as live_svc
+from rokkur_studio.services import rea as rea_svc
 from rokkur_studio.services.assets import import_file
 from rokkur_studio.services.audio import OPERATION_HINTS, AudioEdit, AudioRequest, AudioStore
 from rokkur_studio.services.images import SIZE_PRESETS, ImageRequest, ImageStore
@@ -801,6 +805,28 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
                  privacies=["private", "unlisted"] + (["public"] if yt.allow_public else []))
 
 
+@router.get("/projects/{project_id}/live", response_class=HTMLResponse)
+def live_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
+    """Watch the studio work on one video: the pipeline as a graph, the shot in progress,
+    what each stage produced and who did it, the decisions waiting with their evidence, and
+    the event stream. Polls ``live.json`` while the video is being worked on."""
+    try:
+        project = get_project(session, project_id)
+    except LookupError as exc:
+        raise HTTPException(404) from exc
+    return _page(request, "live.html", ctx, p=project,
+                 snap=live_svc.snapshot(session, ctx, project), tags=ratings.TAGS)
+
+
+@router.get("/projects/{project_id}/live.json")
+def live_json(project_id: str, ctx: Ctx, session: Db) -> JSONResponse:
+    try:
+        project = get_project(session, project_id)
+    except LookupError as exc:
+        raise HTTPException(404) from exc
+    return JSONResponse(live_svc.snapshot(session, ctx, project))
+
+
 @router.post("/projects/{project_id}/metadata")
 def save_metadata(project_id: str, ctx: Ctx, session: Db, title: Annotated[str, Form()],
                   description: Annotated[str, Form()],
@@ -1491,6 +1517,67 @@ def audio_as_soundtrack(clip_id: str, ctx: Ctx, session: Db, project_id: Annotat
     return _back(f"/ui/projects/{project.id}#sound",
                  msg="Soundtrack set" + ("; the video is being edited again with it"
                                          if result["re_edit"] else "; it is used when the video is edited"))
+
+
+# -- REA -----------------------------------------------------------------------------------
+def _rea(ctx: StudioContext) -> rea_svc.ReaStore:
+    return rea_svc.ReaStore(ctx.settings.studio.data_dir)
+
+
+@router.get("/rea", response_class=HTMLResponse)
+def rea_page(request: Request, ctx: Ctx, session: Db, run: str = "", preset: str = "",
+             page: int = 1) -> HTMLResponse:
+    page = max(1, page)
+    runs = rea_svc.list_runs(session, limit=PAGE_SIZE + 1, offset=(page - 1) * PAGE_SIZE,
+                             preset=preset or None)
+    more = len(runs) > PAGE_SIZE
+    runs = runs[:PAGE_SIZE]
+    selected = session.get(ReaRun, run) if run else None
+    output = rea_svc.output_of(_rea(ctx), selected) if selected else None
+    output_text = None
+    if output is not None:
+        output_text = output if isinstance(output, str) else json.dumps(output, indent=2)
+        if len(output_text) > 200_000:
+            output_text = output_text[:200_000] + "\n… (truncated; download the full output)"
+    avail = rea_svc.availability(ctx.settings)
+    projects = list(session.scalars(select(Project).order_by(Project.updated_at.desc()).limit(50)))
+    form = {"preset": request.query_params.get("preset_pick", "analyze"),
+            "target": request.query_params.get("target", ""),
+            "project_id": request.query_params.get("project", "")}
+    return _page(request, "rea.html", ctx, runs=runs, more=more, page=page, preset=preset,
+                 selected=selected, output_text=output_text, avail=avail,
+                 presets=rea_svc.PRESETS, uses=rea_svc.USES, projects=projects, form=form,
+                 media=media_files(ctx)[:40],
+                 busy=any(r.status in ("queued", "running") for r in runs))
+
+
+@router.post("/rea")
+def rea_run_from_form(ctx: Ctx, session: Db, preset: Annotated[str, Form()] = "analyze",
+                      target: Annotated[str, Form()] = "", query: Annotated[str, Form()] = "",
+                      provider: Annotated[str, Form()] = "",
+                      extra_args: Annotated[str, Form()] = "",
+                      project_id: Annotated[str, Form()] = "",
+                      title: Annotated[str, Form()] = "") -> RedirectResponse:
+    try:
+        body = rea_svc.ReaRequest(
+            preset=preset, target=target, query=query, provider=provider,  # type: ignore[arg-type]
+            extra_args=shlex.split(extra_args) if extra_args.strip() else [],
+            project_id=project_id or None, title=title)
+        row = rea_svc.request_run(session, ctx.settings, _rea(ctx), body, actor="dashboard")
+    except (ValueError, ValidationError) as exc:
+        return _back("/ui/rea", err=str(exc).splitlines()[0]
+                     if isinstance(exc, ValidationError) else str(exc))
+    return _back(f"/ui/rea?run={row.id}#selected",
+                 msg=f"{rea_svc.PRESETS[row.preset]['label']} queued; the worker runs REA now")
+
+
+@router.post("/rea/{run_id}/delete")
+def rea_delete(run_id: str, ctx: Ctx, session: Db) -> RedirectResponse:
+    try:
+        rea_svc.delete_run(session, _rea(ctx), rea_svc.get_run(session, run_id))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return _back("/ui/rea", msg="Run deleted")
 
 
 @router.get("/images/{image_id}/automask")

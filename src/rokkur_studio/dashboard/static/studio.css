@@ -423,3 +423,41 @@ a.now:hover, a.card:hover, a.callout:hover { text-decoration: none; border-color
 .aud-cap .good { color: var(--like) } .aud-cap .poor { color: var(--hate) } .aud-cap .i { width: 14px; height: 14px }
 .aud-pick { display: grid; gap: 4px; max-height: 220px; overflow: auto; padding: 4px 2px }
 .aud-pick .check { margin: 0 }
+
+/* live view */
+#graph { overflow-x: auto } .live-graph { width: 100%; min-width: 620px; height: auto; display: block }
+.live-graph .edge { stroke: var(--line-2); stroke-width: 2 } .live-graph .edge.done { stroke: color-mix(in srgb, var(--ok) 70%, transparent) }
+.live-graph circle { fill: var(--surface-2); stroke: var(--line-2); stroke-width: 2 }
+.live-graph .done circle { fill: color-mix(in srgb, var(--ok) 22%, var(--surface)); stroke: var(--ok) }
+.live-graph .current circle { fill: color-mix(in srgb, var(--ember) 30%, var(--surface)); stroke: var(--ember); animation: glowbar 1.6s ease-in-out infinite }
+.live-graph .failed circle { fill: color-mix(in srgb, var(--bad) 25%, var(--surface)); stroke: var(--bad) }
+.live-graph .waiting circle { fill: color-mix(in srgb, var(--warn) 25%, var(--surface)); stroke: var(--warn) }
+.live-graph .skipped circle { stroke-dasharray: 3 3 }
+.live-graph .tick { fill: none; stroke: var(--fg); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round }
+.live-graph .mark { fill: var(--warn); font-size: 15px; font-weight: 700; text-anchor: middle }
+.live-graph .label { fill: var(--faint); font-size: 12px; text-anchor: middle }
+.live-graph .done .label { fill: var(--muted) } .live-graph .current .label, .live-graph .failed .label, .live-graph .waiting .label { fill: var(--fg); font-weight: 650 }
+.evidence { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 10px }
+.evidence figure { margin: 0; border-radius: 10px; overflow: hidden; background: var(--bg-2); border: 1px solid var(--line) }
+.evidence img, .evidence video { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: contain; background: #000 }
+.evidence figcaption { font-size: 11.5px; color: var(--muted); padding: 6px 8px }
+.live-shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px }
+.live-shot { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden }
+.live-shot.rendering { border-color: var(--ember) } .live-shot.needs-repair, .live-shot.failed { border-color: color-mix(in srgb, var(--bad) 55%, transparent) }
+.live-shot-media { position: relative; background: #000; aspect-ratio: 16 / 9 }
+.live-shot-media img, .live-shot-media video { width: 100%; height: 100%; object-fit: contain; display: block }
+.live-shot-media .tag { position: absolute; top: 8px; left: 8px }
+.live-shot-info { padding: 10px 12px; display: grid; gap: 4px; font-size: 12.5px }
+.live-shot-info pre { white-space: pre-wrap; font-size: 11.5px; margin: 6px 0 0 }
+.trace { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px }
+.trace-item { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 12px; font-size: 12.5px }
+.trace-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 4px; border: 2px solid var(--line-2); background: var(--surface-2) }
+.trace-item.done .trace-dot { background: var(--ok); border-color: var(--ok) } .trace-item.current .trace-dot { background: var(--ember); border-color: var(--ember); animation: beat 1.8s ease-out infinite }
+.trace-item.failed .trace-dot { background: var(--bad); border-color: var(--bad) } .trace-item.waiting .trace-dot { background: var(--warn); border-color: var(--warn) }
+.trace-item.todo, .trace-item.skipped { color: var(--muted) }
+.trace-line { color: var(--muted); word-break: break-word }
+.stream { list-style: none; margin: 0; padding: 0; max-height: 560px; overflow: auto; font-size: 12px; display: grid; gap: 6px }
+.stream li { display: grid; grid-template-columns: 62px 90px minmax(0, 1fr); gap: 8px; align-items: baseline }
+.stream .who { color: var(--ember); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+@media (max-width: 900px) { .stream li { grid-template-columns: 62px minmax(0, 1fr) } .stream .who { display: none } }
+.rea-output { max-height: 520px; overflow: auto; font-size: 11.5px; white-space: pre-wrap; word-break: break-word }

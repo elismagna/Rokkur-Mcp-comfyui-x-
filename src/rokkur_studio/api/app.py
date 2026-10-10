@@ -12,6 +12,7 @@ from rokkur_studio.api import (
     routes_director,
     routes_images,
     routes_projects,
+    routes_rea,
     routes_system,
     routes_youtube,
 )
@@ -32,6 +33,7 @@ def create_app(settings: Settings | None = None, ctx: StudioContext | None = Non
     app.include_router(routes_youtube.router)
     app.include_router(routes_images.router)
     app.include_router(routes_audio.router)
+    app.include_router(routes_rea.router)
     app.include_router(dashboard_router)
     app.mount("/ui/static", StaticFiles(directory=STATIC_DIR), name="dashboard-static")
 

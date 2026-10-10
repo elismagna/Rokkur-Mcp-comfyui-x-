@@ -62,12 +62,17 @@ effective Wan controls, timing fixes, render comparisons and real RTX 3070 findi
   title/description/tags with Dry run and Upload to YouTube buttons: upload now, or private
   now and public at a set time, optionally into a playlist. While it renders, adjust the
   shots still to come; when it is done, extend it or change its soundtrack.
+- **Live view** (Watch it work): the pipeline as a graph, the shot in progress and ComfyUI's
+  queue, what each stage produced and who produced it, the decisions waiting for you with
+  the frames and renders they are about, and every event as it happens (`docs/live.md`).
 - **Your taste**: what your ratings say you like and dislike, how settings did, where QC
   disagrees with you, suggestions for the next video, and a queue of shots to rate.
 - **Director**: the global look, your characters, the allowed cinematography terms, and a
   form that shows how the prompt rules turn a description into a prompt.
 - **YouTube**: sign-in, quota, release times and what is scheduled, your playlists.
 - **Approvals**: rights questions, and at autonomy level 3 every upload the studio proposes.
+- **REA**: reverse-engineer a program, app or plugin on this machine with the real `rea` CLI
+  and keep the evidence (`docs/rea.md`).
 - **Agents** (with a one-click model check), **Queue**, **System**.
 
 See `docs/setup-windows.md`.
@@ -134,6 +139,8 @@ names via `scripts\studio.ps1`.
 - `docs/images.md` – the picture studio: generate, change, repaint, extend, upscale, characters, storyboards
 - `docs/audio.md` – the sound studio: music and effects generation, editing, soundtracks at any stage
 - `docs/stability.md` – Stable mode and changing the shots still to render
+- `docs/rea.md` – REA (reverse engineer anything) as a studio tool: runs on local files, kept with their evidence
+- `docs/live.md` – the live view: watch the studio work and decide with the evidence in front of you
 - `docs/video-tools.md` – extending a clip or a finished video with Wan VACE
 - `docs/ROKKUR_ENTERPRISE.md` – where Rökkur is going: the vision prompt and what works today
 - `docs/research/` – online research behind the workflows (official templates, Civitai)

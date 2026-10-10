@@ -271,6 +271,30 @@ class AudioClip(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ReaRun(Base):
+    """One run of the REA reverse-engineering CLI on a local target (docs/rea.md): the
+    command as run, its exit status, and its JSON output kept under ``data/rea/<id>/``."""
+
+    __tablename__ = "rea_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("rea"))
+    preset: Mapped[str] = mapped_column(String(32))     # analyze | inspect | search | …
+    target: Mapped[str] = mapped_column(Text, default="")
+    query: Mapped[str] = mapped_column(Text, default="")  # search text, function name, address
+    args: Mapped[list[Any]] = mapped_column(default=list)  # the full argument list after "rea"
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued | running | done | failed
+    exit_code: Mapped[int | None] = mapped_column(Integer)
+    job_id: Mapped[str | None] = mapped_column(String(64))
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), index=True)
+    rel_path: Mapped[str | None] = mapped_column(Text)   # the JSON output, relative to data/rea
+    summary: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    error: Mapped[dict[str, Any] | None] = mapped_column()
+    title: Mapped[str] = mapped_column(String(200), default="")
+    took_s: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Job(Base):
     __tablename__ = "jobs"
     __table_args__ = (

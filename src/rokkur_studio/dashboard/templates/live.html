@@ -1,0 +1,137 @@
+{% extends "base.html" %}{% from "_macros.html" import status_pill, pipeline with context %}{% from "_icons.html" import icon %}
+{% block title %}Live · {{ p.name }} · Rökkur Studio{% endblock %}
+{% block crumb %}<a href="/ui/projects">Projects</a> / <a href="/ui/projects/{{ p.id }}">{{ p.name }}</a> / Live{% endblock %}
+{% block body %}
+<div class="row spread" style="align-items:flex-start">
+  <div style="min-width:0">
+    <div class="eyebrow">LIVE / WATCH THE STUDIO WORK</div>
+    <h1>{{ p.name }} {{ status_pill(p.status) }}</h1>
+    <p class="sub">{{ snap.project.theme }}</p>
+  </div>
+  <div class="row" style="flex-wrap:nowrap">
+    <span class="hint" id="live-updated" aria-live="polite">updated {{ snap.generated_at[11:19] }}</span>
+    <a class="btn secondary" href="/ui/projects/{{ p.id }}">{{ icon('film') }} Project page</a>
+  </div>
+</div>
+
+<div class="card" id="graph-card">
+  <div id="graph">{{ pipeline(snap.nodes) }}</div>
+  <p class="hint" id="graph-hint" style="margin:10px 0 0">Every node is a stage of the pipeline; the glowing one is where the studio is now. Below: what is running, what each stage produced and who produced it, the decisions that wait for you, every shot, and every event as it happens.</p>
+</div>
+
+{% if snap.decisions %}
+<section class="section" id="decisions">
+  <div class="section-title"><h2>{{ icon('check') }} Waiting for you</h2><span class="hint">{{ snap.decisions|length }} decision{{ '' if snap.decisions|length == 1 else 's' }}</span></div>
+  {% for d in snap.decisions %}
+  <div class="callout {{ 'bad' if d.kind in ['repair_limit', 'budget', 'failed'] else 'warn' }} decision" style="margin-bottom:14px"><div style="min-width:0;flex:1">
+    <p><b>{{ d.title }}</b></p>
+    <p class="hint">{{ d.why }}</p>
+    {% if d.evidence %}<div class="evidence">{% for ev in d.evidence %}<figure>{% if ev.kind == 'video' %}<video controls preload="metadata" src="{{ ev.url }}"></video>{% else %}<img src="{{ ev.url }}" alt="{{ ev.caption }}" loading="lazy">{% endif %}<figcaption>{{ ev.caption }}{% if ev.issues %}<br><span class="bad">{{ ev.issues|join('; ') }}</span>{% endif %}</figcaption></figure>{% endfor %}</div>{% endif %}
+    <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">{% for a in d.actions %}{% if a.href %}<a class="btn {{ a.style }}" href="{{ a.href }}">{{ a.label }}</a>{% else %}<form class="inline" method="post" action="{{ a.url }}" {% if a.confirm %}onsubmit="return confirm('{{ a.confirm|replace("'", "\\'") }}')"{% endif %}><button class="{{ a.style }}">{{ a.label }}</button></form>{% endif %}{% endfor %}</div>
+  </div></div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="section grid2" id="live-now">
+  <div class="card" id="now"></div>
+  <div class="card" id="usage"></div>
+</section>
+
+<section class="section" id="live-shots">
+  <div class="section-title"><h2>Shots</h2><span class="hint" id="shots-hint"></span></div>
+  <div class="live-shots" id="shots"></div>
+</section>
+
+<section class="section grid2" id="live-trace">
+  <div class="card"><div class="section-title"><h2>What each stage produced</h2><span class="hint">and who produced it</span></div><ol class="trace" id="stages"></ol></div>
+  <div class="card"><div class="section-title"><h2>Events</h2><span class="hint" id="events-hint"></span></div><ol class="stream" id="events"></ol></div>
+</section>
+
+<script type="application/json" id="live-snapshot">{{ snap|tojson }}</script>
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const time = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'}) : '';
+  const ago = iso => { if (!iso) return ''; const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); return s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`; };
+  let snap = JSON.parse($('#live-snapshot').textContent);
+  const decisionKey = s => s.decisions.map(d => d.kind + ':' + d.actions.length).join('|');
+  const startKey = decisionKey(snap);
+
+  const graph = s => {
+    const n = s.nodes.length, w = 1000, h = 92, step = w / n;
+    let out = `<svg class="live-graph" viewBox="0 0 ${w} ${h}" role="img" aria-label="Pipeline">`;
+    s.nodes.forEach((node, i) => {
+      const cx = step * i + step / 2, cy = 34;
+      if (i > 0) { const prev = s.nodes[i - 1]; out += `<line x1="${cx - step + 16}" y1="${cy}" x2="${cx - 16}" y2="${cy}" class="edge ${prev.state === 'done' || prev.state === 'skipped' ? 'done' : ''}"/>`; }
+      out += `<g class="node ${node.state}"><circle cx="${cx}" cy="${cy}" r="14"/>${node.state === 'done' ? `<path d="M${cx - 6} ${cy} l4 4 l8 -8" class="tick"/>` : node.state === 'failed' ? `<path d="M${cx - 5} ${cy - 5} l10 10 M${cx + 5} ${cy - 5} l-10 10" class="tick"/>` : node.state === 'waiting' ? `<text x="${cx}" y="${cy + 5}" class="mark">?</text>` : ''}<text x="${cx}" y="${h - 12}" class="label">${esc(node.label)}</text></g>`;
+    });
+    return out + '</svg>';
+  };
+
+  const now = s => {
+    const n = s.now, st = s.project.status;
+    let body = '';
+    if (n.job) {
+      body += `<div class="row" style="gap:10px"><span class="pulse on"></span><div><b>${esc(n.job.label)}</b><div class="hint">for ${ago(n.job.started_at)}${n.job.worker ? ' · worker ' + esc(n.job.worker) : ''}</div></div></div>`;
+      if (n.shot) body += `<p style="margin:12px 0 0"><b>${esc(n.shot.label)}</b>, attempt ${n.shot.attempt} · ${esc(n.shot.renderer)}${n.shot.workflow ? ' · ' + esc(n.shot.workflow) : ''} · ${ago(n.shot.started_at)} so far</p>`;
+      if (n.comfyui) body += `<p class="hint" style="margin:6px 0 0">${n.comfyui.reachable ? `ComfyUI: ${n.comfyui.running} running, ${n.comfyui.pending} waiting${n.comfyui.ours === 0 ? ' · this shot is the one running' : n.comfyui.ours ? ` · this shot is number ${n.comfyui.ours} in line` : ''}` : 'ComfyUI did not answer the queue question'}</p>`;
+    } else if (s.decisions.length) {
+      body += `<div class="row" style="gap:10px"><span class="pulse"></span><div><b>Waiting for you</b><div class="hint">${s.decisions.length} decision${s.decisions.length === 1 ? '' : 's'} above</div></div></div>`;
+    } else if (s.working) {
+      body += `<div class="row" style="gap:10px"><span class="pulse on"></span><div><b>Queued</b><div class="hint">a worker picks the next step up shortly</div></div></div>`;
+    } else {
+      body += `<div class="row" style="gap:10px"><span class="pulse"></span><div><b>${esc(st.replace(/_/g, ' ').toLowerCase().replace(/^./, c => c.toUpperCase()))}</b><div class="hint">nothing is running for this video</div></div></div>`;
+    }
+    if (n.queued.length) body += `<p class="hint" style="margin:10px 0 0">Next: ${n.queued.map(j => esc(j.label) + (j.status === 'RETRY_WAIT' ? ` (retry${j.error ? ': ' + esc(j.error) : ''})` : '')).join(', ')}</p>`;
+    $('#now').innerHTML = `<div class="section-title"><h2>Now</h2><span class="hint">${esc(s.project.profile)}${s.project.render_on === 'cloud' ? ' · cloud' : ''}</span></div>` + body;
+    const u = s.usage;
+    $('#usage').innerHTML = `<div class="section-title"><h2>Used so far</h2></div><dl class="kv"><dt>Renders</dt><dd>${u.renders} of ${u.max_renders}</dd><dt>GPU</dt><dd>${u.gpu_minutes} of ${u.max_gpu_minutes} min</dd>${u.cloud_minutes ? `<dt>Cloud</dt><dd>${u.cloud_minutes} min · $${u.usd}</dd>` : ''}<dt>Repairs</dt><dd>${s.project.repair_rounds} round${s.project.repair_rounds === 1 ? '' : 's'}</dd></dl>`;
+  };
+
+  const shots = s => {
+    const states = {planned: 'Planned', rendering: 'Rendering now', rendered: 'Rendered', 'needs repair': 'Needs repair', failed: 'Failed'};
+    $('#shots-hint').textContent = s.shots.length ? `${s.shots.filter(x => x.state === 'rendered').length} of ${s.shots.length} rendered` : 'the shots appear once the footage is analysed';
+    $('#shots').innerHTML = s.shots.map(x => `<article class="live-shot ${x.state.replace(' ', '-')}">
+      <div class="live-shot-media">${x.render_url ? `<video controls preload="none" ${x.keyframe_url ? `poster="${x.keyframe_url}"` : ''} src="${x.render_url}"></video>` : x.keyframe_url ? `<img src="${x.keyframe_url}" alt="${esc(x.label)} original frame" loading="lazy">` : '<div class="img-placeholder"><span>No frame yet</span></div>'}${x.state === 'rendering' ? '<span class="tag pill info"><span class="pulse on"></span> rendering</span>' : ''}</div>
+      <div class="live-shot-info"><div class="row spread"><b>${esc(x.label)}</b><span class="pill ${x.state === 'rendered' ? 'ok' : x.state === 'failed' || x.state === 'needs repair' ? 'bad' : x.state === 'rendering' ? 'info' : ''}">${states[x.state]}${x.attempts > 1 ? ' · attempt ' + x.attempt : ''}</span></div>
+      ${x.start != null ? `<div class="hint">${Number(x.start).toFixed(1)}–${Number(x.end).toFixed(1)} s${x.intent ? ' · ' + esc(x.intent) : ''}</div>` : ''}
+      ${x.qc ? `<div class="hint ${x.qc.decision === 'PASS' || x.qc.accepted_by ? '' : 'bad'}">quality ${Number(x.qc.overall).toFixed(2)} · ${x.qc.accepted_by ? 'kept by you' : esc(String(x.qc.decision).toLowerCase())}${x.qc.issues && x.qc.issues.length ? ': ' + esc(x.qc.issues.join('; ')) : ''}</div>` : ''}
+      ${x.rating ? `<div class="hint">your verdict ${x.rating > 0 ? '+' : ''}${x.rating}</div>` : ''}
+      ${Object.keys(x.overrides).length ? `<div class="hint">${Object.entries(x.overrides).map(([k, v]) => esc(k) + ' ' + esc(v)).join(' · ')}</div>` : ''}
+      ${x.error ? `<div class="hint bad">${esc(x.error)}</div>` : ''}
+      ${x.prompt ? `<details><summary>Prompt</summary><pre>${esc(x.prompt)}</pre></details>` : ''}</div></article>`).join('') || '';
+  };
+
+  const stages = s => {
+    $('#stages').innerHTML = s.stages.map(st => `<li class="trace-item ${st.state}"><div class="trace-dot"></div><div><div class="row spread"><b>${esc(st.label)}</b><span class="hint">${st.state === 'skipped' ? 'not needed' : st.state === 'todo' ? '' : esc(st.state)}${st.updated_at ? ' · ' + time(st.updated_at) : ''}</span></div>${st.by ? `<div class="hint">by ${esc(st.by)}</div>` : ''}${st.lines.map(l => `<div class="trace-line">${esc(l)}</div>`).join('')}</div></li>`).join('');
+  };
+
+  const events = s => {
+    $('#events-hint').textContent = `${s.events.length} most recent`;
+    $('#events').innerHTML = s.events.map(e => `<li><span class="muted">${time(e.at)}</span><span class="who">${esc(e.actor)}</span><span>${esc(e.text)}</span></li>`).join('');
+  };
+
+  const render = s => { $('#graph').innerHTML = graph(s); now(s); shots(s); stages(s); events(s); $('#live-updated').textContent = 'updated ' + time(s.generated_at); };
+  render(snap);
+  let timer;
+  const poll = async () => {
+    if (document.hidden) return schedule();
+    try {
+      const r = await fetch(location.pathname + '.json', {cache: 'no-store'});
+      if (r.ok) {
+        const next = await r.json();
+        const playing = [...document.querySelectorAll('video')].some(v => !v.paused);
+        const busy = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '');
+        if (decisionKey(next) !== startKey && !playing && !busy) { location.reload(); return; }
+        snap = next; render(snap);
+      }
+    } catch (e) { $('#live-updated').textContent = 'connection lost; retrying'; }
+    schedule();
+  };
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(poll, snap.working ? 3000 : 12000); };
+  schedule();
+})();
+</script>
+{% endblock %}

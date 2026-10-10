@@ -795,6 +795,57 @@ def cmd_audio_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rea_run(args: argparse.Namespace) -> int:
+    """Queue one REA run; --wait runs it in this process."""
+    from rokkur_studio.db.models import ReaRun
+    from rokkur_studio.jobs.worker import Worker
+    from rokkur_studio.pipeline.context import build_context
+    from rokkur_studio.services import rea as svc
+    from rokkur_studio.services.rea import ReaRequest, ReaStore
+
+    settings = _settings(args)
+    ctx = build_context(settings)
+    store = ReaStore(settings.studio.data_dir)
+    request = ReaRequest(preset=args.preset, target=args.target or "", query=args.query or "",
+                         provider=args.provider or "", extra_args=args.extra or [],
+                         project_id=args.project, title=args.title or "")
+    try:
+        with ctx.db.transaction() as s:
+            run_id = svc.request_run(s, settings, store, request, actor="cli").id
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return 1
+    print(f"queued {run_id}")
+    if not args.wait:
+        print("A running worker executes it; `rokkur-studio rea-list` shows the result.")
+        return 0
+    Worker(ctx, kinds=["rea"], worker_id="cli-rea").drain(max_jobs=1)
+    with ctx.db.session() as s:
+        done = s.get(ReaRun, run_id)
+        if done is None:
+            return 1
+        where = store.path_for(done.rel_path) if done.rel_path else ""
+        print(f"{done.id}  {done.status:<8} exit {done.exit_code}  {where}")
+        if done.error:
+            print(f"  {done.error.get('message', '')}")
+        for key, value in done.summary.items():
+            print(f"  {key}: {value}")
+        return 0 if done.status == "done" else 1
+
+
+def cmd_rea_list(args: argparse.Namespace) -> int:
+    from rokkur_studio.db.session import Database
+    from rokkur_studio.services import rea as svc
+
+    settings = _settings(args)
+    db = Database(settings.database.url)
+    with db.session() as s:
+        for row in svc.list_runs(s, limit=args.limit):
+            print(f"{row.id}  {row.status:<8} {row.preset:<12} {row.target[:50]:<50}  "
+                  f"{row.title or row.query[:30]}")
+    return 0
+
+
 def cmd_image_list(args: argparse.Namespace) -> int:
     from rokkur_studio.db.session import Database
     from rokkur_studio.services import images as svc
@@ -945,6 +996,21 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("audio-list", help="list the sound library")
     p.add_argument("--limit", type=int, default=30)
     p.set_defaults(func=cmd_audio_list)
+    p = sub.add_parser("rea-run", help="run REA (reverse engineer anything) on a local file or app")
+    p.add_argument("preset", choices=["analyze", "inspect", "search", "function", "decompile",
+                                      "xrefs", "trace", "instructions", "doctor", "providers",
+                                      "capabilities"])
+    p.add_argument("target", nargs="?", help="absolute path of the file or folder")
+    p.add_argument("--query", help="search text, function name or address")
+    p.add_argument("--provider", help="ghidra, hopper, ida… for native targets")
+    p.add_argument("--extra", nargs="*", help="more arguments passed to rea as written")
+    p.add_argument("--project", help="the video this run is about")
+    p.add_argument("--title")
+    p.add_argument("--wait", action="store_true", help="run in this process instead of a worker")
+    p.set_defaults(func=cmd_rea_run)
+    p = sub.add_parser("rea-list", help="list REA runs")
+    p.add_argument("--limit", type=int, default=30)
+    p.set_defaults(func=cmd_rea_list)
     p = sub.add_parser("prompt-schedule", help="print a project's Batch Prompt Schedule")
     p.add_argument("project_id")
     p.set_defaults(func=cmd_prompt_schedule)

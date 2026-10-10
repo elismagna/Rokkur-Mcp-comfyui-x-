@@ -1,0 +1,92 @@
+{% extends "base.html" %}{% from "_icons.html" import icon %}
+{% block title %}REA · Rökkur Studio{% endblock %}
+{% block crumb %}Rökkur / REA{% endblock %}
+{% block head %}{% if busy %}<meta name="studio-refresh" content="5">{% endif %}{% endblock %}
+{% block body %}
+<div class="eyebrow">STUDIO / REVERSE ENGINEER ANYTHING</div>
+<h1>REA</h1>
+<p class="sub">Look inside a program, a JavaScript or Electron app, an .asar, a .NET assembly or a plugin on this machine and get evidence: what it is made of, what it calls, where a feature lives. The studio runs the real <code>rea</code> command and keeps every run's output; nothing here is guessed.</p>
+{% if not avail.ok %}<div class="callout warn" style="margin-bottom:20px"><span style="color:var(--warn)">{{ icon('sys') }}</span><div><p><b>REA is not available to the worker.</b></p><div class="hint">{{ avail.reason }}</div><div class="hint">Set-up: <code>docs/rea.md</code>. Earlier runs below stay readable.</div></div></div>
+{% else %}<p class="hint" style="margin:-8px 0 18px">{{ avail.version or 'rea' }} · <code>{{ avail.command|join(' ') }}</code></p>{% endif %}
+
+{% if selected %}
+<section class="card" id="selected" style="margin-bottom:22px">
+  <div class="row spread" style="align-items:flex-start"><div><div class="eyebrow">{{ presets[selected.preset].label if selected.preset in presets else selected.preset }}</div><h2 style="margin:0">{{ selected.title or selected.target|replace('\\','/')|truncate(80, true, '…', 0) or selected.preset }}</h2></div>
+    <span class="pill {{ 'ok' if selected.status == 'done' else ('bad' if selected.status == 'failed' else 'info') }}">{{ selected.status }}{% if selected.exit_code is not none %} · exit {{ selected.exit_code }}{% endif %}</span></div>
+  <dl class="kv" style="margin-top:12px">
+    <dt>Command</dt><dd><code>rea {{ selected.args|join(' ') }}</code></dd>
+    {% if selected.query %}<dt>Query</dt><dd>{{ selected.query }}</dd>{% endif %}
+    {% if selected.took_s %}<dt>Took</dt><dd>{{ '%.1f'|format(selected.took_s) }} s</dd>{% endif %}
+    {% if selected.project_id %}<dt>Video</dt><dd><a href="/ui/projects/{{ selected.project_id }}">{{ selected.project_id }}</a></dd>{% endif %}
+    {% if selected.error %}<dt>Error</dt><dd class="bad">{{ selected.error.message }}</dd>{% endif %}
+    {% set sm = selected.summary %}
+    {% if sm.subject %}<dt>Subject</dt><dd>{{ sm.subject.name }}{% if sm.subject.format %} · {{ sm.subject.format }}{% endif %}{% if sm.subject.architecture %} · {{ sm.subject.architecture }}{% endif %}</dd>{% endif %}
+    {% if sm.provider %}<dt>Provider</dt><dd>{{ sm.provider }}{% if sm.operation %} · {{ sm.operation|replace('_',' ') }}{% endif %}</dd>{% endif %}
+    {% if sm.confidence %}<dt>Confidence</dt><dd>{{ sm.confidence }}{% if sm.authority %} · {{ sm.authority }}{% endif %}{% if sm.limitations %} · {{ sm.limitations }} limitation{{ '' if sm.limitations == 1 else 's' }} stated{% endif %}</dd>{% endif %}
+    {% if sm.statistics %}<dt>Found</dt><dd>{% for k, v in sm.statistics.items() %}{{ k|replace('_',' ') }} {{ v }}{{ ' · ' if not loop.last }}{% endfor %}</dd>{% endif %}
+    {% if sm.graph %}<dt>Graph</dt><dd>{% for k, v in sm.graph.items() %}{{ v }} {{ k }}{{ ' · ' if not loop.last }}{% endfor %}</dd>{% endif %}
+    {% for k in ['functions', 'strings', 'matches', 'results', 'xrefs', 'callers', 'callees', 'instructions'] if sm.get(k) is not none %}<dt>{{ k|capitalize }}</dt><dd>{{ sm[k] }}</dd>{% endfor %}
+    {% if sm.healthy is defined %}<dt>Ready</dt><dd>{{ 'yes' if sm.healthy else 'no' }} · {{ sm.checks.ok }} of {{ sm.checks.total }} checks pass{% if sm.failing %} · failing: {{ sm.failing|join(', ') }}{% endif %}</dd>{% endif %}
+    {% if sm.capabilities %}<dt>Capabilities</dt><dd>{{ sm.capabilities.available }} of {{ sm.capabilities.total }} available here{% if sm.providers %} · providers: {% for k, v in sm.providers.items() %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}{% endif %}</dd>{% endif %}
+  </dl>
+  {% if output_text %}<details style="margin-top:12px" open><summary>Output ({{ 'JSON' if selected.rel_path.endswith('.json') else 'text' }})</summary><pre class="rea-output">{{ output_text }}</pre></details>
+  <div class="row" style="margin-top:10px;gap:8px"><a class="btn secondary small" href="/rea/{{ selected.id }}/output" download>Download</a>
+  <form method="post" action="/ui/rea/{{ selected.id }}/delete" onsubmit="return confirm('Delete this run and its output?')"><button class="ghost small">Delete</button></form></div>
+  {% elif selected.status in ['queued', 'running'] %}<p class="hint"><span class="pulse on" style="display:inline-block;margin-right:8px"></span>{{ 'REA is running' if selected.status == 'running' else 'Waiting for a worker' }}. This page refreshes on its own.</p>
+  {% else %}<form method="post" action="/ui/rea/{{ selected.id }}/delete" style="margin-top:10px"><button class="ghost small">Delete</button></form>{% endif %}
+</section>
+{% endif %}
+
+<div class="create-layout">
+<div class="stack">
+<form method="post" action="/ui/rea" id="rea-form" class="card">
+  <div class="section-heading"><span class="step-number">01</span><div><h2>Run REA</h2><p class="hint">Every run is one <code>rea</code> command with <code>--json</code>, run by the worker on this machine.</p></div></div>
+  <label for="preset">What</label>
+  <select id="preset" name="preset">{% for key, pr in presets.items() %}<option value="{{ key }}" data-target="{{ 'yes' if pr.target else 'no' }}" data-query="{{ pr.query or '' }}" data-provider="{{ 'yes' if pr.provider else 'no' }}" data-help="{{ pr.help }}" {% if key == form.preset %}selected{% endif %}>{{ pr.label }}</option>{% endfor %}</select>
+  <p class="hint" id="preset-help"></p>
+  <div data-needs="target">
+    <label for="target">File or folder <span class="muted">absolute path the worker can read</span></label>
+    <input id="target" name="target" value="{{ form.target }}" placeholder="C:\Users\Elis\AppData\Local\Programs\comfyui-electron\resources\app.asar" list="target-list">
+    <datalist id="target-list">{% for m in media %}<option value="{{ m.path }}">{% endfor %}</datalist>
+    <p class="hint">Native programs (an .exe, a Mach-O, an ELF, a .dll) need Ghidra, Hopper or IDA set up for REA; app folders and .asar files are analysed statically without an engine. Search, function, decompile, xrefs and trace work on a file, not a folder.</p>
+  </div>
+  <div data-needs="query"><label for="query" id="query-label">Query</label><input id="query" name="query" maxlength="2000"></div>
+  <details><summary>Provider, extra arguments, video, name</summary>
+    <div data-needs="provider"><label for="provider">Provider <span class="muted">for native targets</span></label><input id="provider" name="provider" placeholder="{{ settings.rea.provider or 'automatic (ghidra, hopper, ida…)' }}"></div>
+    <label for="extra_args">Extra arguments <span class="muted">passed to rea as written</span></label><input id="extra_args" name="extra_args" placeholder="--limit 50">
+    <label for="project_id">For a video <span class="muted">optional</span></label><select id="project_id" name="project_id"><option value="">None</option>{% for pr in projects %}<option value="{{ pr.id }}" {% if pr.id == form.project_id %}selected{% endif %}>{{ pr.name }}</option>{% endfor %}</select>
+    <label for="title">Name <span class="muted">optional</span></label><input id="title" name="title" maxlength="200">
+  </details>
+  <p style="margin:16px 0 0"><button class="launch-button" {% if not avail.ok %}disabled{% endif %}>Run <span aria-hidden="true">↗</span></button></p>
+</form>
+<section class="card"><h2>What the studio uses it for</h2>
+  {% for what, how in uses %}<p><b>{{ what }}</b><br><span class="hint">{{ how }}</span></p>{% endfor %}
+  <p class="hint">REA is Elis's fork of <a href="https://github.com/morluto/rea" target="_blank" rel="noopener">morluto/rea</a> (MIT). Results carry their evidence and limitations; read them before acting on a conclusion. Launched targets run with the worker's permissions, so only analyse software you may inspect.</p>
+</section>
+</div>
+<div class="stack">
+<section class="card">
+  <div class="row spread"><h2>Runs</h2><div class="chips" style="margin:0">{% for key, label in [('', 'All'), ('analyze', 'Analyses'), ('search', 'Searches'), ('function', 'Functions'), ('doctor', 'Doctor')] %}<a href="/ui/rea?preset={{ key }}" class="{{ 'on' if key == preset else '' }}">{{ label }}</a>{% endfor %}</div></div>
+  {% if runs %}<div class="aud-list">{% for r in runs %}<a class="aud-card {{ r.status }}{% if selected and r.id == selected.id %} on{% endif %}" href="/ui/rea?run={{ r.id }}{% if preset %}&preset={{ preset }}{% endif %}#selected">
+    <div class="row spread"><b class="truncate">{{ r.title or (presets[r.preset].label if r.preset in presets else r.preset) }}</b><span class="pill {{ 'ok' if r.status == 'done' else ('bad' if r.status == 'failed' else 'info') }}">{{ r.status }}</span></div>
+    <div class="hint truncate">{{ r.target|replace('\\','/') or 'no target' }}{% if r.query %} · {{ r.query }}{% endif %}</div>
+    <div class="hint">{{ r.created_at.strftime('%d %b %H:%M') }}{% if r.took_s %} · {{ '%.0f'|format(r.took_s) }} s{% endif %}{% if r.summary.provider %} · {{ r.summary.provider }}{% endif %}{% if r.error %} · <span class="bad">{{ r.error.message|truncate(70) }}</span>{% endif %}</div>
+  </a>{% endfor %}</div>
+  {% if more %}<p style="margin:14px 0 0"><a class="btn secondary small" href="/ui/rea?page={{ page + 1 }}{% if preset %}&preset={{ preset }}{% endif %}">Older runs</a></p>{% endif %}
+  {% else %}<p class="empty">No runs yet. Start with <b>Doctor</b> to see what REA can do on this machine.</p>{% endif %}
+</section>
+</div>
+</div>
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const preset = $('#preset');
+  const sync = () => { const o = preset.selectedOptions[0]; if (!o) return;
+    document.querySelectorAll('[data-needs]').forEach(el => { const n = el.dataset.needs;
+      el.hidden = n === 'target' ? o.dataset.target !== 'yes' : n === 'query' ? !o.dataset.query : n === 'provider' ? o.dataset.provider !== 'yes' : false; });
+    $('#preset-help').textContent = o.dataset.help; $('#query-label').textContent = o.dataset.query || 'Query';
+    $('#target').required = o.dataset.target === 'yes'; $('#query').required = Boolean(o.dataset.query); };
+  preset.addEventListener('change', sync); sync();
+})();
+</script>
+{% endblock %}

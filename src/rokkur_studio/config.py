@@ -267,6 +267,15 @@ class AudioSection(BaseModel):
     max_seconds: float = Field(240, ge=1, le=600)   # hard cap on top of each profile's own
 
 
+class ReaSection(BaseModel):
+    """REA, the reverse-engineering CLI (docs/rea.md): how the worker runs it."""
+
+    command: str = "rea"            # the executable, or "npx -y rea-agents@latest"
+    timeout_s: float = Field(1800, ge=10)
+    provider: str = ""              # a standing --provider choice for native targets, or none
+    snapshots: bool = True          # keep analysis snapshots under data/rea/snapshots
+
+
 class AudioProfile(BaseModel):
     """One audio profile from ``config/audio_profiles.yaml``: a model and its workflow."""
 
@@ -328,6 +337,7 @@ class Settings(BaseModel):
     jobs: JobsSection = JobsSection()
     images: ImagesSection = ImagesSection()
     audio: AudioSection = AudioSection()
+    rea: ReaSection = ReaSection()
     profiles: dict[str, RenderProfile] = Field(default_factory=dict)
     image_profiles: dict[str, ImageProfile] = Field(default_factory=dict)
     audio_profiles: dict[str, AudioProfile] = Field(default_factory=dict)

@@ -18,6 +18,7 @@
     <p class="sub">{{ p.creative_input.get('theme','') }}{% if p.repair_rounds %} · {{p.repair_rounds}} repair round{{'' if p.repair_rounds==1 else 's'}}{% endif %}</p>
   </div>
   <div class="row">
+    <a class="btn secondary" href="/ui/projects/{{p.id}}/live">{{ icon('live') }} Watch it work</a>
     {% if p.status in ['DISCOVERED','SCORED'] %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/start"><button>Start</button></form>{% endif %}
     {% if p.status == 'RIGHTS_PENDING' %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/approve-rights"><button>Approve rights</button></form>
     <form class="inline" method="post" action="/ui/projects/{{p.id}}/reject-rights"><button class="secondary">Reject</button></form>{% endif %}
