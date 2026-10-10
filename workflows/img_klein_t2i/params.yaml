@@ -1,0 +1,33 @@
+# FLUX.2 [klein] 4B distilled, text to image, ComfyUI core nodes only.
+# Source: Comfy-Org workflow template "Flux.2 [Klein] 4B: Text to Image"
+#   https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_flux2_klein_text_to_image.json
+#   (its "Flux.2 Klein 4B Distilled" subgraph: euler, Flux2Scheduler 4 steps, CFGGuider 1.0,
+#   negative = ConditioningZeroOut of the prompt). Tutorial: https://docs.comfy.org/tutorials/flux/flux-2-klein
+# Model weights (FLUX.2 [klein] 4B: Apache-2.0; the fp8 file is ~6 GB of VRAM):
+#   diffusion_models/flux-2-klein-4b-fp8.safetensors
+#     https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8
+#   text_encoders/qwen_3_4b.safetensors  (the same file Z-Image uses; already on the PC)
+#     https://huggingface.co/Comfy-Org/flux2-klein-4B/tree/main/split_files/text_encoders
+#   vae/flux2-vae.safetensors
+#     https://huggingface.co/Comfy-Org/flux2-dev/tree/main/split_files/vae
+# The distilled model takes no negative prompt (guidance 1); NEGATIVE_PROMPT is reported as ignored.
+# Sizes: multiples of 16; the KLEIN_4B profile caps the area at 1 megapixel.
+# Run `scripts/studio.ps1 comfy-check` to validate node inputs and model files on the PC.
+name: img_klein_t2i
+version: 1
+description: FLUX.2 [klein] 4B distilled text to image (4 steps)
+resource_class: GPU_HEAVY
+input_kind: none
+output_kinds: [images]
+parameters:
+  DIFFUSION_MODEL: {node: "70", input: unet_name, type: str, default: flux-2-klein-4b-fp8.safetensors}
+  TEXT_ENCODER: {node: "71", input: clip_name, type: str, default: qwen_3_4b.safetensors}
+  VAE: {node: "72", input: vae_name, type: str, default: flux2-vae.safetensors}
+  PROMPT: {node: "74", input: text, type: str, required: true}
+  WIDTH: {targets: [{node: "62", input: width}, {node: "66", input: width}], type: int, min: 256, max: 2048}
+  HEIGHT: {targets: [{node: "62", input: height}, {node: "66", input: height}], type: int, min: 256, max: 2048}
+  BATCH: {node: "66", input: batch_size, type: int, default: 1, min: 1, max: 8}
+  STEPS: {node: "62", input: steps, type: int, default: 4, min: 1, max: 50}
+  CFG: {node: "63", input: cfg, type: float, default: 1.0, min: 0, max: 20}
+  SEED: {node: "73", input: noise_seed, type: int, default: 0, min: 0}
+  OUTPUT_PREFIX: {node: "9", input: filename_prefix, type: str, default: rokkur/image}

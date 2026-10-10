@@ -1,0 +1,31 @@
+# FLUX.2 [klein] 4B distilled inpainting: the masked area is regenerated from the prompt, the
+# rest of the picture is kept pixel for pixel. Adapted from two published graphs:
+#   - the klein edit template (img_klein_edit): the whole source is attached to the prompt with
+#     ReferenceLatent, so the model knows what it is completing;
+#   - Comfy-Org's "Flux.1 Inpaint" template (flux_fill_inpaint_example,
+#     https://docs.comfy.org/tutorials/flux/flux-1-fill-dev): the core InpaintModelConditioning
+#     node turns the LoadImage mask into the sampler's noise mask, so only the masked latent is
+#     denoised. (klein is not a fill model; InpaintModelConditioning's concat inputs are ignored
+#     by it and the noise mask does the work, as with any non-inpaint checkpoint.)
+# The mask is the alpha channel of SOURCE_IMAGE (transparent = repaint), as ComfyUI's own
+# inpaint example does; GrowMask widens it so edges blend. Source and mask are the same size:
+# the studio sizes the picture before upload, so no ImageScaleToTotalPixels here.
+# Untested on a real GPU at the time of writing: see docs/images.md.
+name: img_klein_inpaint
+version: 1
+description: FLUX.2 [klein] 4B distilled inpaint (alpha mask, noise mask)
+resource_class: GPU_HEAVY
+input_kind: image
+output_kinds: [images]
+parameters:
+  DIFFUSION_MODEL: {node: "70", input: unet_name, type: str, default: flux-2-klein-4b-fp8.safetensors}
+  TEXT_ENCODER: {node: "71", input: clip_name, type: str, default: qwen_3_4b.safetensors}
+  VAE: {node: "72", input: vae_name, type: str, default: flux2-vae.safetensors}
+  PROMPT: {node: "74", input: text, type: str, required: true}
+  SOURCE_IMAGE: {node: "80", input: image, type: str, required: true}
+  MASK_GROW: {node: "85", input: expand, type: int, default: 8, min: 0, max: 128}
+  BATCH: {node: "91", input: amount, type: int, default: 1, min: 1, max: 8}
+  STEPS: {node: "62", input: steps, type: int, default: 4, min: 1, max: 50}
+  CFG: {node: "63", input: cfg, type: float, default: 1.0, min: 0, max: 20}
+  SEED: {node: "73", input: noise_seed, type: int, default: 0, min: 0}
+  OUTPUT_PREFIX: {node: "9", input: filename_prefix, type: str, default: rokkur/image}

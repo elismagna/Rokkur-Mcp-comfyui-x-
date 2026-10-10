@@ -7,6 +7,7 @@ QC, YouTube private-by-default) apply identically. Messages are passed back to t
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import hashlib
 import io
@@ -19,8 +20,15 @@ from typing import Annotated, Any
 from urllib.parse import quote
 
 import httpx
+import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -40,6 +48,7 @@ from rokkur_studio.db.models import (
     Asset,
     CostEntry,
     Event,
+    Image,
     Job,
     Project,
     Publication,
@@ -64,8 +73,17 @@ from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.domain.states import ProjectStatus as S
 from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline.context import StudioContext, profile_availability, supported_controls
-from rokkur_studio.pipeline.subject import OnnxSubjectMasker, decide_subject
+from rokkur_studio.pipeline.stages import _subject_masker
+from rokkur_studio.pipeline.subject import (
+    MaskerUnavailable,
+    OnnxSubjectMasker,
+    decide_subject,
+    resize,
+)
 from rokkur_studio.services import commands, publishing, ratings, taste
+from rokkur_studio.services import images as image_svc
+from rokkur_studio.services.assets import import_file
+from rokkur_studio.services.images import SIZE_PRESETS, ImageRequest, ImageStore
 from rokkur_studio.services.projects import (
     at_budget_limit,
     at_repair_limit,
@@ -337,11 +355,19 @@ def _tracker(ctx: StudioContext) -> tuple[AssetTracker | None, str | None]:
 
 
 @router.get("/new", response_class=HTMLResponse)
-def new_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
+def new_page(request: Request, ctx: Ctx, session: Db, reference_image: str = "",
+             source_video: str = "") -> HTMLResponse:
     tracker, _ = _tracker(ctx)
     profile = taste.build_profile(session)
     cloud = ctx.settings.cloud
-    return _page(request, "new.html", ctx, media=media_files(ctx),
+    reference = None
+    if reference_image:  # a picture from the library, handed over as the appearance reference
+        picture = session.get(Image, reference_image)
+        if picture is not None and picture.rel_path:
+            reference = {"id": picture.id, "title": picture.title or picture.prompt or picture.kind,
+                         "path": str(_images(ctx).path_for(picture.rel_path))}
+    return _page(request, "new.html", ctx, media=media_files(ctx), reference=reference,
+                 source_video=source_video,
                  suggestions=taste.suggestions(profile), taste=profile,
                  profile_status=profile_availability(ctx),
                  cloud=cloud if cloud.ready else None,
@@ -779,6 +805,202 @@ def project_action(project_id: str, action: str, ctx: Ctx, session: Db) -> Redir
 
 
 # -- taste ---------------------------------------------------------------------------------
+# -- pictures ---------------------------------------------------------------------------------
+
+def _images(ctx: StudioContext) -> ImageStore:
+    return ImageStore(ctx.settings.studio.data_dir)
+
+
+def _image_or_404(session: Session, image_id: str) -> Image:
+    try:
+        return image_svc.get_image(session, image_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+def image_availability(ctx: StudioContext, target: str = "local") -> dict[str, str | None]:
+    """Why each image profile cannot run right now, by its first operation; None when it can."""
+    out = {}
+    for name, profile in ctx.settings.image_profiles.items():
+        first = "generate" if "generate" in profile.workflows else next(iter(profile.workflows), "generate")
+        out[name] = ctx.settings.image_profile_problem(name, first, target=target)
+    return out
+
+
+PAGE_SIZE = 60
+
+
+@router.get("/images", response_class=HTMLResponse)
+def images_page(request: Request, ctx: Ctx, session: Db, image: str = "", kind: str = "",
+                page: int = 1) -> HTMLResponse:
+    page = max(1, page)
+    gallery = image_svc.list_images(session, limit=PAGE_SIZE + 1, offset=(page - 1) * PAGE_SIZE,
+                                    kind=kind or None)
+    more = len(gallery) > PAGE_SIZE
+    gallery = gallery[:PAGE_SIZE]
+    selected = session.get(Image, image) if image else None
+    library = [i for i in image_svc.list_images(session, limit=200) if i.status == "done" and i.rel_path]
+    status = image_availability(ctx)
+    cloud = ctx.settings.cloud
+    projects = list(session.scalars(select(Project).where(Project.status.in_(
+        [S.READY_TO_PUBLISH.value, S.PUBLISHED.value, S.MONITORING.value, S.QUALITY_PASSED.value]))
+        .order_by(Project.updated_at.desc()).limit(50)))
+    default = ctx.settings.images.default_profile
+    unavailable = status.get(default) or next((r for r in status.values() if r), None)
+    form = {"operation": request.query_params.get("op", "generate"),
+            "prompt": request.query_params.get("prompt", ""),
+            "source_id": request.query_params.get("source", "")}
+    return _page(request, "images.html", ctx, gallery=gallery, more=more, page=page, kind=kind,
+                 selected=selected, library=library, image_profiles=ctx.settings.image_profiles,
+                 image_status=status, available=not status.get(default),
+                 unavailable_reason=unavailable, sizes=SIZE_PRESETS,
+                 cloud=cloud if cloud.ready else None, projects=projects, form=form,
+                 busy=any(i.status in ("queued", "running") for i in gallery),
+                 parent=(session.get(Image, selected.parent_id)
+                         if selected and selected.parent_id else None),
+                 children=(list(session.scalars(select(Image).where(Image.parent_id == selected.id)
+                                                .order_by(Image.created_at)))
+                           if selected else []))
+
+
+@router.post("/images")
+def create_images_from_form(ctx: Ctx, session: Db, operation: Annotated[str, Form()] = "generate",
+                            prompt: Annotated[str, Form()] = "",
+                            profile: Annotated[str, Form()] = "",
+                            size: Annotated[str, Form()] = "square",
+                            width: Annotated[str, Form()] = "", height: Annotated[str, Form()] = "",
+                            count: Annotated[int, Form()] = 1,
+                            steps: Annotated[str, Form()] = "", cfg: Annotated[str, Form()] = "",
+                            seed: Annotated[str, Form()] = "",
+                            source_id: Annotated[str, Form()] = "",
+                            source_file: Annotated[UploadFile | None, File()] = None,
+                            rights_confirmed: Annotated[bool, Form()] = False,
+                            rights_evidence: Annotated[str, Form()] = "",
+                            mask_data: Annotated[str, Form()] = "",
+                            mask_grow: Annotated[int, Form()] = 8,
+                            pad_left: Annotated[int, Form()] = 0, pad_top: Annotated[int, Form()] = 0,
+                            pad_right: Annotated[int, Form()] = 0,
+                            pad_bottom: Annotated[int, Form()] = 0,
+                            feather: Annotated[int, Form()] = 24,
+                            scale: Annotated[int, Form()] = 2,
+                            render_on: Annotated[str, Form()] = "",
+                            title: Annotated[str, Form()] = "") -> RedirectResponse:
+    uploads = Path(ctx.settings.studio.data_dir) / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+
+    def fail(message: str) -> RedirectResponse:
+        for f in written:
+            f.unlink(missing_ok=True)
+        return _back("/ui/images", err=message)
+
+    source_path = None
+    if source_file is not None and source_file.filename:
+        suffix = Path(source_file.filename).suffix.lower()
+        dest = uploads / f"{uuid.uuid4().hex[:12]}{suffix}"
+        with dest.open("wb") as fh:
+            shutil.copyfileobj(source_file.file, fh)
+        written.append(dest)
+        source_path, source_id = str(dest), ""
+    mask_path = None
+    if mask_data.startswith("data:image/png;base64,"):
+        mask = uploads / f"{uuid.uuid4().hex[:12]}_mask.png"
+        try:
+            mask.write_bytes(base64.b64decode(mask_data.split(",", 1)[1]))
+        except ValueError:
+            return fail("The painted mask could not be read; paint it again.")
+        written.append(mask)
+        mask_path = str(mask)
+    custom = size == "custom" and width.strip() and height.strip()
+    try:
+        body = ImageRequest(
+            operation=operation,  # type: ignore[arg-type]
+            prompt=prompt, profile=profile or None,
+            size=None if custom else (size or None),
+            width=int(width) if custom else None, height=int(height) if custom else None,
+            count=count, steps=int(steps) if steps.strip() else None,
+            cfg=float(cfg) if cfg.strip() else None, seed=int(seed) if seed.strip() else None,
+            source_id=source_id or None, source_path=source_path, mask_path=mask_path,
+            mask_grow=mask_grow, pad={"left": pad_left, "top": pad_top, "right": pad_right,
+                                      "bottom": pad_bottom},
+            feather=feather, scale=scale,  # type: ignore[arg-type]
+            render_on=render_on or None,  # type: ignore[arg-type]
+            title=title, rights_confirmed=rights_confirmed, rights_evidence=rights_evidence)
+        rows = image_svc.request_images(session, ctx.settings, _images(ctx), ctx.ffmpeg, body,
+                                        actor="dashboard")
+    except (ValueError, LookupError, ValidationError) as exc:
+        return fail(str(exc).splitlines()[0] if isinstance(exc, ValidationError) else str(exc))
+    for f in written:  # the request copied what it needs
+        f.unlink(missing_ok=True)
+    n = len(rows)
+    return _back(f"/ui/images?image={rows[0].id}#selected",
+                 msg=f"{n} picture{'s' if n > 1 else ''} queued; the worker renders "
+                     f"{'them' if n > 1 else 'it'} now")
+
+
+@router.post("/images/{image_id}/verdict")
+def image_verdict(image_id: str, request: Request, session: Db,
+                  value: Annotated[int, Form()] = 0) -> Response:
+    image = _image_or_404(session, image_id)
+    new_value = None if value == 0 or image.verdict == value else value
+    try:
+        image_svc.set_verdict(session, image, new_value)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"verdict": image.verdict})
+    return _back(f"/ui/images?image={image_id}#selected")
+
+
+@router.post("/images/{image_id}/delete")
+def image_delete(image_id: str, ctx: Ctx, session: Db) -> RedirectResponse:
+    image_svc.delete_image(session, _images(ctx), _image_or_404(session, image_id))
+    return _back("/ui/images", msg="Picture deleted")
+
+
+@router.post("/images/{image_id}/thumbnail")
+def image_as_thumbnail(image_id: str, ctx: Ctx, session: Db,
+                       project_id: Annotated[str, Form()]) -> RedirectResponse:
+    image = _image_or_404(session, image_id)
+    if not image.rel_path:
+        return _back(f"/ui/images?image={image_id}", err="This picture has no file yet.")
+    try:
+        project = get_project(session, project_id)
+    except LookupError:
+        return _back(f"/ui/images?image={image_id}", err="Pick a video.")
+    import_file(session, ctx.store, project.id, "thumbnail", "thumbnails",
+                _images(ctx).path_for(image.rel_path), name=f"thumb_{image.id}.png",
+                meta={"image_id": image.id, "source": "pictures"})
+    return _back(f"/ui/projects/{project.id}#publish",
+                 msg="Thumbnail set from the picture; the next upload uses it")
+
+
+@router.get("/images/{image_id}/automask")
+def image_automask(image_id: str, ctx: Ctx, session: Db, invert: bool = False) -> FileResponse:
+    """The main subject of a picture (white) on black, drawn by the subject model."""
+    image = _image_or_404(session, image_id)
+    if not image.rel_path:
+        raise HTTPException(404, "this picture has no file yet")
+    store = _images(ctx)
+    path = store.path_for(image.rel_path)
+    masker = _subject_masker(ctx)
+    try:
+        width, height = ctx.ffmpeg.image_size(path)
+        frames = ctx.ffmpeg.read_rgb_frames(path, masker.size, masker.size)
+        probs = masker.predict(frames[:1])[0]
+    except MaskerUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except FFmpegError as exc:
+        raise HTTPException(422, f"could not read the picture: {exc.summary}") from exc
+    chosen = resize(probs, height, width) > 0.5
+    if invert:
+        chosen = ~chosen
+    frame = np.repeat((chosen.astype(np.uint8) * 255)[..., None], 3, axis=2)
+    out = store.dir(image.id) / ("automask_inverted.png" if invert else "automask.png")
+    ctx.ffmpeg.write_image(frame, out)
+    return FileResponse(out, media_type="image/png")
+
+
 @router.get("/taste", response_class=HTMLResponse)
 def taste_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
     profile = taste.build_profile(session)

@@ -7,7 +7,13 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from rokkur_studio import __version__
-from rokkur_studio.api import routes_director, routes_projects, routes_system, routes_youtube
+from rokkur_studio.api import (
+    routes_director,
+    routes_images,
+    routes_projects,
+    routes_system,
+    routes_youtube,
+)
 from rokkur_studio.config import Settings, get_settings
 from rokkur_studio.dashboard.views import STATIC_DIR
 from rokkur_studio.dashboard.views import router as dashboard_router
@@ -23,6 +29,7 @@ def create_app(settings: Settings | None = None, ctx: StudioContext | None = Non
     app.include_router(routes_system.router)
     app.include_router(routes_director.router)
     app.include_router(routes_youtube.router)
+    app.include_router(routes_images.router)
     app.include_router(dashboard_router)
     app.mount("/ui/static", StaticFiles(directory=STATIC_DIR), name="dashboard-static")
 

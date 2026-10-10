@@ -57,13 +57,22 @@ foreach ($name in $Files.Keys) {
 }
 # Optional: the RTX3070_DRAFT profile's Self-Forcing LoRA (Apache-2.0), from
 # huggingface.co/Kijai/WanVideo_comfy -> LoRAs/Wan2_1_self_forcing_1_3B/
-$Optional = [ordered]@{ "Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors" = "loras" }
+# Optional: the picture models (docs/images.md). FLUX.2 [klein] 4B fp8 (Apache-2.0) from
+# huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8, its VAE from Comfy-Org/flux2-dev,
+# Z-Image's VAE from Comfy-Org/z_image_turbo, RealESRGAN x4plus (BSD-3) from the Real-ESRGAN releases.
+$Optional = [ordered]@{
+  "Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors" = "loras"
+  "flux-2-klein-4b-fp8.safetensors" = "diffusion_models"
+  "flux2-vae.safetensors" = "vae"
+  "ae.safetensors" = "vae"
+  "RealESRGAN_x4plus.pth" = "upscale_models"
+}
 foreach ($name in $Optional.Keys) {
   $dest = Join-Path (Join-Path $ModelsDir $Optional[$name]) $name
   if (Test-Path $dest) { Write-Host "  [in place] $($Optional[$name])\$name (optional)"; continue }
   $src = Get-ChildItem -Path $From -Filter $name -Recurse -File -Depth 3 -ErrorAction SilentlyContinue |
     Select-Object -First 1
-  if (-not $src) { Write-Host "  [optional, not found] $name (only RTX3070_DRAFT needs it)"; continue }
+  if (-not $src) { Write-Host "  [optional, not found] $name (RTX3070_DRAFT or the picture profiles)"; continue }
   New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
   Move-Item -Path $src.FullName -Destination $dest
   Write-Host "  [moved] $name -> $($Optional[$name])\"

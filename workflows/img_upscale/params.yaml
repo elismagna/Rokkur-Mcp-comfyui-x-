@@ -1,0 +1,19 @@
+# Upscale with an ESRGAN-family model, ComfyUI core nodes only.
+# Source: ComfyUI upscale model example (https://comfyanonymous.github.io/ComfyUI_examples/upscale_models/):
+#   UpscaleModelLoader -> ImageUpscaleWithModel. ImageScaleBy then brings a 4x model down to the
+#   factor you asked for (SCALE_BY 0.5 for 2x).
+# Model: upscale_models/RealESRGAN_x4plus.pth (BSD-3-Clause),
+#   https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
+#   Any model from https://openmodeldb.info/ works too; check its license (4x-UltraSharp is
+#   CC BY-NC-SA, so not for videos you publish commercially).
+name: img_upscale
+version: 1
+description: Upscale with an ESRGAN model (RealESRGAN x4plus by default)
+resource_class: GPU_MEDIUM
+input_kind: image
+output_kinds: [images]
+parameters:
+  SOURCE_IMAGE: {node: "1", input: image, type: str, required: true}
+  UPSCALE_MODEL: {node: "2", input: model_name, type: str, default: RealESRGAN_x4plus.pth}
+  SCALE_BY: {node: "4", input: scale_by, type: float, default: 1.0, min: 0.1, max: 2}
+  OUTPUT_PREFIX: {node: "9", input: filename_prefix, type: str, default: rokkur/image}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import logging
 import re
 import shutil
@@ -307,6 +308,42 @@ class FFmpeg:
         if codec == "h265":
             args += ["-tag:v", "hvc1"]
         self._run(self._ff(*args, str(out)))
+        return out
+
+    # -- still images -----------------------------------------------------------------------
+    def image_size(self, path: Path) -> tuple[int, int]:
+        info = self.probe(path)
+        return info.width, info.height
+
+    def fit_image(self, path: Path, out: Path, *, max_pixels: int, multiple: int = 16,
+                  max_side: int = 4096) -> Path:
+        """Copy a picture as PNG, scaled down so its area is at most ``max_pixels`` and both
+        sides are multiples of ``multiple`` (what the image models' latents need). Never
+        scales up; a picture already within the limits only has its sides snapped."""
+        width, height = self.image_size(path)
+        scale = min(1.0, math.sqrt(max_pixels / (width * height)), max_side / width,
+                    max_side / height)
+        w = max(multiple, int(width * scale) // multiple * multiple)
+        h = max(multiple, int(height * scale) // multiple * multiple)
+        vf = f"scale={w}:{h}:flags=lanczos,format=rgba"
+        self._run(self._ff("-i", str(path), "-vf", vf, "-frames:v", "1", str(out)))
+        return out
+
+    def alpha_from_mask(self, image: Path, mask: Path, out: Path) -> Path:
+        """Write ``image`` as PNG whose alpha is transparent where ``mask`` is bright.
+
+        ComfyUI's LoadImage reads the mask from the alpha channel, with transparent pixels
+        meaning "repaint", so a white brush stroke on the mask becomes the inpainting area.
+        """
+        self._run(self._ff("-i", str(image), "-i", str(mask), "-filter_complex",
+                           "[1:v]format=gray,negate[a];[a][0:v]scale2ref[m][b];"
+                           "[b]format=rgba[c];[c][m]alphamerge",
+                           "-frames:v", "1", "-pix_fmt", "rgba", str(out)))
+        return out
+
+    def flatten_image(self, image: Path, out: Path) -> Path:
+        """Drop the alpha channel (white underneath), for models that take no mask."""
+        self._run(self._ff("-i", str(image), "-vf", "format=rgb24", "-frames:v", "1", str(out)))
         return out
 
     def thumbnail(self, video: Path, out: Path, *, at: float, width: int = 1280) -> Path:

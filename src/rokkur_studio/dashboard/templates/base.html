@@ -13,6 +13,7 @@
   <nav class="nav-list" aria-label="Main navigation">
     <a class="nav {% if path=='/ui' %}on{% endif %}" href="/ui">{{icon('home')}}Home</a>
     <a class="nav {% if path.startswith('/ui/projects') %}on{% endif %}" href="/ui/projects">{{icon('film')}}Projects</a>
+    <a class="nav {% if path.startswith('/ui/images') %}on{% endif %}" href="/ui/images">{{icon('image')}}Pictures</a>
     <a class="nav {% if path=='/ui/taste' %}on{% endif %}" href="/ui/taste">{{icon('taste')}}Your taste</a>
     <a class="nav {% if path=='/ui/approvals' %}on{% endif %}" href="/ui/approvals">{{icon('check')}}Approvals<span class="count" data-count="approvals" hidden></span></a>
     <a class="nav {% if path=='/ui/queue' %}on{% endif %}" href="/ui/queue">{{icon('queue')}}Queue</a>

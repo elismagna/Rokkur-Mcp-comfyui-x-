@@ -1,0 +1,44 @@
+# Image profiles: which workflow template renders each kind of still-image job (docs/images.md).
+# A profile is a model family; "workflows" maps an operation to a template in workflows/.
+# Operations: generate (text to image), edit (instruction + reference image), variation (edit
+# with a variation instruction), inpaint (alpha-masked repaint), outpaint (padded sides),
+# upscale (ESRGAN). max_pixels caps the area of generated and edited pictures; sizes are
+# rounded to multiples of 16. "degrade" is the CUDA-OOM ladder: each step once, never the
+# same work twice.
+profiles:
+  KLEIN_4B:
+    description: FLUX.2 [klein] 4B distilled (Apache-2.0), 4 steps; generate, edit, inpaint, outpaint
+    workflows:
+      generate: img_klein_t2i
+      edit: img_klein_edit
+      variation: img_klein_edit
+      inpaint: img_klein_inpaint
+      outpaint: img_klein_outpaint
+    max_pixels: 1048576     # 1 MP, what the Comfy-Org edit template scales references to
+    steps: 4
+    cfg: 1.0
+    resource_class: GPU_HEAVY
+    min_vram_gb: 0          # fp8 weights: about 6 GB; ComfyUI offloads the rest on an 8 GB card
+    degrade: [clear_cache, single_image, reduce_resolution]
+
+  ZIMAGE_TURBO:
+    description: Z-Image-Turbo 6B (Apache-2.0), 8 steps; generate only. Needs 16 GB to be quick; offloads on 8 GB
+    workflows:
+      generate: img_zimage_t2i
+    max_pixels: 1048576
+    steps: 8
+    cfg: 1.0
+    resource_class: GPU_HEAVY
+    min_vram_gb: 0
+    degrade: [clear_cache, single_image, reduce_resolution]
+
+  UPSCALE:
+    description: RealESRGAN x4plus (BSD-3) upscaling; no prompt
+    workflows:
+      upscale: img_upscale
+    max_pixels: 16777216    # 4 MP in, 16 MP out
+    steps: 1
+    cfg: 1.0
+    resource_class: GPU_MEDIUM
+    min_vram_gb: 0
+    degrade: [clear_cache]

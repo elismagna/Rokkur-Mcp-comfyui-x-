@@ -10,6 +10,23 @@ from typing import Any
 import httpx
 
 
+def _png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
+    import struct
+    import zlib
+
+    raw = b"".join(b"\0" + bytes(rgb) * width for _ in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+PNG_32 = _png(32, 32, (120, 80, 200))
+
+
 class FakeComfyUI:
     """Implements the subset of ComfyUI's HTTP API that Studio uses.
 
@@ -27,6 +44,7 @@ class FakeComfyUI:
         self.interrupted: list[str] = []
         self.deleted: list[str] = []
         self.object_info_data = object_info or {}
+        self.image_sources: dict[str, str | None] = {}
         self.down = False
 
     def transport(self) -> httpx.MockTransport:
@@ -44,6 +62,9 @@ class FakeComfyUI:
             self.history_store[prompt_id] = {"prompt": [], "outputs": {}, "status": {
                 "status_str": "error", "completed": False, "messages": msgs}}
             return
+        if not any(n["class_type"] == "LoadVideo" for n in workflow.values()):
+            self._complete_images(prompt_id, workflow, msgs)
+            return
         video_name = next(n["inputs"].get("file") for n in workflow.values()
                           if n["class_type"] == "LoadVideo")
         msgs.append(["execution_success", {"prompt_id": prompt_id, "timestamp": 3500}])
@@ -51,6 +72,25 @@ class FakeComfyUI:
             {"filename": f"out_{video_name}", "subfolder": "rokkur", "type": "output"}],
             "animated": [True]}}, "status": {"status_str": "success", "completed": True,
                                              "messages": msgs}}
+
+    def _complete_images(self, prompt_id: str, workflow: dict[str, Any], msgs: list[Any]) -> None:
+        """A still-image graph: one PNG per picture in the batch, echoing the input picture
+        when the graph loads one (edit, inpaint, upscale), else a plain colour."""
+        batch = 1
+        for n in workflow.values():
+            if n["class_type"] in ("EmptyFlux2LatentImage", "EmptySD3LatentImage",
+                                   "EmptyLatentImage"):
+                batch = int(n["inputs"].get("batch_size", 1))
+            elif n["class_type"] == "RepeatLatentBatch":
+                batch = int(n["inputs"].get("amount", 1))
+        source = next((n["inputs"].get("image") for n in workflow.values()
+                       if n["class_type"] == "LoadImage"), None)
+        self.image_sources[prompt_id] = source
+        msgs.append(["execution_success", {"prompt_id": prompt_id, "timestamp": 2200}])
+        self.history_store[prompt_id] = {"prompt": [], "outputs": {"9": {"images": [
+            {"filename": f"img_{prompt_id}_{i:05d}.png", "subfolder": "rokkur", "type": "output"}
+            for i in range(1, batch + 1)]}}, "status": {
+            "status_str": "success", "completed": True, "messages": msgs}}
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         if self.down:
@@ -103,6 +143,12 @@ class FakeComfyUI:
             return httpx.Response(200, json={})
         if path == "/view":
             filename = request.url.params["filename"]
+            if filename.startswith("img_"):
+                pid = filename[4:].rsplit("_", 1)[0]
+                source = self.image_sources.get(pid)
+                if source and source.split("/")[-1] in self.uploads:
+                    return httpx.Response(200, content=self.uploads[source.split("/")[-1]])
+                return httpx.Response(200, content=PNG_32)
             source = filename.removeprefix("out_")
             if source not in self.uploads:
                 return httpx.Response(404)

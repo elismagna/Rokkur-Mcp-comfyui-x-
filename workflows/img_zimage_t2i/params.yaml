@@ -1,0 +1,31 @@
+# Z-Image-Turbo (Tongyi-MAI, 6B, Apache-2.0), text to image, ComfyUI core nodes only.
+# Source: Comfy-Org workflow template "Z-Image-Turbo: Text to Image"
+#   https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_z_image_turbo.json
+#   (UNETLoader + CLIPLoader type lumina2 + VAELoader ae.safetensors, ModelSamplingAuraFlow
+#   shift 3, KSampler 8 steps cfg 1 res_multistep/simple, negative = ConditioningZeroOut).
+#   Tutorial: https://docs.comfy.org/tutorials/image/z-image/z-image-turbo
+# Model files (the PC already has the first two; vae/ae.safetensors is still missing there):
+#   diffusion_models/z_image_turbo_bf16.safetensors, text_encoders/qwen_3_4b.safetensors,
+#   vae/ae.safetensors, all from https://huggingface.co/Comfy-Org/z_image_turbo/tree/main/split_files
+# Comfy-Org says the bf16 model "fits within 16 GB"; on the 8 GB PC ComfyUI offloads weights
+# to system RAM, which works but is slow. The ZIMAGE_TURBO profile is therefore marked for
+# the cloud server or a patient local run. No negative prompt (distilled model).
+name: img_zimage_t2i
+version: 1
+description: Z-Image-Turbo text to image (8 steps)
+resource_class: GPU_HEAVY
+input_kind: none
+output_kinds: [images]
+parameters:
+  DIFFUSION_MODEL: {node: "28", input: unet_name, type: str, default: z_image_turbo_bf16.safetensors}
+  TEXT_ENCODER: {node: "30", input: clip_name, type: str, default: qwen_3_4b.safetensors}
+  VAE: {node: "29", input: vae_name, type: str, default: ae.safetensors}
+  PROMPT: {node: "27", input: text, type: str, required: true}
+  WIDTH: {node: "13", input: width, type: int, min: 256, max: 2048}
+  HEIGHT: {node: "13", input: height, type: int, min: 256, max: 2048}
+  BATCH: {node: "13", input: batch_size, type: int, default: 1, min: 1, max: 8}
+  SHIFT: {node: "11", input: shift, type: float, default: 3.0, min: 0.5, max: 10}
+  STEPS: {node: "3", input: steps, type: int, default: 8, min: 1, max: 50}
+  CFG: {node: "3", input: cfg, type: float, default: 1.0, min: 0, max: 20}
+  SEED: {node: "3", input: seed, type: int, default: 0, min: 0}
+  OUTPUT_PREFIX: {node: "9", input: filename_prefix, type: str, default: rokkur/image}

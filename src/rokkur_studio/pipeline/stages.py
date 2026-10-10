@@ -50,6 +50,7 @@ from rokkur_studio.pipeline import qc as qc_mod
 from rokkur_studio.pipeline.analysis import analyze_video
 from rokkur_studio.pipeline.context import StudioContext
 from rokkur_studio.pipeline.driver import autonomy_level
+from rokkur_studio.pipeline.images import image_job
 from rokkur_studio.pipeline.renderers import (
     ComfyUIRenderer,
     FFmpegPreviewRenderer,
@@ -1001,6 +1002,7 @@ def _propose_upload(s: Session, p: Project, ctx: StudioContext, job: Job) -> Non
 
 
 HANDLERS: dict[str, Handler] = {
+    "image": image_job,
     "rights_check": rights_check,
     "ingest": ingest,
     "analyze": analyze,

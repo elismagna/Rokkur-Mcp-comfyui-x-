@@ -1,0 +1,31 @@
+# FLUX.2 [klein] 4B distilled outpainting: the picture is padded on the chosen sides and the new
+# border is generated from the prompt, with the original attached as the reference.
+# Adapted from img_klein_inpaint plus ComfyUI's outpaint example
+# (https://comfyanonymous.github.io/ComfyUI_examples/inpaint/, "Pad Image for Outpainting"):
+# the core ImagePadForOutpaint node pads the image and makes the matching mask, with a
+# feathered edge; Comfy-Org's "Flux.1 Outpaint" template uses the same node before
+# InpaintModelConditioning. The studio rounds the padding so the padded size stays a multiple
+# of 16. Untested on a real GPU at the time of writing: see docs/images.md.
+name: img_klein_outpaint
+version: 1
+description: FLUX.2 [klein] 4B distilled outpaint (padded sides, noise mask)
+resource_class: GPU_HEAVY
+input_kind: image
+output_kinds: [images]
+parameters:
+  DIFFUSION_MODEL: {node: "70", input: unet_name, type: str, default: flux-2-klein-4b-fp8.safetensors}
+  TEXT_ENCODER: {node: "71", input: clip_name, type: str, default: qwen_3_4b.safetensors}
+  VAE: {node: "72", input: vae_name, type: str, default: flux2-vae.safetensors}
+  PROMPT: {node: "74", input: text, type: str, required: true}
+  SOURCE_IMAGE: {node: "80", input: image, type: str, required: true}
+  PAD_LEFT: {node: "86", input: left, type: int, default: 0, min: 0, max: 2048}
+  PAD_TOP: {node: "86", input: top, type: int, default: 0, min: 0, max: 2048}
+  PAD_RIGHT: {node: "86", input: right, type: int, default: 0, min: 0, max: 2048}
+  PAD_BOTTOM: {node: "86", input: bottom, type: int, default: 0, min: 0, max: 2048}
+  FEATHER: {node: "86", input: feathering, type: int, default: 24, min: 0, max: 256}
+  MASK_GROW: {node: "85", input: expand, type: int, default: 0, min: 0, max: 128}
+  BATCH: {node: "91", input: amount, type: int, default: 1, min: 1, max: 8}
+  STEPS: {node: "62", input: steps, type: int, default: 4, min: 1, max: 50}
+  CFG: {node: "63", input: cfg, type: float, default: 1.0, min: 0, max: 20}
+  SEED: {node: "73", input: noise_seed, type: int, default: 0, min: 0}
+  OUTPUT_PREFIX: {node: "9", input: filename_prefix, type: str, default: rokkur/image}

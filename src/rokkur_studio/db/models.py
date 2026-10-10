@@ -192,6 +192,45 @@ class Rating(Base):
     )
 
 
+class Image(Base):
+    """One still picture the studio made or was given: generated, edited, inpainted,
+    outpainted, upscaled, a character cutout or a storyboard still (docs/images.md).
+
+    Files live under ``<data_dir>/images/<id>/``; ``rel_path`` is relative to that folder.
+    ``parent_id`` points at the picture this one was made from, so edits form a chain.
+    """
+
+    __tablename__ = "images"
+    __table_args__ = (Index("ix_images_listing", "status", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("img"))
+    # generate | edit | variation | inpaint | outpaint | upscale | upload | character | storyboard
+    kind: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued | running | done | failed
+    profile: Mapped[str | None] = mapped_column(String(32))
+    workflow: Mapped[str | None] = mapped_column(String(64))
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    params: Mapped[dict[str, Any]] = mapped_column(default=dict)   # semantic parameters sent
+    request: Mapped[dict[str, Any]] = mapped_column(default=dict)  # what was asked (for redo)
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey("images.id"), index=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), index=True)
+    shot_id: Mapped[str | None] = mapped_column(String(32))
+    job_id: Mapped[str | None] = mapped_column(String(64))
+    rel_path: Mapped[str | None] = mapped_column(Text)
+    source_rel_path: Mapped[str | None] = mapped_column(Text)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    seed: Mapped[int | None] = mapped_column(BigInteger)
+    render_on: Mapped[str] = mapped_column(String(8), default="local")
+    remote_id: Mapped[str | None] = mapped_column(String(64))
+    duration_s: Mapped[float | None] = mapped_column(Float)
+    error: Mapped[dict[str, Any] | None] = mapped_column()
+    verdict: Mapped[int | None] = mapped_column(Integer)   # -2 .. 2, a person's judgement
+    title: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Job(Base):
     __tablename__ = "jobs"
     __table_args__ = (

@@ -653,6 +653,71 @@ def cmd_prompt_schedule(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_image(args: argparse.Namespace) -> int:
+    """Queue pictures (generate, edit, inpaint, outpaint, variation, upscale); --wait renders them."""
+    from rokkur_studio.db.models import Image
+    from rokkur_studio.jobs.worker import Worker
+    from rokkur_studio.pipeline.context import build_context
+    from rokkur_studio.services import images as svc
+    from rokkur_studio.services.images import ImageRequest, ImageStore
+
+    settings = _settings(args)
+    ctx = build_context(settings)
+    store = ImageStore(settings.studio.data_dir)
+    source_id = source_path = None
+    if args.source:
+        if args.source.startswith("img_"):
+            source_id = args.source
+        else:
+            source_path = args.source
+    pad = {}
+    if args.pad:
+        for part in args.pad.split(","):
+            side, _, value = part.partition("=")
+            pad[side.strip()] = int(value or 0)
+    request = ImageRequest(
+        operation=args.op, prompt=args.prompt or "", profile=args.profile, size=args.size,
+        count=args.count, steps=args.steps, cfg=args.cfg, seed=args.seed, source_id=source_id,
+        source_path=source_path, mask_path=args.mask, pad=pad, scale=args.scale,
+        render_on="cloud" if args.cloud else None, title=args.title or "",
+        rights_confirmed=bool(args.rights), rights_evidence=args.rights or "")
+    try:
+        with ctx.db.transaction() as s:
+            rows = svc.request_images(s, settings, store, ctx.ffmpeg, request, actor="cli")
+            ids = [r.id for r in rows]
+    except (ValueError, LookupError) as exc:
+        print(f"error: {exc}")
+        return 1
+    print(f"queued {len(ids)} picture(s): {' '.join(ids)}")
+    if not args.wait:
+        print("A running worker renders them; `rokkur-studio image-list` shows the result.")
+        return 0
+    Worker(ctx, kinds=["image"], worker_id="cli-image").drain(max_jobs=1)
+    with ctx.db.session() as s:
+        for image_id in ids:
+            row = s.get(Image, image_id)
+            if row is None:
+                continue
+            where = store.path_for(row.rel_path) if row.rel_path else ""
+            detail = (row.error or {}).get("message", "") if row.status != "done" else str(where)
+            print(f"  {row.id}  {row.status:<8} {detail}")
+    return 0 if all(s.get(Image, i) is not None and s.get(Image, i).status == "done"  # type: ignore[union-attr]
+                    for i in ids) else 1
+
+
+def cmd_image_list(args: argparse.Namespace) -> int:
+    from rokkur_studio.db.session import Database
+    from rokkur_studio.services import images as svc
+
+    settings = _settings(args)
+    db = Database(settings.database.url)
+    with db.session() as s:
+        for row in svc.list_images(s, limit=args.limit):
+            print(f"{row.id}  {row.status:<8} {row.kind:<10} {row.width or '?'}x{row.height or '?'}"
+                  f"  {row.title or row.prompt[:60]}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     from rokkur_studio.domain.rights import RightsCategory
 
@@ -729,6 +794,28 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--name")
     p.add_argument("--timeout", type=float, default=4 * 3600)
     p.set_defaults(func=cmd_render)
+    p = sub.add_parser("image", help="make, change, repaint, extend, vary or upscale a picture")
+    p.add_argument("prompt", nargs="?", help="what to show, or what to change")
+    p.add_argument("--op", default="generate",
+                   choices=["generate", "edit", "inpaint", "outpaint", "variation", "upscale"])
+    p.add_argument("--source", help="a library picture id (img_…) or a file you may use")
+    p.add_argument("--rights", help="for a file: where it comes from (your photo, licence…)")
+    p.add_argument("--mask", help="inpaint: PNG where white marks the area to repaint")
+    p.add_argument("--pad", help="outpaint: e.g. left=256,right=256")
+    p.add_argument("--size", help="square, portrait, landscape, short, widescreen or WxH")
+    p.add_argument("--count", type=int, default=1)
+    p.add_argument("--steps", type=int)
+    p.add_argument("--cfg", type=float)
+    p.add_argument("--seed", type=int)
+    p.add_argument("--scale", type=int, default=2, choices=[2, 4])
+    p.add_argument("--profile")
+    p.add_argument("--title")
+    p.add_argument("--cloud", action="store_true", help="render on the cloud server")
+    p.add_argument("--wait", action="store_true", help="render in this process instead of a worker")
+    p.set_defaults(func=cmd_image)
+    p = sub.add_parser("image-list", help="list the picture library")
+    p.add_argument("--limit", type=int, default=30)
+    p.set_defaults(func=cmd_image_list)
     p = sub.add_parser("prompt-schedule", help="print a project's Batch Prompt Schedule")
     p.add_argument("project_id")
     p.set_defaults(func=cmd_prompt_schedule)

@@ -56,6 +56,12 @@ CHECKPOINT, OUTPUT_PREFIX, MASK_VIDEO, CANNY_LOW, CANNY_HIGH`.
   workflows 1605242, 1470557 and 1680850; sources are in their `params.yaml`, research notes
   in `docs/research/`.
 
+- `img_klein_t2i`, `img_klein_edit`, `img_klein_inpaint`, `img_klein_outpaint`, `img_zimage_t2i`
+  and `img_upscale`: still pictures (`docs/images.md`), adapted from the Comfy-Org FLUX.2
+  [klein] and Z-Image-Turbo templates and ComfyUI's inpaint, outpaint and upscale examples.
+  Their semantic names: `PROMPT, SOURCE_IMAGE, WIDTH, HEIGHT, BATCH, STEPS, CFG, SEED,
+  MEGAPIXELS, MASK_GROW, PAD_LEFT/TOP/RIGHT/BOTTOM, FEATHER, SCALE_BY, UPSCALE_MODEL`.
+
 `CANNY_LOW` / `CANNY_HIGH` set the Canny thresholds (default 0.2 / 0.5). The CLI takes
 `--canny LOW HIGH` and the API `creative.canny_low` / `canny_high`, for A/B runs against
 0.4 / 0.8, the node defaults kept in Comfy-Org's VACE v2v template.

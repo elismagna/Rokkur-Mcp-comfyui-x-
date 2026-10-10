@@ -1,0 +1,255 @@
+{% extends "base.html" %}{% from "_icons.html" import icon %}
+{% block title %}Pictures · Rökkur Studio{% endblock %}
+{% block crumb %}Rökkur / Pictures{% endblock %}
+{% block head %}{% if busy %}<meta name="studio-refresh" content="6">{% endif %}{% endblock %}
+{% block body %}
+<div class="eyebrow">CREATE / STILL PICTURES</div>
+<h1>Pictures</h1>
+<p class="sub">Make a picture from words, change one with an instruction, repaint a painted area, extend the edges, upscale, or ask for variations. Everything renders on your own ComfyUI{% if cloud %} or the cloud server{% endif %}; pictures you like become references and thumbnails for videos.</p>
+{% if not available %}<div class="callout warn" style="margin-bottom:20px"><span style="color:var(--warn)">{{ icon('sys') }}</span><div><p><b>Pictures cannot render yet.</b></p><div class="hint">{{ unavailable_reason }}</div><div class="hint">Models and set-up: <code>docs/images.md</code>. The form still works and queues jobs for later only when the renderer is ComfyUI.</div></div></div>{% endif %}
+
+{% if selected %}
+<section class="card" id="selected" style="margin-bottom:22px">
+  <div class="img-detail">
+    <div class="img-stage">
+      {% if selected.rel_path %}<a href="/images/{{ selected.id }}/file" target="_blank" rel="noopener"><img src="/images/{{ selected.id }}/file" alt="{{ selected.title or selected.prompt or selected.kind }}"></a>
+      {% elif selected.status == 'failed' %}<div class="img-placeholder bad">{{ icon('nope') }}<b>Failed</b><span>{{ (selected.error or {}).get('message', '') }}</span></div>
+      {% else %}<div class="img-placeholder"><span class="pulse on"></span><b>{{ 'Rendering' if selected.status == 'running' else 'Waiting for the GPU' }}</b><span>This page refreshes on its own.</span></div>{% endif %}
+    </div>
+    <div class="img-side">
+      <div class="row spread" style="align-items:flex-start"><div><div class="eyebrow">{{ selected.kind|capitalize }}{% if selected.profile %} · {{ selected.profile|replace('_',' ') }}{% endif %}{% if selected.render_on == 'cloud' %} · cloud{% endif %}</div><h2 style="margin:0">{{ selected.title or {'generate': 'Created picture', 'edit': 'Changed picture', 'variation': 'Variation', 'inpaint': 'Repainted picture', 'outpaint': 'Extended picture', 'upscale': 'Upscaled picture', 'upload': 'Your picture', 'character': 'Character', 'storyboard': 'Storyboard still'}.get(selected.kind, selected.kind|capitalize) }}</h2></div>
+        <span class="pill {{ 'ok' if selected.status == 'done' else ('bad' if selected.status == 'failed' else 'info') }}">{{ selected.status }}</span></div>
+      {% if selected.prompt %}<p style="margin:10px 0 0;user-select:text">{{ selected.prompt }}</p>{% endif %}
+      <dl class="kv" style="margin-top:12px">
+        {% if selected.width %}<dt>Size</dt><dd>{{ selected.width }} × {{ selected.height }}</dd>{% endif %}
+        {% if selected.seed is not none %}<dt>Seed</dt><dd><code>{{ selected.seed }}</code></dd>{% endif %}
+        {% if selected.params.STEPS %}<dt>Steps</dt><dd>{{ selected.params.STEPS }} · guidance {{ selected.params.CFG }}</dd>{% endif %}
+        {% if selected.duration_s %}<dt>Took</dt><dd>{{ '%.1f'|format(selected.duration_s) }} s</dd>{% endif %}
+        {% if parent %}<dt>Made from</dt><dd><a href="/ui/images?image={{ parent.id }}">{{ parent.title or parent.kind|capitalize }}</a></dd>{% endif %}
+        {% if selected.project_id %}<dt>Video</dt><dd><a href="/ui/projects/{{ selected.project_id }}">{{ selected.project_id }}</a>{% if selected.shot_id %} · {{ selected.shot_id|replace('shot_','shot ') }}{% endif %}</dd>{% endif %}
+        {% if selected.params._oom_steps %}<dt>Recovered</dt><dd class="hint">CUDA ran out of memory; the studio applied {{ selected.params._oom_steps|join(', ') }}</dd>{% endif %}
+      </dl>
+      {% if selected.status == 'done' %}
+      <div class="img-actions">
+        <button type="button" class="secondary small" data-op="edit" data-source="{{ selected.id }}">{{ icon('brush') }} Change it</button>
+        <button type="button" class="secondary small" data-op="inpaint" data-source="{{ selected.id }}">{{ icon('brush') }} Repaint an area</button>
+        <button type="button" class="secondary small" data-op="outpaint" data-source="{{ selected.id }}">{{ icon('expand') }} Extend the edges</button>
+        <button type="button" class="secondary small" data-op="upscale" data-source="{{ selected.id }}">{{ icon('up') }} Upscale</button>
+        <button type="button" class="secondary small" data-op="variation" data-source="{{ selected.id }}">{{ icon('redo') }} Variations</button>
+        <a class="btn secondary small" href="/ui/new?reference_image={{ selected.id }}">{{ icon('film') }} Use as a video reference</a>
+        <a class="btn secondary small" href="/images/{{ selected.id }}/file" download="rokkur-{{ selected.id }}.png">Download</a>
+      </div>
+      <form method="post" action="/ui/images/{{ selected.id }}/thumbnail" class="row" style="margin-top:12px;gap:8px;flex-wrap:nowrap">
+        <select name="project_id" aria-label="Video" style="min-height:34px;padding:4px 10px;font-size:12px">{% for pr in projects %}<option value="{{ pr.id }}">{{ pr.name }}</option>{% else %}<option value="">No video yet</option>{% endfor %}</select>
+        <button class="secondary small" {% if not projects %}disabled{% endif %}>Use as thumbnail</button>
+      </form>
+      {% endif %}
+      <div class="row spread" style="margin-top:14px">
+        <form method="post" action="/ui/images/{{ selected.id }}/verdict" class="rate compact" data-image-rate>
+          <div class="rate-buttons" role="group" aria-label="Rate this picture">{% for v, name, ic in [(-2, 'Super dislike', 'nope'), (-1, 'Dislike', 'down'), (1, 'Like', 'up'), (2, 'Super like', 'star')] %}<button type="submit" class="rate-btn" name="value" value="{{ v }}" aria-pressed="{{ 'true' if selected.verdict == v else 'false' }}" aria-label="{{ name }}" title="{{ name }}">{{ icon(ic) }}<span>{{ name }}</span></button>{% endfor %}</div>
+        </form>
+        <form method="post" action="/ui/images/{{ selected.id }}/delete" onsubmit="return confirm('Delete this picture and its files? Pictures made from it stay.')"><button class="ghost small">Delete</button></form>
+      </div>
+      {% if children %}<p class="hint" style="margin-top:10px">Made from this one: {% for c in children %}<a href="/ui/images?image={{ c.id }}">{{ c.kind }}</a>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<div class="create-layout">
+<div class="stack">
+<form method="post" action="/ui/images" enctype="multipart/form-data" id="image-form" class="card">
+  <div class="section-heading"><span class="step-number">01</span><div><h2>What do you want?</h2><p class="hint">One request, up to {{ settings.images.max_batch }} pictures.</p></div></div>
+  <div class="seg img-ops" role="group" aria-label="Operation">
+    {% for op, label in [('generate', 'Create'), ('edit', 'Change'), ('inpaint', 'Repaint'), ('outpaint', 'Extend'), ('variation', 'Variations'), ('upscale', 'Upscale')] %}<label class="op"><input type="radio" name="operation" value="{{ op }}" {% if op == form.operation %}checked{% endif %}><span>{{ label }}</span></label>{% endfor %}
+  </div>
+  <p class="hint" id="op-hint"></p>
+
+  <div data-needs="generate edit inpaint outpaint variation">
+    <label for="prompt" id="prompt-label">Prompt</label>
+    <textarea id="prompt" name="prompt" maxlength="4000" rows="3" placeholder="A red paper lantern in evening fog, soft rim light, 35 mm film">{{ form.prompt }}</textarea>
+  </div>
+
+  <div data-needs="edit inpaint outpaint variation upscale" id="source-block">
+    <label>Picture to work on</label>
+    <div class="img-pick" id="library-pick">
+      {% for i in library %}<label class="img-pick-item" title="{{ i.title or i.prompt }}"><input type="radio" name="source_id" value="{{ i.id }}" {% if i.id == form.source_id %}checked{% endif %}><img src="/images/{{ i.id }}/file" alt="" loading="lazy"></label>{% else %}<span class="hint">The library is empty. Create a picture first or upload one below.</span>{% endfor %}
+    </div>
+    <details id="upload-details"><summary>Or upload a picture of your own</summary>
+      <input type="file" name="source_file" id="source_file" accept="image/png,image/jpeg,image/webp">
+      <label class="check"><input type="checkbox" name="rights_confirmed" value="true"> I may use and change this picture</label>
+      <input name="rights_evidence" maxlength="1000" placeholder="My own photo / licence / written permission">
+    </details>
+    <div class="hint" id="source-hint"></div>
+  </div>
+
+  <div data-needs="inpaint" id="mask-block">
+    <label>Paint the area to change</label>
+    <div class="mask-wrap" id="mask-wrap"><img id="mask-base" alt=""><canvas id="mask-canvas"></canvas></div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap">
+      <label class="row" style="gap:6px;margin:0">Brush <input type="range" id="brush-size" min="4" max="200" value="48" style="width:140px"></label>
+      <div class="seg"><button type="button" data-tool="paint" aria-pressed="true">Paint</button><button type="button" data-tool="erase" aria-pressed="false">Erase</button></div>
+      <button type="button" class="secondary small" id="mask-subject">Select the subject</button>
+      <button type="button" class="secondary small" id="mask-background">Select the background</button>
+      <button type="button" class="ghost small" id="mask-clear">Clear</button>
+    </div>
+    <input type="hidden" name="mask_data" id="mask-data">
+    <div class="form-pair" style="margin-top:10px"><div><label for="mask_grow">Blend edge (pixels)</label><input id="mask_grow" name="mask_grow" type="number" min="0" max="128" value="8"></div><div></div></div>
+    <p class="hint" id="mask-hint">Transparent on the mask means repaint. "Select the subject" uses the studio's subject model on the CPU.</p>
+  </div>
+
+  <div data-needs="outpaint">
+    <label>Extend by (pixels)</label>
+    <div class="pad-grid">
+      <label>Left <input name="pad_left" type="number" min="0" max="2048" value="0"></label>
+      <label>Top <input name="pad_top" type="number" min="0" max="2048" value="0"></label>
+      <label>Right <input name="pad_right" type="number" min="0" max="2048" value="256"></label>
+      <label>Bottom <input name="pad_bottom" type="number" min="0" max="2048" value="0"></label>
+    </div>
+    <label for="feather">Feather (pixels)</label><input id="feather" name="feather" type="number" min="0" max="256" value="24">
+  </div>
+
+  <div data-needs="upscale">
+    <label for="scale">Upscale factor</label><select id="scale" name="scale"><option value="2">2× (RealESRGAN, down from 4×)</option><option value="4">4×</option></select>
+  </div>
+
+  <div data-needs="generate">
+    <div class="form-pair"><div><label for="size">Size</label><select id="size" name="size">{% for key, (w, h) in sizes.items() %}<option value="{{ key }}" {% if key == 'square' %}selected{% endif %}>{{ key|capitalize }} · {{ w }}×{{ h }}</option>{% endfor %}<option value="custom">Custom…</option></select></div>
+    <div id="custom-size" hidden><label for="width">Width × height</label><div class="row" style="gap:6px"><input id="width" name="width" type="number" min="256" max="2048" step="16" placeholder="1024"><input id="height" name="height" type="number" min="256" max="2048" step="16" placeholder="1024"></div></div></div>
+  </div>
+
+  <div class="form-pair"><div><label for="count">How many</label><select id="count" name="count">{% for n in range(1, settings.images.max_batch + 1) %}<option value="{{ n }}">{{ n }}</option>{% endfor %}</select></div>
+    <div><label for="profile">Model</label><select id="profile" name="profile">{% for name, pr in image_profiles.items() if name != settings.images.upscale_profile %}<option value="{{ name }}" {% if name == settings.images.default_profile %}selected{% endif %} data-ops="{{ pr.workflows.keys()|join(' ') }}" {% if image_status[name] %}disabled{% endif %}>{{ name|replace('_',' ') }}{% if image_status[name] %} · unavailable{% endif %}</option>{% endfor %}</select></div></div>
+  <details><summary>Seed, steps, guidance{% if cloud %}, where to render{% endif %}</summary>
+    <div class="form-pair"><div><label for="seed">Seed</label><input id="seed" name="seed" type="number" min="0" placeholder="Random"></div><div><label for="steps">Steps</label><input id="steps" name="steps" type="number" min="1" max="50" placeholder="Model default"></div></div>
+    <label for="cfg">Guidance</label><input id="cfg" name="cfg" type="number" min="0" max="20" step="0.5" placeholder="Model default (1 for the distilled models)">
+    <p class="hint">The distilled models (klein, Z-Image-Turbo) take no negative prompt and want guidance 1. Keep the seed to compare settings.</p>
+    {% if cloud %}<label for="render_on">Where to render</label><select id="render_on" name="render_on"><option value="local" {% if cloud.default == 'local' %}selected{% endif %}>This PC</option><option value="cloud" {% if cloud.default == 'cloud' %}selected{% endif %}>Cloud server · {{ '%g'|format(cloud.vram_gb) }} GB</option></select>{% endif %}
+    <label for="title">Name <span class="muted">optional</span></label><input id="title" name="title" maxlength="200" placeholder="Shown in the gallery instead of the prompt">
+  </details>
+  <p style="margin:16px 0 0"><button class="launch-button" id="image-submit" {% if not available %}disabled{% endif %}>Make it <span aria-hidden="true">↗</span></button></p>
+</form>
+
+<section class="card"><h2>Models</h2>
+  {% for name, pr in image_profiles.items() %}<p><b>{{ name|replace('_',' ') }}</b> <span class="pill {{ 'warn' if image_status[name] else 'ok' }}">{{ 'Unavailable' if image_status[name] else 'Configured' }}</span><br><span class="hint">{{ image_status[name] or pr.description }}</span></p>{% endfor %}
+  <p class="hint">Model files go into ComfyUI's models folder; <code>scripts\studio.ps1 comfy-check</code> confirms each workflow against your installation.</p>
+</section>
+</div>
+
+<div class="stack">
+<section class="card">
+  <div class="row spread"><h2>Library</h2><div class="chips" style="margin:0">{% for key, label in [('', 'All'), ('generate', 'Created'), ('edit', 'Changed'), ('inpaint', 'Repainted'), ('outpaint', 'Extended'), ('upscale', 'Upscaled'), ('character', 'Characters'), ('storyboard', 'Storyboards'), ('upload', 'Uploads')] %}<a href="/ui/images?kind={{ key }}" class="{{ 'on' if key == kind else '' }}">{{ label }}</a>{% endfor %}</div></div>
+  {% if gallery %}
+  <div class="img-grid">
+    {% for i in gallery %}
+    <a class="img-card {{ i.status }}{% if selected and i.id == selected.id %} on{% endif %}" href="/ui/images?image={{ i.id }}{% if kind %}&kind={{ kind }}{% endif %}#selected" title="{{ i.title or i.prompt }}">
+      {% if i.rel_path %}<img src="/images/{{ i.id }}/file" alt="{{ i.title or i.prompt or i.kind }}" loading="lazy">
+      {% elif i.status == 'failed' %}<div class="img-placeholder bad">{{ icon('nope') }}<span>Failed</span></div>
+      {% else %}<div class="img-placeholder"><span class="pulse on"></span><span>{{ 'Rendering' if i.status == 'running' else 'Queued' }}</span></div>{% endif %}
+      <div class="img-cap"><span class="truncate">{{ i.title or i.prompt or i.kind }}</span><span class="pill">{{ i.kind }}</span></div>
+      {% if i.verdict %}<span class="img-verdict {{ 'good' if i.verdict > 0 else 'poor' }}">{{ icon('star' if i.verdict == 2 else ('up' if i.verdict == 1 else ('down' if i.verdict == -1 else 'nope'))) }}</span>{% endif %}
+    </a>
+    {% endfor %}
+  </div>
+  {% if more %}<p style="margin:14px 0 0"><a class="btn secondary small" href="/ui/images?page={{ page + 1 }}{% if kind %}&kind={{ kind }}{% endif %}">Older pictures</a></p>{% endif %}
+  {% else %}<p class="empty">No pictures yet. Describe one on the left and press Make it.</p>{% endif %}
+</section>
+</div>
+</div>
+
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const form = $('#image-form');
+  const HINTS = {
+    generate: 'A new picture from your words. Sizes are rounded to multiples of 16.',
+    edit: 'Tell the model what to change ("make it night", "turn the car red"). The rest of the picture is kept as well as the model can.',
+    inpaint: 'Paint the area to change, then say what should be there. Only the painted area is regenerated; the rest is kept pixel for pixel.',
+    outpaint: 'The picture is extended on the sides you choose; say what the new border should show.',
+    variation: 'Close variations of the picture: same subject and style, slightly different details. A prompt is optional.',
+    upscale: 'Sharper and larger with an ESRGAN model. No prompt needed.',
+  };
+  const LABELS = { generate: 'Prompt', edit: 'What should change?', inpaint: 'What goes in the painted area?', outpaint: 'What does the new border show?', variation: 'Optional direction for the variations' };
+  const op = () => form.querySelector('input[name=operation]:checked')?.value || 'generate';
+  const sync = () => {
+    const current = op();
+    $$('[data-needs]', form).forEach(el => { el.hidden = !el.dataset.needs.split(' ').includes(current); });
+    $('#op-hint').textContent = HINTS[current];
+    $('#prompt-label').textContent = LABELS[current] || 'Prompt';
+    $('#prompt').required = !['variation', 'upscale'].includes(current);
+    const profile = $('#profile');
+    profile.disabled = current === 'upscale';
+    if (profile.disabled) profile.title = 'Upscaling uses the upscale profile';
+    [...profile.options].forEach(o => { if (o.dataset.ops && current !== 'upscale') o.disabled = o.disabled || !o.dataset.ops.split(' ').includes(current); });
+    if (current === 'inpaint') loadMaskBase();
+  };
+  $$('input[name=operation]', form).forEach(r => r.addEventListener('change', sync));
+  $('#size').addEventListener('change', () => { $('#custom-size').hidden = $('#size').value !== 'custom'; });
+  // detail actions: start an operation on the selected picture
+  $$('[data-op]').forEach(btn => btn.addEventListener('click', () => {
+    const radio = form.querySelector(`input[name=operation][value=${btn.dataset.op}]`);
+    if (radio) radio.checked = true;
+    const src = form.querySelector(`input[name=source_id][value=${btn.dataset.source}]`);
+    if (src) src.checked = true;
+    sync(); form.scrollIntoView({ behavior: 'smooth', block: 'start' }); $('#prompt').focus();
+  }));
+  // source hint
+  const sourceHint = () => { const picked = form.querySelector('input[name=source_id]:checked');
+    const file = $('#source_file').files[0];
+    $('#source-hint').textContent = file ? `Upload: ${file.name} (the library picture is ignored)` : picked ? 'Picked from the library.' : 'Pick a picture from the library or upload one.';
+    if (op() === 'inpaint') loadMaskBase(); };
+  $$('input[name=source_id]', form).forEach(r => r.addEventListener('change', sourceHint));
+  $('#source_file').addEventListener('change', sourceHint);
+
+  // -- mask painting -------------------------------------------------------------------------
+  const base = $('#mask-base'), canvas = $('#mask-canvas'), ctx2d = canvas.getContext('2d');
+  const mask = document.createElement('canvas'), mctx = mask.getContext('2d');
+  let tool = 'paint', painting = false, loadedFor = '';
+  const brush = () => Number($('#brush-size').value);
+  const paintUI = () => { ctx2d.clearRect(0, 0, canvas.width, canvas.height); ctx2d.globalAlpha = 0.55; ctx2d.drawImage(mask, 0, 0); ctx2d.globalAlpha = 1; };
+  const resetMask = () => { mask.width = base.naturalWidth || 1; mask.height = base.naturalHeight || 1; canvas.width = mask.width; canvas.height = mask.height; mctx.clearRect(0, 0, mask.width, mask.height); paintUI(); $('#mask-data').value = ''; };
+  function loadMaskBase() {
+    const picked = form.querySelector('input[name=source_id]:checked'), file = $('#source_file').files[0];
+    const url = file ? URL.createObjectURL(file) : picked ? `/images/${picked.value}/file` : '';
+    if (!url) { $('#mask-hint').textContent = 'Pick a picture first.'; return; }
+    if (url === loadedFor) return;
+    loadedFor = url; base.onload = resetMask; base.src = url;
+    $('#mask-subject').disabled = $('#mask-background').disabled = Boolean(file);
+  }
+  const pos = e => { const r = canvas.getBoundingClientRect(); return [(e.clientX - r.left) * canvas.width / r.width, (e.clientY - r.top) * canvas.height / r.height]; };
+  const dab = (x, y) => { mctx.globalCompositeOperation = tool === 'paint' ? 'source-over' : 'destination-out'; mctx.fillStyle = '#fff'; mctx.beginPath(); mctx.arc(x, y, brush() * canvas.width / canvas.getBoundingClientRect().width / 2, 0, Math.PI * 2); mctx.fill(); };
+  canvas.addEventListener('pointerdown', e => { painting = true; canvas.setPointerCapture(e.pointerId); dab(...pos(e)); paintUI(); });
+  canvas.addEventListener('pointermove', e => { if (painting) { dab(...pos(e)); paintUI(); } });
+  ['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, () => { painting = false; }));
+  $$('[data-tool]').forEach(b => b.addEventListener('click', () => { tool = b.dataset.tool; $$('[data-tool]').forEach(o => o.setAttribute('aria-pressed', String(o === b))); }));
+  $('#mask-clear').addEventListener('click', () => { mctx.clearRect(0, 0, mask.width, mask.height); paintUI(); });
+  const autoMask = async invert => {
+    const picked = form.querySelector('input[name=source_id]:checked');
+    if (!picked) { $('#mask-hint').textContent = 'Pick a library picture to use the subject model.'; return; }
+    $('#mask-hint').textContent = 'Finding the subject…';
+    try { const r = await fetch(`/ui/images/${picked.value}/automask${invert ? '?invert=1' : ''}`);
+      if (!r.ok) throw new Error((await r.json()).detail || 'The subject model is not available.');
+      const img = new Image(); img.onload = () => { mctx.globalCompositeOperation = 'source-over'; mctx.drawImage(img, 0, 0, mask.width, mask.height); paintUI(); $('#mask-hint').textContent = 'Adjust with the brush if needed.'; };
+      img.src = URL.createObjectURL(await r.blob());
+    } catch (err) { $('#mask-hint').textContent = err.message; } };
+  $('#mask-subject').addEventListener('click', () => autoMask(false));
+  $('#mask-background').addEventListener('click', () => autoMask(true));
+  form.addEventListener('submit', e => {
+    if (op() !== 'inpaint') return;
+    const out = document.createElement('canvas'); out.width = mask.width; out.height = mask.height;
+    const o = out.getContext('2d'); o.fillStyle = '#000'; o.fillRect(0, 0, out.width, out.height); o.drawImage(mask, 0, 0);
+    const data = o.getImageData(0, 0, out.width, out.height).data;
+    let any = false; for (let i = 0; i < data.length; i += 4) { if (data[i] > 0) { any = true; break; } }
+    if (!any) { e.preventDefault(); $('#mask-hint').textContent = 'Paint the area to change first.'; return; }
+    $('#mask-data').value = out.toDataURL('image/png');
+  });
+  // -- verdict without a reload ----------------------------------------------------------------
+  const rate = $('[data-image-rate]');
+  rate?.addEventListener('submit', async e => { e.preventDefault(); const v = e.submitter?.value; if (!v) return;
+    const body = new FormData(rate); body.set('value', v);
+    const r = await fetch(rate.action, { method: 'POST', body, headers: { Accept: 'application/json' } });
+    if (r.ok) { const d = await r.json(); $$('.rate-btn', rate).forEach(b => b.setAttribute('aria-pressed', String(String(d.verdict) === b.value))); } });
+  sync(); sourceHint();
+})();
+</script>
+{% endblock %}

@@ -206,6 +206,52 @@ class JobsSection(BaseModel):
     poll_interval_s: float = 1.0
 
 
+IMAGE_OPERATIONS = ("generate", "edit", "variation", "inpaint", "outpaint", "upscale")
+ImageOperation = Literal["generate", "edit", "variation", "inpaint", "outpaint", "upscale"]
+
+
+class ImagesSection(BaseModel):
+    """Still images: generation, editing, inpainting, outpainting, upscaling (docs/images.md)."""
+
+    default_profile: str = "KLEIN_4B"
+    upscale_profile: str = "UPSCALE"
+    default_width: int = Field(1024, ge=256, le=4096)
+    default_height: int = Field(1024, ge=256, le=4096)
+    max_batch: int = Field(4, ge=1, le=8)
+    max_pixels: int = Field(1048576, ge=65536)   # hard cap on top of each profile's own
+    keep_days: int = Field(0, ge=0)              # 0: never delete generated pictures
+
+
+class ImageProfile(BaseModel):
+    """One image profile from ``config/image_profiles.yaml``: a model family and the
+    workflow template for each operation it supports."""
+
+    name: str = ""
+    description: str = ""
+    workflows: dict[str, str] = Field(default_factory=dict)  # operation -> template
+    max_pixels: int = Field(1048576, ge=65536)
+    steps: int = Field(4, ge=1, le=100)
+    cfg: float = Field(1.0, ge=0, le=30)
+    resource_class: ResourceClass = "GPU_HEAVY"
+    min_vram_gb: float = Field(0, ge=0)
+    degrade: list[str] = Field(default_factory=list)
+
+    @field_validator("workflows")
+    @classmethod
+    def _known_operations(cls, v: dict[str, str]) -> dict[str, str]:
+        unknown = sorted(set(v) - set(IMAGE_OPERATIONS))
+        if unknown:
+            raise ValueError(f"unknown image operations {unknown}; known: {IMAGE_OPERATIONS}")
+        return v
+
+    def workflow_for(self, operation: str) -> str:
+        try:
+            return self.workflows[operation]
+        except KeyError as exc:
+            raise ValueError(f"image profile {self.name} cannot {operation}; it supports "
+                             f"{', '.join(sorted(self.workflows)) or 'nothing'}") from exc
+
+
 class RenderProfile(BaseModel):
     """One render profile from ``config/render_profiles.yaml``."""
 
@@ -250,7 +296,9 @@ class Settings(BaseModel):
     comments: CommentsSection = CommentsSection()
     costs: CostsSection = CostsSection()
     jobs: JobsSection = JobsSection()
+    images: ImagesSection = ImagesSection()
     profiles: dict[str, RenderProfile] = Field(default_factory=dict)
+    image_profiles: dict[str, ImageProfile] = Field(default_factory=dict)
     config_dir: Path = Path("config")
     workflows_dir: Path = Path("workflows")
 
@@ -260,6 +308,51 @@ class Settings(BaseModel):
         if choice in ("local", "cloud"):
             return cast(RenderTarget, choice)
         return "cloud" if self.cloud.ready and self.cloud.default == "cloud" else "local"
+
+    def image_profile(self, name: str) -> ImageProfile:
+        try:
+            return self.image_profiles[name]
+        except KeyError as exc:
+            raise KeyError(f"unknown image profile {name!r}; known: "
+                           f"{sorted(self.image_profiles)}") from exc
+
+    def image_profile_problem(self, name: str, operation: str, *,
+                              object_info: dict[str, Any] | None = None,
+                              target: str = "local") -> str | None:
+        """Why an image operation cannot run on this profile right now, or None."""
+        from rokkur_studio.comfyui.compiler import (
+            TemplateError,
+            TemplateRegistry,
+            validate_against_object_info,
+        )
+
+        try:
+            profile = self.image_profile(name)
+            workflow = profile.workflow_for(operation)
+        except (KeyError, ValueError) as exc:
+            return str(exc)
+        cloud = target == "cloud"
+        if cloud and not self.cloud.ready:
+            return ("Cloud rendering is not set up: set STUDIO_CLOUD__ENABLED and "
+                    "STUDIO_CLOUD__URL in .env (docs/cloud.md).")
+        if self.render.renderer != "comfyui":
+            return ("Images need the ComfyUI renderer (render.renderer: comfyui); the "
+                    "FFmpeg preview renderer cannot draw pictures.")
+        vram = self.cloud.vram_gb if cloud else self.gpu.vram_gb
+        if profile.min_vram_gb > vram:
+            where = "the cloud server is" if cloud else "this studio is"
+            return f"Needs {profile.min_vram_gb:g} GB VRAM; {where} configured for {vram:g} GB."
+        try:
+            template = TemplateRegistry(self.workflows_dir).get(workflow)
+        except (TemplateError, OSError, ValueError) as exc:
+            return str(exc)
+        except Exception as exc:  # a YAML typo in params.yaml: report it, don't 500
+            return f"workflow {workflow} could not be loaded: {exc}"
+        if object_info is not None:
+            problems = validate_against_object_info(template, object_info)
+            if problems:
+                return f"workflow {workflow} is unavailable: {problems[0]}"
+        return None
 
     def profile(self, name: str) -> RenderProfile:
         try:
@@ -331,8 +424,8 @@ def env_overrides(environ: dict[str, str]) -> dict[str, Any]:
         if not name.startswith(ENV_PREFIX) or "__" not in name:
             continue
         parts = name[len(ENV_PREFIX):].split("__")
-        keys = [k if i > 0 and parts[i - 1].lower() == "profiles" else k.lower()
-                for i, k in enumerate(parts)]  # profile names keep their case
+        keys = [k if i > 0 and parts[i - 1].lower() in ("profiles", "image_profiles")
+                else k.lower() for i, k in enumerate(parts)]  # profile names keep their case
         # a token stays text: YAML would turn "1234" into a number and "a: b" into a mapping
         value = raw if keys[-1] in _TEXT_KEYS or raw == "" else yaml.safe_load(raw)
         _deep_set(out, keys, value)
@@ -364,6 +457,12 @@ def load_settings(
             "profiles", {}
         )
         raw["profiles"] = {name: {**p, "name": name} for name, p in profiles.items()}
+    images_file = config_dir / "image_profiles.yaml"
+    if images_file.exists():
+        image_profiles = (yaml.safe_load(images_file.read_text(encoding="utf-8")) or {}).get(
+            "profiles", {})
+        raw["image_profiles"] = {name: {**p, "name": name}
+                                 for name, p in image_profiles.items()}
     raw = _merge(raw, env_overrides(environ))
     raw.setdefault("config_dir", str(config_dir))
     if "STUDIO_WORKFLOWS_DIR" in environ:

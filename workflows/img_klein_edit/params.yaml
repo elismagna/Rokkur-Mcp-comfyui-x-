@@ -1,0 +1,26 @@
+# FLUX.2 [klein] 4B distilled, instruction-based image editing from one reference image.
+# Source: Comfy-Org workflow template "Flux.2 [Klein] 4B Distilled: Image Edit"
+#   https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_flux2_klein_image_edit_4b_distilled.json
+#   (active subgraph: the reference is scaled to 1 MP, VAE-encoded and attached to the prompt
+#   with ReferenceLatent; the output takes the reference's size; euler, 4 steps, guidance 1).
+#   Tutorial: https://docs.comfy.org/tutorials/flux/flux-2-klein. Weights: see img_klein_t2i.
+# The prompt is an instruction ("make the sky stormy", "turn the car red"). Variations use this
+# graph with a variation instruction and a fresh seed. No negative prompt (distilled model).
+name: img_klein_edit
+version: 1
+description: FLUX.2 [klein] 4B distilled edit by instruction, one reference image
+resource_class: GPU_HEAVY
+input_kind: image
+output_kinds: [images]
+parameters:
+  DIFFUSION_MODEL: {node: "70", input: unet_name, type: str, default: flux-2-klein-4b-fp8.safetensors}
+  TEXT_ENCODER: {node: "71", input: clip_name, type: str, default: qwen_3_4b.safetensors}
+  VAE: {node: "72", input: vae_name, type: str, default: flux2-vae.safetensors}
+  PROMPT: {node: "74", input: text, type: str, required: true}
+  SOURCE_IMAGE: {node: "80", input: image, type: str, required: true}
+  MEGAPIXELS: {node: "81", input: megapixels, type: float, default: 1.0, min: 0.25, max: 4}
+  BATCH: {node: "66", input: batch_size, type: int, default: 1, min: 1, max: 8}
+  STEPS: {node: "62", input: steps, type: int, default: 4, min: 1, max: 50}
+  CFG: {node: "63", input: cfg, type: float, default: 1.0, min: 0, max: 20}
+  SEED: {node: "73", input: noise_seed, type: int, default: 0, min: 0}
+  OUTPUT_PREFIX: {node: "9", input: filename_prefix, type: str, default: rokkur/image}
