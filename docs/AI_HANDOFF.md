@@ -512,7 +512,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
-- 2026-10-10 Claude: picture checker (`docs/picture-checker.md`: contact sheets, motion-compensated stability, flicker, advisory vision-model review), post-render stabilizer and repair auto-tuning (`docs/stability.md`). Untested on a real render yet. Unfinished sampler/shift options and cloud 14B workflows are on branch `options-wip` (untested, not merged).
+- 2026-10-10 Claude: picture checker (`docs/picture-checker.md`: contact sheets, motion-compensated stability, flicker, advisory vision-model review), post-render stabilizer and repair auto-tuning (`docs/stability.md`). Untested on a real render yet. Also render options (sampler, scheduler, shift, render size, edge detail, stability settings on the form/API/CLI) and the CLOUD_14B profile (Wan VACE 14B, fp8, up to 720P; needs the 34.7 GB 14B model on the pod, see `docs/cloud.md`). Tests pass; none of it has been run on a real GPU yet.
 - 2026-10-09 Claude: FUTURE_24GB got `max_pixels: 399360`. It renders the same Wan 1.3B workflow, and a 1920x800 source came out 1920 wide, which failed the template's WIDTH max of 1280 (Elis's first cloud render). It now renders at 976x400.
 - 2026-10-09 Claude: local/cloud render mode (`docs/cloud.md`, `tests/test_cloud.py`).
 - 2026-10-09 Claude: speed pass (`docs/speed.md`): models kept loaded across a render stage,
