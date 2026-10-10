@@ -16,6 +16,7 @@ dependencies = [
   "jinja2>=3.1",
   "numpy>=1.26",
   "onnxruntime>=1.17",  # subject masks on the CPU (pipeline/subject.py)
+  "opencv-python-headless>=4.10",  # optical flow for QC stability (pipeline/qc.py), Apache-2.0
   "python-multipart>=0.0.9",
   "tzdata>=2024.1",  # time zone names for release times on Windows and slim images
 ]
