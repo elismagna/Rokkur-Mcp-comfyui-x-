@@ -145,6 +145,14 @@
 </section>
 {% endif %}
 
+{% if docs.creative_brief %}
+<section class="section" id="storyboard">
+  <div class="section-title"><h2>Storyboard stills</h2>{% if can_storyboard %}<form class="inline" method="post" action="/ui/projects/{{p.id}}/storyboard"><button class="secondary small">{{ icon('image') }} {{ 'Make the stills again' if storyboard else 'Preview the look as stills' }}</button></form>{% else %}<span class="hint">Needs the picture models (docs/images.md)</span>{% endif %}</div>
+  <p class="hint" style="margin:-6px 0 14px">One picture per shot from the same prompts the video uses, in seconds instead of minutes. Judge the look here before rendering, or hand a still to Pictures to change it and use it as the appearance reference.</p>
+  {% if storyboard %}<div class="img-grid">{% for i in storyboard %}<a class="img-card {{ i.status }}" href="/ui/images?image={{ i.id }}#selected" title="{{ i.prompt }}">{% if i.rel_path %}<img src="/images/{{ i.id }}/file" alt="{{ i.title }}" loading="lazy">{% elif i.status == 'failed' %}<div class="img-placeholder bad">{{ icon('nope') }}<span>Failed</span></div>{% else %}<div class="img-placeholder"><span class="pulse on"></span><span>{{ 'Rendering' if i.status == 'running' else 'Queued' }}</span></div>{% endif %}<div class="img-cap"><span class="truncate">{{ (i.shot_id or '')|replace('shot_','Shot ') }}</span></div></a>{% endfor %}</div>{% endif %}
+</section>
+{% endif %}
+
 {% if docs.metadata or thumbs or d.publications %}
 <section class="section grid2" id="publish">
 <div class="stack">

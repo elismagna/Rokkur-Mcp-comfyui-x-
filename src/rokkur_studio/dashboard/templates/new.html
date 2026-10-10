@@ -18,6 +18,8 @@
     <input id="source_file" type="file" name="source_file" accept="video/*"></label>
     <video id="source-preview" controls preload="metadata" hidden></video>
     <p class="hint" id="source-info">Your original stays intact. The studio works on a copy.</p>
+    <div class="row" style="margin-top:12px"><button type="button" class="secondary" id="find-characters">{{ icon('agent') }} Find the characters in this clip</button><span class="hint" id="characters-status">Cutouts of the subjects the studio sees, before you write the prompt.</span></div>
+    <div id="characters" class="characters" hidden></div>
     <label for="name">Project name</label><input id="name" name="name" placeholder="Defaults to your video's name" maxlength="200">
   </section>
   <section class="card"><div class="section-heading"><span class="step-number">02</span><div><h2>Creative direction</h2><p class="hint">Describe the finished image, then anchor the character.</p></div></div>
@@ -159,6 +161,40 @@
   subjectFields.forEach(id => { const el = document.getElementById(id); el?.addEventListener('input', explainSubject); el?.addEventListener('change', explainSubject); });
   document.getElementById('reference_file').addEventListener('change', explainSubject);
   explainSubject();
+  // -- characters found in the clip ----------------------------------------------------------
+  const findBtn = document.getElementById('find-characters'), charStatus = document.getElementById('characters-status');
+  const charBox = document.getElementById('characters'), refPath = document.getElementById('character_reference_path');
+  findBtn.addEventListener('click', async () => {
+    const body = new FormData();
+    if (file.files[0]) body.append('source_file', file.files[0]); else if (media?.value) body.append('media_file', media.value);
+    else { charStatus.textContent = 'Choose a video first.'; return; }
+    findBtn.disabled = true; charStatus.textContent = 'Looking through the clip on the CPU…';
+    try {
+      const r = await fetch('/ui/new/characters', { method: 'POST', body });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Could not look through the clip.');
+      charBox.innerHTML = ''; charBox.hidden = !d.characters.length;
+      charStatus.textContent = d.characters.length ? `${d.characters.length} subject${d.characters.length > 1 ? 's' : ''} found. ${d.note}` : 'No clear subject found in the sampled frames.';
+      d.characters.forEach((c, i) => {
+        const card = document.createElement('div'); card.className = 'character-card';
+        card.innerHTML = `<img src="${c.crop_url}" alt="${c.title}"><div><b>${c.title}</b><div class="hint">Seen in ${c.seen} frame${c.seen > 1 ? 's' : ''} · ${Math.round(c.share * 100)}% of the frame at ${c.time}s</div>
+          <label class="check" style="margin:6px 0 0"><input type="radio" name="use_character" value="${c.path}" ${i === 0 ? 'checked' : ''}> Use as the appearance reference</label>
+          <div class="row" style="gap:6px;margin-top:6px"><input placeholder="Name it, e.g. NEO" maxlength="40" aria-label="Character name" style="min-height:32px;padding:4px 10px;font-size:12px"><button type="button" class="secondary small">Save to Director</button></div><div class="hint" data-saved></div></div>`;
+        const radio = card.querySelector('input[type=radio]'), nameInput = card.querySelector('input[placeholder]'), save = card.querySelector('button');
+        radio.addEventListener('change', () => { if (radio.checked) { refPath.value = c.path; refPath.dispatchEvent(new Event('input', { bubbles: true })); } });
+        if (i === 0) { refPath.value = c.path; }
+        save.addEventListener('click', async () => {
+          const key = nameInput.value.trim(); if (!key) { nameInput.focus(); return; }
+          const fd = new FormData(); fd.append('key', key); fd.append('description', c.description.replace(`Subject ${i + 1}`, key));
+          const rr = await fetch('/ui/director/characters', { method: 'POST', body: fd });
+          card.querySelector('[data-saved]').textContent = rr.ok ? `Saved as ${key.toUpperCase()}; pick it under Saved character after the page reloads, or keep going.` : 'Could not save.';
+        });
+        charBox.appendChild(card);
+      });
+      if (file.files[0] && d.characters[0]?.uploaded) { const hidden = document.getElementById('uploaded-path') || Object.assign(form.appendChild(document.createElement('input')), { type: 'hidden', name: 'local_path', id: 'uploaded-path' }); hidden.value = d.characters[0].uploaded; file.dataset.uploaded = '1'; }
+    } catch (err) { charStatus.textContent = err.message; }
+    finally { findBtn.disabled = false; }
+  });
   form.addEventListener('submit', e => { if (!file.files.length && !media?.value) { e.preventDefault(); file.focus();
     document.getElementById('source-info').textContent = 'Choose a source video before creating the project.'; } });
   const dialog = document.getElementById('prompt-editor'), draftTheme = document.getElementById('draft-theme');

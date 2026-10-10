@@ -404,3 +404,7 @@ a.now:hover, a.card:hover, a.callout:hover { text-decoration: none; border-color
 .img-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px }
 .img-actions .btn, .img-actions button { white-space: nowrap }
 @media (max-width: 900px) { .img-detail { grid-template-columns: 1fr } .pad-grid { grid-template-columns: repeat(2, 1fr) } }
+
+.characters { display: grid; gap: 10px; margin-top: 12px }
+.character-card { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: start; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-2) }
+.character-card img { width: 96px; height: 96px; object-fit: contain; border-radius: 8px; background: #fff }

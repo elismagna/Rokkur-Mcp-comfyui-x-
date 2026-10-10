@@ -80,6 +80,7 @@ from rokkur_studio.pipeline.subject import (
     decide_subject,
     resize,
 )
+from rokkur_studio.services import characters as character_svc
 from rokkur_studio.services import commands, publishing, ratings, taste
 from rokkur_studio.services import images as image_svc
 from rokkur_studio.services.assets import import_file
@@ -380,6 +381,113 @@ def new_page(request: Request, ctx: Ctx, session: Db, reference_image: str = "",
                              if c.value not in ("UNKNOWN", "REJECTED", "REFERENCE_ONLY")])
 
 
+@router.post("/new/characters")
+def find_characters_in_clip(ctx: Ctx, session: Db, media_file: Annotated[str, Form()] = "",
+                            local_path: Annotated[str, Form()] = "",
+                            source_file: Annotated[UploadFile | None, File()] = None
+                            ) -> JSONResponse:
+    """Cutouts of the subjects seen in a clip, put into the picture library as characters."""
+    path = ""
+    uploaded: Path | None = None
+    if source_file is not None and source_file.filename:
+        if Path(source_file.filename).suffix.lower() not in VIDEO_EXTS:
+            raise HTTPException(422, f"{source_file.filename} is not a video file")
+        uploads = Path(ctx.settings.studio.data_dir) / "uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        uploaded = uploads / f"{uuid.uuid4().hex[:12]}_{Path(source_file.filename).name}"
+        with uploaded.open("wb") as fh:
+            shutil.copyfileobj(source_file.file, fh)
+        path = str(uploaded)
+    elif media_file:
+        if media_file not in {m["path"] for m in media_files(ctx)}:
+            raise HTTPException(422, "that file is not in the media folder")
+        path = media_file
+    elif local_path:
+        path = local_path
+    if not path or not Path(path).is_file():
+        raise HTTPException(422, "Pick or upload a video first.")
+    work = Path(ctx.settings.studio.data_dir) / "uploads" / f"characters_{uuid.uuid4().hex[:8]}"
+    try:
+        found = character_svc.find_characters(ctx.ffmpeg, _subject_masker(ctx), Path(path), work,
+                                              settings=ctx.settings.subject)
+    except MaskerUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except FFmpegError as exc:
+        raise HTTPException(422, f"The studio could not read that video: {exc.summary}") from exc
+    clip = Path(path).stem
+    store = _images(ctx)
+    out = []
+    for i, c in enumerate(found, 1):
+        row = image_svc.import_image(session, store, ctx.ffmpeg, Path(c["path"]), kind="character",
+                                     title=f"Subject {i} from {clip}",
+                                     request={"clip": clip, "time": c["time"], "share": c["share"],
+                                              "seen": c["seen"], "uploaded_source": str(uploaded or "")})
+        crop = store.dir(row.id) / "crop.png"
+        shutil.copy2(c["crop"], crop)
+        out.append({"id": row.id, "title": row.title, "url": f"/images/{row.id}/file",
+                    "crop_url": f"/ui/images/{row.id}/crop",
+                    "path": str(store.path_for(row.rel_path or "")),
+                    "time": c["time"], "share": c["share"], "seen": c["seen"],
+                    "description": character_svc.describe(f"Subject {i}", clip, c["share"]),
+                    "uploaded": str(uploaded) if uploaded else ""})
+    shutil.rmtree(work, ignore_errors=True)
+    return JSONResponse({"characters": out, "clip": clip,
+                         "note": ("The subject model sees one salient subject per frame; the "
+                                  "pictures show the clearest view of each distinct subject.")})
+
+
+@router.get("/images/{image_id}/crop")
+def image_crop(image_id: str, ctx: Ctx, session: Db) -> FileResponse:
+    image = _image_or_404(session, image_id)
+    crop = _images(ctx).dir(image.id) / "crop.png"
+    if not crop.is_file():
+        if not image.rel_path:
+            raise HTTPException(404)
+        return FileResponse(_images(ctx).path_for(image.rel_path), media_type="image/png")
+    return FileResponse(crop, media_type="image/png")
+
+
+@router.post("/projects/{project_id}/storyboard")
+def storyboard_from_ui(project_id: str, ctx: Ctx, session: Db) -> RedirectResponse:
+    """One still per shot from the brief's prompts, through the picture pipeline, so the look
+    can be judged before a long video render (or compared with one after)."""
+    try:
+        project = get_project(session, project_id)
+    except LookupError as exc:
+        raise HTTPException(404) from exc
+    brief = latest_document(session, project_id, "creative_brief")
+    if brief is None:
+        return _back(f"/ui/projects/{project_id}", err="No creative brief yet: the stills come "
+                     "from its shot prompts.")
+    size = "short" if project.target_format == "youtube_short" else "widescreen"
+    made = 0
+    try:
+        for shot in brief.data.get("shot_plan", []):
+            prompt = (shot.get("prompt") or brief.data.get("style_prompt")
+                      or project.creative_input.get("theme", ""))
+            if not prompt:
+                continue
+            image_svc.request_images(session, ctx.settings, _images(ctx), ctx.ffmpeg, ImageRequest(
+                operation="generate", prompt=prompt, size=size, count=1, kind="storyboard",
+                project_id=project_id, shot_id=shot.get("shot_id"),
+                title=f"{project.name} · {str(shot.get('shot_id', '')).replace('shot_', 'shot ')}",
+                render_on=project_target(project.creative_input)), actor="dashboard")
+            made += 1
+    except (ValueError, LookupError) as exc:
+        return _back(f"/ui/projects/{project_id}", err=str(exc))
+    return _back(f"/ui/projects/{project_id}#storyboard",
+                 msg=f"{made} storyboard still{'s' if made != 1 else ''} queued")
+
+
+def _storyboard(session: Session, project_id: str) -> list[Image]:
+    latest: dict[str, Image] = {}
+    for row in session.scalars(select(Image).where(Image.project_id == project_id,
+                                                   Image.kind == "storyboard")
+                               .order_by(Image.created_at)):
+        latest[row.shot_id or row.id] = row
+    return list(latest.values())
+
+
 @router.get("/subject-decision")
 def subject_decision(theme: str = "", prompt: str = "", subject: str = "auto",
                      character_key: str = "", character_description: str = "",
@@ -638,6 +746,9 @@ def project_page(project_id: str, request: Request, ctx: Ctx, session: Db) -> HT
     usage = budget_usage(session, project_id, ctx.settings)
     return _page(request, "project.html", ctx, d=detail, p=project, events=events,
                  shots=shots, subject=subject, keyframes=keyframes, tags=ratings.TAGS,
+                 storyboard=_storyboard(session, project_id),
+                 can_storyboard=detail.documents.get("creative_brief") is not None
+                 and not image_availability(ctx).get(ctx.settings.images.default_profile),
                  video_asset=video_asset, video_rating=video_rating,
                  earlier_video_rating=earlier_video_rating,
                  source_url=(f"/projects/{project_id}/assets/{source.id}/file" if source else None),
