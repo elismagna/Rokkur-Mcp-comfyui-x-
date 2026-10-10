@@ -225,8 +225,9 @@ ComfyUI, Ollama and Google servers (`tests/fakes*.py`).
 
 Tested by Claude in the cloud clone (Linux, real FFmpeg, fresh Postgres 16 `rokkur_test`), 2026-10-10, after the
 pictures, characters, stability, extension and sound work:
-- **351 passed, 1 skipped** (12 min 56 s), `ruff check src tests` and `mypy src` clean, after
-  the sound studio, live view, REA tab and 3D studio. The Pictures, Sound, live, REA and 3D
+- **363 passed, 1 skipped** (13 min 21 s), `ruff check src tests` and `mypy src` clean, on
+  `claude/laughing-mendel-5mq9ui` after merging `main` (Render in quality, RunPod start/stop)
+  into the sound studio, live view, REA tab and 3D studio. The Pictures, Sound, live, REA and 3D
   pages were rendered in Chromium at desktop and phone width with no script errors (fake
   ComfyUI, preview renderer). Real-GPU runs of the new graphs: none yet; see the acceptance
   list under Current work. Run the suite alone: two runs sharing `rokkur_test` break each other.
