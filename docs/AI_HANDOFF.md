@@ -4,7 +4,7 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-09 by Claude (cloud mode checked on a RunPod RTX 4090; docs/cloud.md).
+Last updated: 2026-10-10 by Claude (full suite re-run in the cloud clone; cloud cost rounding fix).
 See the [local upgrade findings](upgrade-2026-10-07.md) for implementation details and real
 render observations; the latest Git commit is authoritative.
 
@@ -214,6 +214,11 @@ The tests are integration tests: real FFmpeg, real Postgres, in-process worker, 
 ComfyUI, Ollama and Google servers (`tests/fakes*.py`).
 
 ## Verified results
+
+Tested by Claude in the cloud clone (Linux, real FFmpeg, fresh Postgres 16 `rokkur_test`), 2026-10-10:
+- **306 passed, 1 skipped**, `ruff check src tests` and `mypy src` clean, after the cloud cost
+  rounding fix. Before it, `test_cloud.py` failed here because the fake server renders a shot in
+  milliseconds and the per-shot estimate rounded to $0.
 
 Tested directly by Codex on Elis's PC, 2026-10-09:
 - Current suite: **272 passed, 1 skipped**, with `ruff check src tests` and `mypy src` clean.
@@ -503,6 +508,14 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Claude (2026-10-10): suite check, no edit in progress.** Ran `ruff check src tests`, `mypy src`
+  and the full `pytest` in the cloud clone against a fresh `rokkur_test` database. One real
+  failure: the cloud cost estimate was rounded to 4 decimals per shot before being stored, so a
+  shot that renders in well under a second (the fake server here) stored $0 and
+  `test_cloud.py` failed; on the slower PC it passed by luck. Fixed by storing the unrounded
+  estimate (the project page already formats it to cents). Nothing else open from Claude's side;
+  Elis's finished cloud render is still the next real-world check (see the entry below).
+
 - **Claude (2026-10-09): cloud mode checked on a real GPU.** Elis's RunPod RTX 4090 runs ComfyUI
   0.39.0 with the Wan VACE 1.3B, umt5 fp8 and Wan VAE models. The studio on the PC reaches it
   through an SSH tunnel on port 8189 (`host.docker.internal:8189` from Docker).
@@ -520,6 +533,9 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-10 Claude: cloud `CostEntry.usd` is no longer rounded per shot (`pipeline/stages.py`);
+  per-shot rounding dropped sub-cent estimates and biased the project total. Full suite, ruff and
+  mypy pass in the cloud clone (see Verified results).
 - 2026-10-09 Claude: cloud mode checked against a RunPod RTX 4090 (`comfy-check --cloud` ok for quality and keep); `docs/cloud.md` gained the keep-alive tunnel command, troubleshooting and RunPod notes.
 - 2026-10-09 Claude: FUTURE_24GB got `max_pixels: 399360`. It renders the same Wan 1.3B workflow, and a 1920x800 source came out 1920 wide, which failed the template's WIDTH max of 1280 (Elis's first cloud render). It now renders at 976x400.
 - 2026-10-09 Claude: local/cloud render mode (`docs/cloud.md`, `tests/test_cloud.py`).
