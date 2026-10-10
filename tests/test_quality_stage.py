@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from rokkur_studio.services.projects import latest_document
+from tests.test_dashboard import client_for
 from tests.test_pipeline import create, run, status
 
 
@@ -64,6 +65,11 @@ def test_qc_copies_the_ai_review_in_as_advisory_scores(ctx, sample_video):
     assert shots[0]["picture_review"]["by"] == "fake_vision"
     assert report["picture_reviewed"] == [s["shot_id"] for s in shots]
     assert "prompt_adherence" not in report["not_measured"]
+    client = client_for(ctx)
+    page = client.get(f"/ui/projects/{pid}").text
+    assert "Contact sheets" in page and "AI opinion (fake_vision)" in page
+    sheet = client.get(f"/projects/{pid}/assets/{shots[0]['contact_sheet_asset']}/file")
+    assert sheet.status_code == 200 and sheet.content.startswith(b"\x89PNG")
 
 
 def test_picture_review_can_be_switched_off_per_project(ctx, sample_video):

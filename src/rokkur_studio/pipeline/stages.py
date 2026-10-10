@@ -851,6 +851,11 @@ def quality_check(ctx: StudioContext, job: Job) -> dict[str, Any]:
         offset += len(src)
     report = qc_mod.summarize(shots, threshold)
     with ctx.db.transaction() as s:
+        for shot_result in shots:  # registered so the dashboard serves them like renders
+            sheet_asset = register_asset(
+                s, ctx.store, pid, "contact_sheet", ctx.store.path_for(shot_result["contact_sheet"]),
+                {"shot_id": shot_result["shot_id"], "attempt": shot_result["attempt"]})
+            shot_result["contact_sheet_asset"] = sheet_asset.id
         doc = save_document(s, pid, "qc_report", report, created_by="qc")
         _write_json(ctx.store.project_dir(pid, "qc") / f"qc_v{doc.version}.json", report)
         p = get_project(s, pid, for_update=True)
