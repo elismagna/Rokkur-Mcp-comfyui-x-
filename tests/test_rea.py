@@ -134,7 +134,8 @@ def test_runs_keep_the_real_output_and_summarise_it_honestly(ctx, fake_rea, tmp_
     output = svc.output_of(store_for(ctx), done)
     assert output["evidence_id"] == "ev_1" and output["snapshot"] == ["--snapshot"]
     folder = store_for(ctx).root / done.id
-    assert (folder / "command.txt").read_text().startswith(sys.executable.split("/")[-1][:3] or "p")
+    command = (folder / "command.txt").read_text()
+    assert command.startswith(sys.executable) and " analyze " in command and "--json" in command
     assert "rea_progress" in (folder / "stderr.txt").read_text()
     # REA's error contract becomes the run's error, with its remediation
     wrong = request(ctx, preset="inspect", target=str(app))
@@ -209,6 +210,6 @@ def test_rea_page_api_and_cli(ctx, fake_rea, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(context_mod, "build_context", lambda settings, db=None: ctx)
     assert cli.main(["rea-run", "capabilities", "--wait"]) == 0
     text = capsys.readouterr().out
-    assert "done" in text and "capabilities: {'available': 1, 'total': 2}" in text
+    assert " done " in text and "'available': 1" in text and "'total': 2" in text
     assert cli.main(["rea-list"]) == 0 and "capabilities" in capsys.readouterr().out
     assert cli.main(["rea-run", "analyze"]) == 1
