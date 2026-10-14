@@ -107,3 +107,12 @@ jobs:
   backoff_base_s: 5
   backoff_max_s: 600
   poll_interval_s: 1.0
+
+# Night School (docs/practice.md): practice renders on finished videos, scored for general
+# quality (QC + the AI picture review), never for anyone's taste.
+practice:
+  variants: 5             # setting changes per batch, besides the baseline and a second seed
+  profile: ""             # empty: each video's own profile
+  min_batches: 3          # a lesson needs this many batches that tried the change
+  min_gain: 0.5           # and this mean score gain (0-10), above the seed's own swing
+  apply_lessons: false    # true: new videos start with the settings practice proved

@@ -503,6 +503,19 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Claude (2026-10-14): Night School, practice that learns general render quality. Untested on
+  the PC.** Elis asked for a training mode, then clarified it must learn what is good in
+  general, not his taste. A `practice` job (queue priority 200, after all real work, no
+  project_id so it never moves a video's state) renders one shot of a finished video as the
+  baseline, with another seed, and with N one-at-a-time setting changes (rotating catalog in
+  `services/practice.py`), in one GPU batch. Scored by QC + forced AI picture review (half
+  each; anatomy <= 4 caps at 5); report saved as `practice_report`. `lessons` turns >= 3
+  reviewed batches into better/worse/as-good-faster per profile, beating the seed's swing.
+  `practice.apply_lessons` (off) starts new videos with proven settings. Shot rendering was
+  split into `stages._render_shot(..., practice=)`; practice renders are filtered from budgets,
+  timings and project pages by `projects.real_render()`. Dashboard **Night School**, CLI
+  `practice` / `lessons`, `docs/practice.md`, `tests/test_practice.py`. **Next:** Elis runs
+  `practice --all --batches 8` overnight with the vision model and pastes `lessons`.
 - **Claude (2026-10-10): desktop icon and RunPod start/stop. Untested on Windows.**
   `.\scripts\studio.ps1 shortcut` makes a *Rökkur Studio* desktop icon (`assets/rokkur.ico`)
   that runs `scripts/launch.ps1`: Docker Desktop, `studio.ps1 up`, then (with
@@ -538,6 +551,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-14 Claude: Night School (practice batches, general quality score, lessons, optional apply). Test venv needs opencv-python-headless or the QC stability test fails.
 - 2026-10-10 Claude: picture checker (`docs/picture-checker.md`: contact sheets, motion-compensated stability, flicker, advisory vision-model review), post-render stabilizer and repair auto-tuning (`docs/stability.md`). Untested on a real render yet. Also render options (sampler, scheduler, shift, render size, edge detail, stability settings on the form/API/CLI) and the CLOUD_14B profile (Wan VACE 14B, fp8, up to 720P; needs the 34.7 GB 14B model on the pod, see `docs/cloud.md`). Tests pass; none of it has been run on a real GPU yet.
 - 2026-10-10 Claude: desktop icon + launcher (`scripts/launch.ps1`, `install-shortcut.ps1`,
   `studio.ps1 shortcut|launch|cloud-on|cloud-off|cloud-pod`), RunPod start/stop/status

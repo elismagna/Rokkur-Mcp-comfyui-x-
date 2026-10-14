@@ -7,7 +7,7 @@ from typing import Protocol
 
 PROJECT_DIRS = (
     "source", "references", "analysis", "controls", "manifests", "renders",
-    "qc", "final", "thumbnails", "logs", "work", "prompts",
+    "qc", "final", "thumbnails", "logs", "work", "prompts", "practice",
 )
 
 

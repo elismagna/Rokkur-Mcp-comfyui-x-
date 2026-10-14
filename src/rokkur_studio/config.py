@@ -236,6 +236,16 @@ class CostsSection(BaseModel):
     max_cost_per_project_usd: float = 0
 
 
+class PracticeSection(BaseModel):
+    """Night School (docs/practice.md): practice renders on finished videos, scored for quality."""
+
+    variants: int = Field(5, ge=1, le=13)  # setting changes per batch, besides baseline and seed
+    profile: str = ""                     # empty: each video's own profile
+    min_batches: int = Field(3, ge=1)     # a lesson needs this many batches with the change
+    min_gain: float = Field(0.5, ge=0)    # and this mean score gain (0-10), above the seed's swing
+    apply_lessons: bool = False           # true: new videos start with the proven settings
+
+
 class JobsSection(BaseModel):
     default_max_attempts: int = 3
     lease_seconds: int = 900
@@ -291,6 +301,7 @@ class Settings(BaseModel):
     comments: CommentsSection = CommentsSection()
     costs: CostsSection = CostsSection()
     jobs: JobsSection = JobsSection()
+    practice: PracticeSection = PracticeSection()
     profiles: dict[str, RenderProfile] = Field(default_factory=dict)
     config_dir: Path = Path("config")
     workflows_dir: Path = Path("workflows")

@@ -38,7 +38,12 @@ from rokkur_studio.pipeline.context import (
 from rokkur_studio.pipeline.driver import advance, next_job_kind
 from rokkur_studio.services import commands, publishing, ratings
 from rokkur_studio.services.assets import import_file, project_assets
-from rokkur_studio.services.projects import get_project, latest_document, latest_rights
+from rokkur_studio.services.projects import (
+    get_project,
+    latest_document,
+    latest_rights,
+    real_render,
+)
 from rokkur_studio.youtube.client import YouTubeError
 from rokkur_studio.youtube.oauth import OAuthError
 
@@ -96,7 +101,7 @@ def project_detail(session: Session, project: Project) -> ProjectDetail:
         rights=RightsOut.model_validate(rights) if rights else None,
         documents=docs,
         renders=[RenderOut.model_validate(r) for r in session.scalars(
-            select(Render).where(Render.project_id == project.id)
+            select(Render).where(Render.project_id == project.id, real_render())
             .order_by(Render.started_at))],
         assets=[AssetOut.model_validate(a) for a in project_assets(session, project.id)],
         jobs=[JobOut.model_validate(j) for j in session.scalars(

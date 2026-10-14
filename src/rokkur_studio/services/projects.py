@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import Session
 
 from rokkur_studio.config import project_target
@@ -12,6 +12,7 @@ from rokkur_studio.db.models import (
     CostEntry,
     Document,
     Event,
+    Job,
     Project,
     Render,
     RightsDecision,
@@ -175,14 +176,20 @@ def failure_reason(session: Session, project: Project) -> str | None:
     return _last_failure(session, project).get("reason")
 
 
+def real_render() -> ColumnElement[bool]:
+    """Renders made for the project itself, not by practice runs (pipeline/practice.py)."""
+    return or_(Render.job_id.is_(None),
+               Render.job_id.not_in(select(Job.id).where(Job.kind == "practice")))
+
+
 def budget_usage(session: Session, project_id: str, settings: Settings) -> dict[str, Any]:
     """Renders and GPU minutes used, against the configured budget plus what a human granted."""
     extra = session.scalars(
         select(Event.data).where(Event.project_id == project_id,
                                  Event.type == EventType.BUDGET_EXTENDED)
     ).all()
-    renders = session.scalar(select(func.count(Render.id))
-                             .where(Render.project_id == project_id)) or 0
+    renders = session.scalar(select(func.count(Render.id))  # practice renders are free
+                             .where(Render.project_id == project_id, real_render())) or 0
     spent = dict(session.execute(
         select(CostEntry.kind, func.sum(CostEntry.amount)).where(
             CostEntry.project_id == project_id,

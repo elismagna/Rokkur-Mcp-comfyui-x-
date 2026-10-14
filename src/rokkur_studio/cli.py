@@ -711,6 +711,52 @@ def cmd_timings(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_practice(args: argparse.Namespace) -> int:
+    """Queue Night School practice batches (docs/practice.md); the worker runs them."""
+    from rokkur_studio.db.session import Database
+    from rokkur_studio.services import practice
+    from rokkur_studio.services.projects import get_project
+    from rokkur_studio.services.timings import latest_project_id
+
+    settings = _settings(args)
+    with Database(settings.database.url).transaction() as s:
+        if args.all:
+            projects = practice.practice_projects(s)
+        else:
+            pid = args.project_id or latest_project_id(s)
+            try:
+                projects = [get_project(s, pid)] if pid else []
+            except LookupError:
+                print(f"no project {pid}", file=sys.stderr)
+                return 2
+        try:
+            jobs = practice.queue_batches(s, settings, projects, batches=args.batches,
+                                          shot_id=args.shot, profile=args.profile, actor="cli")
+        except practice.PracticeError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        names = sorted({p.name for p in projects})
+    print(f"Queued {len(jobs)} practice batches on {', '.join(names)}. They run after any "
+          "real work; see the Practice page or `lessons` for results.")
+    return 0
+
+
+def cmd_lessons(args: argparse.Namespace) -> int:
+    """Print what practice has learned, per render profile."""
+    from rokkur_studio.db.session import Database
+    from rokkur_studio.services import practice
+
+    settings = _settings(args)
+    with Database(settings.database.url).session() as s:
+        learned = practice.lessons(s, settings)
+        recent = practice.reports(s, limit=args.recent)
+    if args.json:
+        print(json.dumps({"lessons": learned, "recent": recent}, indent=2, default=str))
+    else:
+        print(practice.report_text(learned, recent))
+    return 0
+
+
 def cmd_prompt_schedule(args: argparse.Namespace) -> int:
     """Print a project's Batch Prompt Schedule, ready to paste into FizzNodes."""
     from rokkur_studio.db.session import Database
@@ -842,6 +888,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("project_id", nargs="?")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_timings)
+    p = sub.add_parser("practice", help="queue Night School practice batches (docs/practice.md)")
+    p.add_argument("project_id", nargs="?", help="default: the latest project")
+    p.add_argument("--all", action="store_true", help="cycle through every finished video")
+    p.add_argument("--batches", type=int, default=1)
+    p.add_argument("--shot", help="practise this shot only, e.g. shot_002")
+    p.add_argument("--profile", help="render profile (default: each video's own)")
+    p.set_defaults(func=cmd_practice)
+    p = sub.add_parser("lessons", help="print what practice has learned")
+    p.add_argument("--recent", type=int, default=5, help="latest batches to list")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_lessons)
     return parser
 
 

@@ -70,11 +70,12 @@ from rokkur_studio.director.prompts import Weights, preview
 from rokkur_studio.director.vocabulary import VOCABULARY
 from rokkur_studio.domain.rights import RightsCategory
 from rokkur_studio.domain.states import ProjectStatus as S
+from rokkur_studio.jobs.queue import JobStatus
 from rokkur_studio.manifest.schema import ReconstructionManifest
 from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline.context import StudioContext, profile_availability, supported_controls
 from rokkur_studio.pipeline.subject import OnnxSubjectMasker, decide_subject
-from rokkur_studio.services import commands, publishing, ratings, taste
+from rokkur_studio.services import commands, practice, publishing, ratings, taste
 from rokkur_studio.services.projects import (
     at_budget_limit,
     at_repair_limit,
@@ -82,6 +83,7 @@ from rokkur_studio.services.projects import (
     failure_reason,
     get_project,
     latest_document,
+    real_render,
     save_document,
 )
 from rokkur_studio.services.runpod import PodStatusCache, RunPodError, last_cloud_use
@@ -595,7 +597,8 @@ def _shot_reviews(session: Session, project: Project, detail: Any,
     timing = {s["shot_id"]: (s["start"], s["end"]) for s in manifest_shots}
     qc = {r.get("render_id"): r for r in (docs.get("qc_report") or {}).get("data", {})
           .get("shots", [])}
-    rows = list(session.scalars(select(Render).where(Render.project_id == project.id)
+    rows = list(session.scalars(select(Render).where(Render.project_id == project.id,
+                                                     real_render())
                                 .order_by(Render.attempt)))
     by_asset = {r.output_asset_id: r for r in rows if r.output_asset_id}
     verdicts = {r.render_id: r for r in ratings.project_ratings(session, project.id)
@@ -872,6 +875,36 @@ def taste_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
                  queue=ratings.unrated_renders(session, limit=12),
                  unrated=ratings.unrated_count(session), tags=ratings.TAGS,
                  kinds=taste.KINDS, min_projects=taste.MIN_PROJECTS)
+
+
+# -- Night School (docs/practice.md) -------------------------------------------------------
+@router.get("/practice", response_class=HTMLResponse)
+def practice_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
+    learned = practice.lessons(session, ctx.settings)
+    proven: dict[str, Any] = {}
+    for prof in learned:
+        proven.update(practice.proven_overrides(session, ctx.settings, prof))
+    counts = dict(session.execute(
+        select(Job.status, func.count(Job.id)).where(Job.kind == practice.KIND)
+        .group_by(Job.status)).tuples().all())
+    return _page(request, "practice.html", ctx, learned=learned, proven=proven,
+                 recent=practice.reports(session, limit=10),
+                 projects=practice.practice_projects(session),
+                 done=len(practice.reports(session)),
+                 queued=sum(n for status, n in counts.items() if status in JobStatus.ACTIVE))
+
+
+@router.post("/practice")
+def practice_from_ui(ctx: Ctx, session: Db, project_id: Annotated[str, Form()] = "",
+                     batches: Annotated[int, Form()] = 1) -> RedirectResponse:
+    try:
+        projects = ([get_project(session, project_id)] if project_id
+                    else practice.practice_projects(session))
+        jobs = practice.queue_batches(session, ctx.settings, projects, batches=batches)
+    except practice.PracticeError as exc:
+        return _back("/ui/practice", err=str(exc))
+    return _back("/ui/practice", msg=f"Queued {len(jobs)} practice batches; they run after "
+                                     "any real work")
 
 
 # -- queue / approvals ---------------------------------------------------------------------

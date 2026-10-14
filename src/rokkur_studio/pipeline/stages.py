@@ -75,6 +75,7 @@ from rokkur_studio.pipeline.subject import (
     unusable,
     vace_mask_video,
 )
+from rokkur_studio.services import practice as practice_svc
 from rokkur_studio.services import publishing, ratings
 from rokkur_studio.services.assets import import_file, register_asset
 from rokkur_studio.services.events import EventType, record_event
@@ -83,6 +84,7 @@ from rokkur_studio.services.projects import (
     get_project,
     latest_document,
     latest_rights,
+    real_render,
     repair_budget,
     save_document,
     transition,
@@ -342,6 +344,12 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
                                          "scheduler", "resolution_scale", "stabilize",
                                          "smooth_control")
                                if project.creative_input.get(k) is not None})
+    proven: dict[str, Any] = {}
+    if ctx.settings.practice.apply_lessons:  # what Night School proved (docs/practice.md)
+        with ctx.db.session() as s:
+            proven = practice_svc.proven_overrides(s, ctx.settings, profile.name)
+        for shot in manifest.shots:
+            shot.overrides = practice_svc.apply_proven(shot.overrides, proven, profile.steps)
     compiled: dict[str, Any] = {}
     if ctx.settings.render.renderer == "comfyui":
         try:
@@ -360,7 +368,8 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
         record_event(s, EventType.MANIFEST_CREATED, project_id=pid, actor="workflow_planner",
                      job_id=job.id, data={"version": doc.version, "shots": len(manifest.shots),
                                           "subject": manifest.subject.mode,
-                                          "subject_reason": manifest.subject.reason})
+                                          "subject_reason": manifest.subject.reason,
+                                          **({"practice_lessons": proven} if proven else {})})
         if compiled:
             record_event(s, EventType.WORKFLOW_COMPILED, project_id=pid,
                          actor="workflow_compiler", job_id=job.id,
@@ -479,9 +488,8 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
     cloud = renderer.name == "comfyui" and target == "cloud"
     done = _latest_renders(ctx, pid)
     faults = project.creative_input.get("test_faults") or {}
-    keep = manifest.subject.mode == "keep"
     masker = (_subject_masker(ctx)
-              if keep or manifest.identity.reference_mode == "cutout" else None)
+              if manifest.subject.mode == "keep" or manifest.identity.reference_mode == "cutout" else None)
     rendered: list[str] = []
 
     # One batch for every shot: ComfyUI keeps the Wan model and text encoder loaded between
@@ -493,136 +501,165 @@ def render(ctx: StudioContext, job: Job) -> dict[str, Any]:
         for shot in manifest.shots:
             if shot.shot_id in done:
                 continue
-            while True:
-                with ctx.db.session() as s:
-                    if is_cancelled(s, job.id):
-                        raise JobCancelled()
-                _check_budget(ctx, pid)
-                profile = ctx.settings.profile(str(shot.overrides.get("profile",
-                                                                       base_profile.name)))
-                params = shot_params(manifest, shot, profile)
-                if params.get("REFERENCE_IMAGE"):
-                    params["REFERENCE_IMAGE"] = str(ctx.store.path_for(params["REFERENCE_IMAGE"]))
-                with ctx.db.session() as s:
-                    attempt = (s.scalar(select(func.count(Render.id)).where(
-                        Render.project_id == pid, Render.shot_id == shot.shot_id)) or 0) + 1
-                fault = faults.get(shot.shot_id)
-                if fault and attempt in fault.get("attempts", [1]):
-                    params["_FAULT"] = fault.get("kind", "black")
-                clip = _shot_clip(ctx, manifest, shot, fps=params["FPS"])
-                workflow = profile.workflow
-                guidance: dict[str, Any] = {}
-                if masker is not None and renderer.name == "comfyui":
-                    workflow, guidance = _subject_guidance(ctx, manifest, shot, clip, params,
-                                                           profile, masker, target)
-                out_dir = ctx.store.project_dir(pid, f"renders/{shot.shot_id}")
-                out = out_dir / f"attempt_{attempt:02d}.mp4"
-                with ctx.db.transaction() as s:
-                    row = Render(project_id=pid, job_id=job.id, shot_id=shot.shot_id,
-                                 attempt=attempt, profile=profile.name, renderer=renderer.name,
-                                 workflow=workflow if renderer.name == "comfyui" else None,
-                                 status="running", params={k: v for k, v in params.items()})
-                    s.add(row)
-                    s.flush()
-                    render_id = row.id
-                    record_event(s, EventType.RENDER_SUBMITTED, project_id=pid, actor="render",
-                                 job_id=job.id, data={"shot_id": shot.shot_id, "attempt": attempt,
-                                                      "renderer": renderer.name})
-                try:
-                    if renderer.name == "ffmpeg_preview" or cloud:
-                        outcome = renderer.render_shot(clip=clip, params=params,
-                                                       workflow=workflow, out=out)
-                    else:
-                        with ctx.gpu.lease(job.id, profile.resource_class):
-                            outcome = renderer.render_shot(clip=clip, params=params,
-                                                           workflow=workflow, out=out)
-                except RenderOOM as exc:
-                    step = _apply_degrade(ctx, manifest, shot, profile.degrade, target)
-                    _render_failed(ctx, job, render_id, "oom", str(exc), {"next_step": step})
-                    with ctx.db.transaction() as s:
-                        record_event(s, EventType.GPU_OOM, project_id=pid, actor="render",
-                                     job_id=job.id, data={"shot_id": shot.shot_id,
-                                                          "recovery_step": step})
-                        save_document(s, pid, "manifest", manifest.model_dump(),
-                                      created_by="oom_recovery")
-                    if step is None:
-                        raise PermanentJobError(
-                            "oom_unrecoverable",
-                            f"{shot.shot_id}: CUDA OOM after the full recovery ladder; needs a "
-                            "smaller shot, a lighter profile or cloud GPU (approval required)") from exc
-                    continue  # retry with the degraded settings (never identical)
-                except RenderUnavailable as exc:
-                    _render_failed(ctx, job, render_id, "unavailable", str(exc))
-                    raise JobError("renderer_unavailable", str(exc)) from exc
-                except (RenderRejected, TemplateError) as exc:
-                    _render_failed(ctx, job, render_id, "rejected", str(exc))
-                    raise PermanentJobError("render_rejected", str(exc)) from exc
-                except GpuUnavailable as exc:
-                    _render_failed(ctx, job, render_id, "gpu_busy", str(exc))
-                    raise JobError("gpu_busy", str(exc)) from exc
-                except JobCancelled:
-                    _render_failed(ctx, job, render_id, "cancelled", "Render cancelled by the user")
-                    raise
-                except FFmpegError as exc:
-                    _render_failed(ctx, job, render_id, "ffmpeg", str(exc), exc.to_dict())
-                    raise JobError("ffmpeg_failed", str(exc), exc.to_dict()) from exc
-                details, final = outcome.details, outcome.path
-                if guidance:
-                    details = {**details, "guidance": guidance}
-                if not params.get("_FAULT"):  # a test fault models a broken render: keep it
-                    # Before the kept-subject composite, so the real subject's pixels go back
-                    # in untouched. CPU only: no GPU lease (pipeline/stabilize.py).
-                    steady, stabilizer = stabilize_shot(
-                        ctx.ffmpeg, source=_shot_clip(ctx, manifest, shot), render=outcome.path,
-                        value=shot.overrides.get("stabilize", ctx.settings.render.stabilize),
-                        fps=float(params["FPS"]),
-                        qc_fps=manifest.video.fps, threshold=ctx.settings.quality.pass_threshold)
-                    details = {**details, "stabilizer": stabilizer}
-                    if steady != outcome.path:
-                        outcome = replace(outcome, path=steady)
-                        final = steady
-                if keep and masker is not None:
-                    subject, kept = _keep_subject(ctx, manifest, shot, clip, outcome, params, masker)
-                    details = {**details, "subject": subject}
-                    final = kept or final
-                meta = {"shot_id": shot.shot_id, "attempt": attempt}
-                with ctx.db.transaction() as s:
-                    asset = register_asset(s, ctx.store, pid, "render", final,
-                                           {**meta, "subject": "kept"} if final != outcome.path
-                                           else meta)
-                    if final != outcome.path:  # the render before the subject went back in
-                        register_asset(s, ctx.store, pid, "render_raw", outcome.path, meta)
-                    done_row = s.get(Render, render_id)
-                    assert done_row is not None
-                    done_row.status, done_row.output_asset_id = "succeeded", asset.id
-                    done_row.remote_id, done_row.duration_s = outcome.remote_id, outcome.seconds
-                    done_row.finished_at = utcnow()
-                    done_row.params = {**done_row.params, "_details": details}
-                    if cloud:  # an estimate: a rented server bills while it is on
-                        minutes = outcome.seconds / 60
-                        s.add(CostEntry(project_id=pid, job_id=job.id, kind="cloud_gpu_minutes",
-                                        amount=minutes, unit="min",
-                                        # unrounded: a short shot must not cost $0
-                                        usd=minutes / 60 * ctx.settings.cloud.price_per_hour_usd))
-                    elif renderer.name != "ffmpeg_preview":
-                        s.add(CostEntry(project_id=pid, job_id=job.id, kind="gpu_minutes",
-                                        amount=outcome.seconds / 60, unit="min"))
-                    data: dict[str, Any] = {"shot_id": shot.shot_id, "attempt": attempt,
-                                            "seconds": round(outcome.seconds, 2)}
-                    if cloud:
-                        data["render_on"] = "cloud"
-                    if "subject" in details:
-                        data["subject"] = ("kept" if details["subject"].get("kept")
-                                           else details["subject"].get("reason"))
-                    record_event(s, EventType.RENDER_COMPLETED, project_id=pid, actor="render",
-                                 job_id=job.id, data=data)
-                rendered.append(shot.shot_id)
-                break
+            _render_shot(ctx, job, manifest, shot, base_profile, renderer, masker=masker,
+                         target=target, faults=faults)
+            rendered.append(shot.shot_id)
 
     assembled = _assemble(ctx, manifest)
     _finish(ctx, job, S.QUALITY_CHECK, {"assembled": assembled, "rendered": rendered,
                                         "manifest_version": manifest_version})
     return {"rendered": rendered, "assembled": assembled}
+
+
+def _render_shot(ctx: StudioContext, job: Job, manifest: ReconstructionManifest,
+                 shot: ShotSpec, base_profile: RenderProfile, renderer: Renderer, *,
+                 masker: SubjectMasker | None, target: str,
+                 faults: dict[str, Any] | None = None, practice: str | None = None) -> str:
+    """Render one shot, stepping down after a CUDA OOM, and return the finished Render's id.
+
+    ``practice`` names a practice batch (services/practice.py): the render is then kept
+    beside the video (status ``practice``) instead of becoming the shot's render, it does not
+    count against the project's render budget, and recovery steps are not saved into the
+    project's manifest.
+    """
+    pid = manifest.project_id
+    cloud = renderer.name == "comfyui" and target == "cloud"
+    keep = manifest.subject.mode == "keep"
+    faults = faults or {}
+    while True:
+        with ctx.db.session() as s:
+            if is_cancelled(s, job.id):
+                raise JobCancelled()
+        if practice is None:
+            _check_budget(ctx, pid)
+        profile = ctx.settings.profile(str(shot.overrides.get("profile",
+                                                               base_profile.name)))
+        params = shot_params(manifest, shot, profile)
+        if params.get("REFERENCE_IMAGE"):
+            params["REFERENCE_IMAGE"] = str(ctx.store.path_for(params["REFERENCE_IMAGE"]))
+        with ctx.db.session() as s:
+            attempt = (s.scalar(select(func.count(Render.id)).where(
+                Render.project_id == pid, Render.shot_id == shot.shot_id,
+                ~real_render() if practice else real_render())) or 0) + 1
+        fault = faults.get(shot.shot_id)
+        if fault and attempt in fault.get("attempts", [1]):
+            params["_FAULT"] = fault.get("kind", "black")
+        clip = _shot_clip(ctx, manifest, shot, fps=params["FPS"])
+        workflow = profile.workflow
+        guidance: dict[str, Any] = {}
+        if masker is not None and renderer.name == "comfyui":
+            workflow, guidance = _subject_guidance(ctx, manifest, shot, clip, params,
+                                                   profile, masker, target)
+        out_dir = ctx.store.project_dir(
+            pid, f"practice/{practice}/{shot.shot_id}" if practice else f"renders/{shot.shot_id}")
+        out = out_dir / f"attempt_{attempt:02d}.mp4"
+        with ctx.db.transaction() as s:
+            row = Render(project_id=pid, job_id=job.id, shot_id=shot.shot_id,
+                         attempt=attempt, profile=profile.name, renderer=renderer.name,
+                         workflow=workflow if renderer.name == "comfyui" else None,
+                         status="running", params={k: v for k, v in params.items()})
+            s.add(row)
+            s.flush()
+            render_id = row.id
+            record_event(s, EventType.RENDER_SUBMITTED, project_id=pid, actor="render",
+                         job_id=job.id, data={"shot_id": shot.shot_id, "attempt": attempt,
+                                              "renderer": renderer.name})
+        try:
+            if renderer.name == "ffmpeg_preview" or cloud:
+                outcome = renderer.render_shot(clip=clip, params=params,
+                                               workflow=workflow, out=out)
+            else:
+                with ctx.gpu.lease(job.id, profile.resource_class):
+                    outcome = renderer.render_shot(clip=clip, params=params,
+                                                   workflow=workflow, out=out)
+        except RenderOOM as exc:
+            step = _apply_degrade(ctx, manifest, shot, profile.degrade, target)
+            _render_failed(ctx, job, render_id, "oom", str(exc), {"next_step": step})
+            with ctx.db.transaction() as s:
+                record_event(s, EventType.GPU_OOM, project_id=pid, actor="render",
+                             job_id=job.id, data={"shot_id": shot.shot_id,
+                                                  "recovery_step": step})
+                if practice is None:
+                    save_document(s, pid, "manifest", manifest.model_dump(),
+                                  created_by="oom_recovery")
+            if step is None:
+                raise PermanentJobError(
+                    "oom_unrecoverable",
+                    f"{shot.shot_id}: CUDA OOM after the full recovery ladder; needs a "
+                    "smaller shot, a lighter profile or cloud GPU (approval required)") from exc
+            continue  # retry with the degraded settings (never identical)
+        except RenderUnavailable as exc:
+            _render_failed(ctx, job, render_id, "unavailable", str(exc))
+            raise JobError("renderer_unavailable", str(exc)) from exc
+        except (RenderRejected, TemplateError) as exc:
+            _render_failed(ctx, job, render_id, "rejected", str(exc))
+            raise PermanentJobError("render_rejected", str(exc)) from exc
+        except GpuUnavailable as exc:
+            _render_failed(ctx, job, render_id, "gpu_busy", str(exc))
+            raise JobError("gpu_busy", str(exc)) from exc
+        except JobCancelled:
+            _render_failed(ctx, job, render_id, "cancelled", "Render cancelled by the user")
+            raise
+        except FFmpegError as exc:
+            _render_failed(ctx, job, render_id, "ffmpeg", str(exc), exc.to_dict())
+            raise JobError("ffmpeg_failed", str(exc), exc.to_dict()) from exc
+        details, final = outcome.details, outcome.path
+        if guidance:
+            details = {**details, "guidance": guidance}
+        if not params.get("_FAULT"):  # a test fault models a broken render: keep it
+            # Before the kept-subject composite, so the real subject's pixels go back
+            # in untouched. CPU only: no GPU lease (pipeline/stabilize.py).
+            steady, stabilizer = stabilize_shot(
+                ctx.ffmpeg, source=_shot_clip(ctx, manifest, shot), render=outcome.path,
+                value=shot.overrides.get("stabilize", ctx.settings.render.stabilize),
+                fps=float(params["FPS"]),
+                qc_fps=manifest.video.fps, threshold=ctx.settings.quality.pass_threshold)
+            details = {**details, "stabilizer": stabilizer}
+            if steady != outcome.path:
+                outcome = replace(outcome, path=steady)
+                final = steady
+        if keep and masker is not None:
+            subject, kept = _keep_subject(ctx, manifest, shot, clip, outcome, params, masker)
+            details = {**details, "subject": subject}
+            final = kept or final
+        meta = {"shot_id": shot.shot_id, "attempt": attempt}
+        with ctx.db.transaction() as s:
+            asset = register_asset(s, ctx.store, pid,
+                                   "practice_render" if practice else "render", final,
+                                   {**meta, "subject": "kept"} if final != outcome.path
+                                   else meta)
+            # the render before the subject went back in
+            if final != outcome.path and practice is None:
+                register_asset(s, ctx.store, pid, "render_raw", outcome.path, meta)
+            done_row = s.get(Render, render_id)
+            assert done_row is not None
+            done_row.status = "practice" if practice else "succeeded"
+            done_row.output_asset_id = asset.id
+            done_row.remote_id, done_row.duration_s = outcome.remote_id, outcome.seconds
+            done_row.finished_at = utcnow()
+            done_row.params = {**done_row.params, "_details": details}
+            if cloud:  # an estimate: a rented server bills while it is on
+                minutes = outcome.seconds / 60
+                s.add(CostEntry(project_id=pid, job_id=job.id, kind="cloud_gpu_minutes",
+                                amount=minutes, unit="min",
+                                # unrounded: a short shot must not cost $0
+                                usd=minutes / 60 * ctx.settings.cloud.price_per_hour_usd))
+            elif renderer.name != "ffmpeg_preview":
+                s.add(CostEntry(project_id=pid, job_id=job.id,
+                                kind="practice_gpu_minutes" if practice else "gpu_minutes",
+                                amount=outcome.seconds / 60, unit="min"))
+            data: dict[str, Any] = {"shot_id": shot.shot_id, "attempt": attempt,
+                                    "seconds": round(outcome.seconds, 2)}
+            if cloud:
+                data["render_on"] = "cloud"
+            if practice:
+                data["practice"] = practice
+            if "subject" in details:
+                data["subject"] = ("kept" if details["subject"].get("kept")
+                                   else details["subject"].get("reason"))
+            record_event(s, EventType.RENDER_COMPLETED, project_id=pid, actor="render",
+                         job_id=job.id, data=data)
+        return render_id
 
 
 def _subject_masker(ctx: StudioContext) -> SubjectMasker:
@@ -755,7 +792,8 @@ def _render_failed(ctx: StudioContext, job: Job, render_id: str, code: str, mess
         if row is not None:
             row.status, row.finished_at = "failed", utcnow()
             row.error = {"code": code, "message": message, **(details or {})}
-        record_event(s, EventType.RENDER_FAILED, project_id=job.project_id, actor="render",
+        record_event(s, EventType.RENDER_FAILED,
+                     project_id=row.project_id if row is not None else job.project_id, actor="render",
                      job_id=job.id, data={"render_id": render_id, "code": code,
                                           "message": message})
 
@@ -794,11 +832,13 @@ def _assemble(ctx: StudioContext, manifest: ReconstructionManifest) -> str:
 
 
 # -- quality control ----------------------------------------------------------------------
-def _picture_checker(ctx: StudioContext, project: Project) -> vision.PictureChecker | None:
-    """The AI picture review for this QC run, or None when it is switched off. A provider that
-    cannot see images still gets a checker: each shot then records why it had no review."""
-    if ctx.settings.quality.picture_review == "off" or \
-            not project.creative_input.get("picture_review", True):
+def _picture_checker(ctx: StudioContext, project: Project, *,
+                     force: bool = False) -> vision.PictureChecker | None:
+    """The AI picture review for this QC run, or None when it is switched off (``force``:
+    practice, which needs it to judge). A provider that cannot see images still gets a
+    checker: each shot then records why it had no review."""
+    if not force and (ctx.settings.quality.picture_review == "off"
+                      or not project.creative_input.get("picture_review", True)):
         return None
     custom = ctx.extras.get("vision_provider")
     if custom is not None:
@@ -1082,6 +1122,12 @@ def _propose_upload(s: Session, p: Project, ctx: StudioContext, job: Job) -> Non
                      actor="channel_manager", job_id=job.id, data={"reason": str(exc)})
 
 
+def _practice(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    from rokkur_studio.pipeline.practice import run_batch  # it builds on this module
+
+    return run_batch(ctx, job)
+
+
 HANDLERS: dict[str, Handler] = {
     "rights_check": rights_check,
     "ingest": ingest,
@@ -1092,4 +1138,6 @@ HANDLERS: dict[str, Handler] = {
     "qc": quality_check,
     "repair": repair,
     "edit": edit,
+    "practice": _practice,
 }
+

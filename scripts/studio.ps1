@@ -3,7 +3,7 @@
   Windows equivalent of the Makefile. Usage: .\scripts\studio.ps1 <command>
   Commands: up, down, logs, test, migrate, studio, worker, comfy-check, youtube-auth,
             smoke-test, audit, lint, build, install-models, comfy-render, render, agent-check, publish,
-            prompt-schedule, youtube-playlists, taste, timings, shortcut, launch, cloud-on, cloud-off,
+            prompt-schedule, youtube-playlists, taste, timings, practice, lessons, shortcut, launch, cloud-on, cloud-off,
             cloud-pod
   publish: .\scripts\studio.ps1 publish <project id> [--privacy unlisted] [--dry-run]
            [--at "2026-10-09 18:00" | --at next] [--playlist "Shorts"]
@@ -13,6 +13,8 @@
   prompt-schedule: .\scripts\studio.ps1 prompt-schedule <project id>   (FizzNodes Batch Prompt Schedule text)
   taste:        .\scripts\studio.ps1 taste   (what your ratings say works, to paste to Claude or Codex)
   timings:      .\scripts\studio.ps1 timings [project id]   (where the render time went)
+  practice:     .\scripts\studio.ps1 practice --all --batches 8   (Night School: practice overnight)
+  lessons:      .\scripts\studio.ps1 lessons   (what practice has learned so far)
   shortcut:     put the Rokkur Studio icon on the desktop (it runs launch)
   launch:       start Docker, the studio and, if you say yes, the RunPod cloud GPU; then open
                 the dashboard. Options: -Cloud (no question), -NoCloud
@@ -51,6 +53,8 @@ switch ($Command) {
   "prompt-schedule" { InApi prompt-schedule @Rest }
   "taste"        { InApi taste }
   "timings"      { InApi timings @Rest }
+  "practice"     { InApi practice @Rest }
+  "lessons"      { InApi lessons @Rest }
   "smoke-test"   { InApi smoke-test --inject-fault }
   "comfy-render" { InApi smoke-test --renderer comfyui --profile PREVIEW --timeout 3600 }
   "render"       {

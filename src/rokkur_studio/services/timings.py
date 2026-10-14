@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rokkur_studio.db.models import Document, Job, Project, Rating, Render
+from rokkur_studio.services.projects import real_render
 
 _RATING = {2: "super-like", 1: "like", -1: "dislike", -2: "super-dislike"}
 
@@ -42,7 +43,7 @@ def collect(session: Session, project_id: str) -> dict[str, Any]:
         raise LookupError(project_id)
     jobs = session.scalars(select(Job).where(Job.project_id == project_id)
                            .order_by(Job.created_at)).all()
-    renders = session.scalars(select(Render).where(Render.project_id == project_id)
+    renders = session.scalars(select(Render).where(Render.project_id == project_id, real_render())
                               .order_by(Render.started_at)).all()
     qc: dict[str, float] = {}
     for data in session.scalars(select(Document.data).where(

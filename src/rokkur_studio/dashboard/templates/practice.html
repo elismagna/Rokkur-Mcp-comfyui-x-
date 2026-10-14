@@ -1,0 +1,67 @@
+{% extends "base.html" %}{% from "_icons.html" import icon %}
+{% block title %}Night School · Rökkur Studio{% endblock %}
+{% block crumb %}Rökkur / Night School{% endblock %}
+
+{% block body %}
+<section class="hero">
+  <div class="eyebrow">The studio practises on its own</div>
+  <h1>Night School</h1>
+  <p class="sub" style="max-width:760px">Practice renders one shot of a finished video several ways: as the studio would render it, with only a new seed, and with one setting changed at a time. Each render is scored for general quality, never for anyone's taste: half what QC measured, half the AI picture review, and a render with broken bodies is capped at {{ '%.0f'|format(5) }} however steady it is. A change becomes a lesson only when it beats the baseline by more than a new seed alone does, on {{ settings.practice.min_batches }} or more shots. Your videos are never changed.</p>
+  <div class="facts" style="max-width:760px">
+    <div><b>{{ done }}</b><span>Batches done</span></div>
+    <div><b>{{ queued }}</b><span>Queued or running</span></div>
+    <div><b>{{ proven|length }}</b><span>Lessons learned</span></div>
+    <div><b>{{ 'on' if settings.practice.apply_lessons else 'off' }}</b><span>Used on new videos</span></div>
+  </div>
+</section>
+
+<div class="grid2">
+<div class="stack">
+  <div class="card"><h2>Practise</h2>
+    {% if projects %}
+    <form method="post" action="/ui/practice" class="stack">
+      <label for="pr-project">Video</label>
+      <select id="pr-project" name="project_id">
+        <option value="">Every finished video, in turn</option>
+        {% for p in projects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+      </select>
+      <label for="pr-batches">Batches</label>
+      <input id="pr-batches" name="batches" type="number" min="1" max="50" value="8">
+      <p class="hint" style="margin:0">Each batch renders {{ settings.practice.variants + 2 }} versions of one shot on this PC. Practice waits behind real work, and a video you start mid-batch goes first; the rest of the batch follows it.</p>
+      <button class="ember">{{ icon('spark') }} Practise overnight</button>
+    </form>
+    {% else %}<p class="empty">Render a video first: practice reuses its shots.</p>{% endif %}
+  </div>
+
+  <div class="card"><h2>What practice has learned</h2>
+    {% for prof, data in learned.items() %}
+    <h3 style="margin-bottom:4px">{{ prof }}</h3>
+    <p class="hint" style="margin-top:0">{{ data.batches }} reviewed batch{{ '' if data.batches == 1 else 'es' }}. A new seed alone moves the score {{ '-' if data.seed_swing is none else '%.2f'|format(data.seed_swing) }} on average, so a lesson needs a gain over {{ '%.2f'|format(data.bar) }}.</p>
+    <table class="table"><thead><tr><th>Change</th><th>Tried</th><th>Mean gain</th><th>Wins</th><th>Time</th><th>Verdict</th></tr></thead><tbody>
+    {% for c in data.changes %}<tr><td>{{ c.label }}</td><td>{{ c.batches }}</td><td>{{ '%+.2f'|format(c.mean_delta) }}</td><td>{{ (c.wins * 100)|round|int }}%</td><td>{{ '-' if c.time_ratio is none else ((c.time_ratio * 100)|round|int ~ '%') }}</td><td><span class="pill {{ 'ok' if c.verdict in ('better', 'as good, faster') else ('bad' if c.verdict == 'worse' else '') }}">{{ c.verdict }}</span></td></tr>{% endfor %}
+    </tbody></table>
+    {% else %}<p class="empty">Nothing yet. Lessons need batches with an AI picture review; without a vision model the scores are QC alone and are not counted.</p>{% endfor %}
+    {% if proven %}<p class="hint">{% if settings.practice.apply_lessons %}New videos start with: {% else %}Set <code>practice.apply_lessons: true</code> in config/studio.yaml to start new videos with: {% endif %}{% for k, v in proven.items() %}{{ k|replace('_', ' ') }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}. A setting you pick on a video always wins.</p>{% endif %}
+  </div>
+</div>
+
+<div class="stack">
+  <div class="card"><h2>Latest batches</h2>
+    {% for rep in recent %}
+    <details {% if loop.first %}open{% endif %} style="margin-top:0">
+      <summary><b>{{ rep.project_name }}</b> · {{ rep.shot_id|replace('shot_', 'shot ') }} · {{ rep.profile }} · best: {{ rep.best }}{% if not rep.reviewed %} <span class="pill">no AI review</span>{% endif %}</summary>
+      <table class="table"><thead><tr><th>Version</th><th>Score</th><th>vs base</th><th>QC</th><th>AI</th><th>Anatomy</th><th></th></tr></thead><tbody>
+      {% for v in rep.variants|sort(attribute='score', reverse=True) %}<tr>
+        <td>{{ v.label }}{% if v.review and v.review.issues %}<div class="hint" style="margin:0">{{ v.review.issues|join(', ')|replace('_', ' ') }}</div>{% endif %}</td>
+        <td><b>{{ '%.1f'|format(v.score) }}</b>{% if v.anatomy_capped %} <span class="pill bad" title="Broken anatomy caps the score">capped</span>{% endif %}</td>
+        <td>{{ '-' if v.delta is none else '%+.1f'|format(v.delta) }}</td>
+        <td>{{ '%.1f'|format(v.qc) }}</td><td>{{ '-' if v.ai is none else '%.1f'|format(v.ai) }}</td><td>{{ '-' if v.anatomy is none else v.anatomy }}</td>
+        <td><a href="/projects/{{ rep.project_id }}/assets/{{ v.asset_id }}/file" target="_blank">video</a> · <a href="/projects/{{ rep.project_id }}/assets/{{ v.sheet_asset_id }}/file" target="_blank">sheet</a></td>
+      </tr>{% endfor %}
+      </tbody></table>
+    </details>
+    {% else %}<p class="empty">No practice batches yet.</p>{% endfor %}
+  </div>
+</div>
+</div>
+{% endblock %}
