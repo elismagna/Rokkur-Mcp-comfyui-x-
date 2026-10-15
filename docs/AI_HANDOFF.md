@@ -506,15 +506,15 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 - **Claude (2026-10-15): reference learning for Night School. Untested on the PC.** Two
   parts. (1) Practice also tries the character reference type (none / subject cutout / first
   frame) as manifest-level variants; a proven one replaces `reference_mode: auto` on new
-  videos when `practice.apply_lessons` is on. (2) Elis asked to feed it botched and perfect AI
+  videos when `practice.apply_lessons` is on. (2) the owner asked to feed it botched and perfect AI
   images: a quality judge (`pipeline/judge.py`, `docs/judge.md`) = CLIP ViT-B/16 ONNX on the CPU
   + a ridge head trained on RichHF-18K (about 18k AI images rated by people for artifacts and
   overall quality; only features are kept) plus `data/references/good|bad` and Good/Botched
   buttons on practice renders. Advisory in QC, a third of the practice score. CLI
-  `references fetch|train|status`; new dependency pyarrow. **Next:** Elis runs `references
+  `references fetch|train|status`; new dependency pyarrow. **Next:** the owner runs `references
   fetch` and `references train`, then `practice --all` on old videos.
 - **Claude (2026-10-14): Night School, practice that learns general render quality. Untested on
-  the PC.** Elis asked for a training mode, then clarified it must learn what is good in
+  the PC.** the owner asked for a training mode, then clarified it must learn what is good in
   general, not his taste. A `practice` job (queue priority 200, after all real work, no
   project_id so it never moves a video's state) renders one shot of a finished video as the
   baseline, with another seed, and with N one-at-a-time setting changes (rotating catalog in
@@ -524,7 +524,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   `practice.apply_lessons` (off) starts new videos with proven settings. Shot rendering was
   split into `stages._render_shot(..., practice=)`; practice renders are filtered from budgets,
   timings and project pages by `projects.real_render()`. Dashboard **Night School**, CLI
-  `practice` / `lessons`, `docs/practice.md`, `tests/test_practice.py`. **Next:** Elis runs
+  `practice` / `lessons`, `docs/practice.md`, `tests/test_practice.py`. **Next:** the owner runs
   `practice --all --batches 8` overnight with the vision model and pastes `lessons`.
 - **Claude (2026-10-10): desktop icon and RunPod start/stop. Untested on Windows.**
   `.\scripts\studio.ps1 shortcut` makes a *Rökkur Studio* desktop icon (`assets/rokkur.ico`)
