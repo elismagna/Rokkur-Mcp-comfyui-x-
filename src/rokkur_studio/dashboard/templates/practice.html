@@ -33,6 +33,19 @@
     {% else %}<p class="empty">Render a video first: practice reuses its shots.</p>{% endif %}
   </div>
 
+  <div class="card"><h2>Quality judge</h2>
+    <p class="hint" style="margin-top:0">Learns what botched and well-made AI frames look like from about 18,000 AI images people rated for artifacts (RichHF-18K), plus your own examples. It scores every render 0 to 10 and counts as a third of the practice score; in QC it only advises.</p>
+    {% if judge %}
+    <div class="facts">
+      <div><b>{{ judge.public_images }}</b><span>Rated public images</span></div>
+      <div><b>{{ judge.your_good }} / {{ judge.your_bad }}</b><span>Your good / botched</span></div>
+      {% if judge.plausibility_pairwise is defined %}<div><b>{{ (judge.plausibility_pairwise * 100)|round|int }}%</b><span>Artifact pairs ranked like people (test set)</span></div>{% endif %}
+    </div>
+    <p class="hint">Trained {{ judge.trained_at }}.</p>
+    {% else %}<p class="empty">Not trained yet. Run <code>.\scripts\studio.ps1 references fetch</code>, then <code>references train</code>.</p>{% endif %}
+    <p class="hint">Your examples: {{ examples.good }} good and {{ examples.bad }} botched read so far. Drop images into <code>{{ references }}/good</code> or <code>/bad</code> and run <code>references train</code>, or mark practice renders below: each mark saves 4 frames and retrains.</p>
+  </div>
+
   <div class="card"><h2>What practice has learned</h2>
     {% for prof, data in learned.items() %}
     <h3 style="margin-bottom:4px">{{ prof }}</h3>
@@ -50,13 +63,14 @@
     {% for rep in recent %}
     <details {% if loop.first %}open{% endif %} style="margin-top:0">
       <summary><b>{{ rep.project_name }}</b> · {{ rep.shot_id|replace('shot_', 'shot ') }} · {{ rep.profile }} · best: {{ rep.best }}{% if not rep.reviewed %} <span class="pill">no AI review</span>{% endif %}</summary>
-      <table class="table"><thead><tr><th>Version</th><th>Score</th><th>vs base</th><th>QC</th><th>AI</th><th>Anatomy</th><th></th></tr></thead><tbody>
+      <table class="table"><thead><tr><th>Version</th><th>Score</th><th>vs base</th><th>QC</th><th>AI</th><th>Judge</th><th>Anatomy</th><th></th></tr></thead><tbody>
       {% for v in rep.variants|sort(attribute='score', reverse=True) %}<tr>
         <td>{{ v.label }}{% if v.review and v.review.issues %}<div class="hint" style="margin:0">{{ v.review.issues|join(', ')|replace('_', ' ') }}</div>{% endif %}</td>
         <td><b>{{ '%.1f'|format(v.score) }}</b>{% if v.anatomy_capped %} <span class="pill bad" title="Broken anatomy caps the score">capped</span>{% endif %}</td>
         <td>{{ '-' if v.delta is none else '%+.1f'|format(v.delta) }}</td>
-        <td>{{ '%.1f'|format(v.qc) }}</td><td>{{ '-' if v.ai is none else '%.1f'|format(v.ai) }}</td><td>{{ '-' if v.anatomy is none else v.anatomy }}</td>
-        <td><a href="/projects/{{ rep.project_id }}/assets/{{ v.asset_id }}/file" target="_blank">video</a> · <a href="/projects/{{ rep.project_id }}/assets/{{ v.sheet_asset_id }}/file" target="_blank">sheet</a></td>
+        <td>{{ '%.1f'|format(v.qc) }}</td><td>{{ '-' if v.ai is none else '%.1f'|format(v.ai) }}</td><td>{{ '-' if v.judge is not defined or v.judge is none else '%.1f'|format(v.judge) }}</td><td>{{ '-' if v.anatomy is none else v.anatomy }}</td>
+        <td><a href="/projects/{{ rep.project_id }}/assets/{{ v.asset_id }}/file" target="_blank">video</a> · <a href="/projects/{{ rep.project_id }}/assets/{{ v.sheet_asset_id }}/file" target="_blank">sheet</a>
+          <form method="post" action="/ui/references/mark" class="row" style="gap:4px;margin-top:4px"><input type="hidden" name="project_id" value="{{ rep.project_id }}"><input type="hidden" name="asset_id" value="{{ v.asset_id }}"><button class="btn small" name="label" value="good" title="Save frames as a good example for the judge">Good</button><button class="btn small" name="label" value="bad" title="Save frames as a botched example for the judge">Botched</button></form></td>
       </tr>{% endfor %}
       </tbody></table>
     </details>

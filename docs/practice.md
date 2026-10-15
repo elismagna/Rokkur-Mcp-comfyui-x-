@@ -25,16 +25,18 @@ One batch takes one shot of a finished video and renders it several ways on this
 | sampler euler | `sampler` (default uni_pc) |
 | stabilizer off / strong | `stabilize` (default auto) |
 | smoothed guide | `smooth_control` 0.5 |
+| reference none / cutout / first frame | the character reference Wan gets (`reference_mode`); skipped when the video has an uploaded character reference or already uses that type |
 
 All renders of a batch run in one GPU batch, so the models load once. Then each render is
 checked like QC checks a shot, with the AI picture review always on:
 
-- **score** (0 to 10) = half QC's overall score + half the mean of the five review scores
-  (prompt, style, subject, anatomy, steadiness);
+- **score** (0 to 10) = the mean of QC's overall score, the mean of the five review scores
+  (prompt, style, subject, anatomy, steadiness) and, once trained, the quality judge
+  (`docs/judge.md`), which learned botched vs good frames from rated AI images;
 - a render whose anatomy scores 4 or less is capped at 5, however steady: on a real shot,
   control 1.15 raised QC while bodies got worse, and the score must not reward that;
-- without a vision model the score is QC alone; such batches are shown but never become
-  lessons.
+- with neither a vision model nor a judge the score is QC alone; such batches are shown but
+  never become lessons.
 
 The report (a `practice_report` document on the video) ranks the versions, with links to each
 render and its contact sheet. The video itself never changes: its status stays, its shots keep
@@ -57,7 +59,8 @@ change becomes:
 
 With `practice.apply_lessons: true` in `config/studio.yaml`, new videos start with the
 better and as-good-faster changes for their profile. A setting you choose on the New video
-form always wins; only values left at the form's default are replaced. It is off by default:
+form always wins; only values left at the form's default are replaced. A proven reference type
+is used only when the form's reference is left on auto and no character image is uploaded. It is off by default:
 look at the lessons first.
 
 ## Run it

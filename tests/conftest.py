@@ -56,6 +56,7 @@ def settings(tmp_path: Path) -> Settings:
         "STUDIO_RENDER__DEFAULT_PROFILE": "PREVIEW",
         "STUDIO_AGENTS__PROVIDER": "rule_based",  # no Ollama in CI; roles are tested with fakes
         "STUDIO_SUBJECT__DOWNLOAD": "false",  # never fetch the mask model in tests
+        "STUDIO_JUDGE__DOWNLOAD": "false",  # nor the CLIP model for the quality judge
     })
     s.database.url = TEST_DB
     return s

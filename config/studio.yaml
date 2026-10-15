@@ -116,3 +116,12 @@ practice:
   min_batches: 3          # a lesson needs this many batches that tried the change
   min_gain: 0.5           # and this mean score gain (0-10), above the seed's own swing
   apply_lessons: false    # true: new videos start with the settings practice proved
+
+# Quality judge (docs/judge.md): CLIP features + a small head trained on images people rated
+# for artifacts (RichHF-18K) and on your own good/bad examples. Advisory in QC; a third of the
+# practice score. `references fetch` then `references train` to set it up.
+judge:
+  enabled: true
+  download: true          # fetch the CLIP model (346 MB, checksum-verified) on first use
+  user_weight: 5          # each of your good/bad images counts as much as 5 public ones
+  frames: 8               # frames of a render the judge looks at

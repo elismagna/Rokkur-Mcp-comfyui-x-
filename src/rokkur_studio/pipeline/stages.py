@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
+import numpy as np
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -48,6 +49,7 @@ from rokkur_studio.jobs.queue import is_cancelled
 from rokkur_studio.manifest.builder import build_manifest, shot_params
 from rokkur_studio.manifest.schema import ReconstructionManifest, ShotSpec, SubjectSpec
 from rokkur_studio.media.ffmpeg import FFmpegError
+from rokkur_studio.pipeline import judge as judge_mod
 from rokkur_studio.pipeline import qc as qc_mod
 from rokkur_studio.pipeline import vision
 from rokkur_studio.pipeline.analysis import analyze_video
@@ -350,6 +352,12 @@ def compile_stage(ctx: StudioContext, job: Job) -> dict[str, Any]:
             proven = practice_svc.proven_overrides(s, ctx.settings, profile.name)
         for shot in manifest.shots:
             shot.overrides = practice_svc.apply_proven(shot.overrides, proven, profile.steps)
+            for key in practice_svc.MANIFEST_KEYS:
+                shot.overrides.pop(key, None)
+        # A proven reference type replaces only the form's default, never an uploaded reference.
+        if (proven.get("reference_mode") and not manifest.identity.reference_image
+                and project.creative_input.get("reference_mode", "auto") == "auto"):
+            manifest.identity.reference_mode = proven["reference_mode"]
     compiled: dict[str, Any] = {}
     if ctx.settings.render.renderer == "comfyui":
         try:
@@ -850,6 +858,20 @@ def _picture_checker(ctx: StudioContext, project: Project, *,
     return vision.PictureChecker(provider)
 
 
+def _judge(ctx: StudioContext, shot: ShotSpec, rendered: Path) -> dict[str, Any]:
+    """The quality judge's scores for one render (pipeline/judge.py); {} without a judge."""
+    n = ctx.settings.judge.frames
+
+    def frames(count: int) -> Any:
+        rgb = ctx.ffmpeg.read_rgb_frames(rendered, judge_mod.CLIP.size, judge_mod.CLIP.size,
+                                         fps=max(0.5, count / max(shot.duration, 0.1)),
+                                         aspect=(1, 1))
+        picks = np.linspace(0, len(rgb) - 1, num=min(count, len(rgb))).round().astype(int)
+        return rgb[picks]
+
+    return judge_mod.score_render(judge_mod.judge_for(ctx.extras, ctx.settings), frames, n)
+
+
 def _min_stability(ctx: StudioContext, project: Project) -> float:
     value = project.creative_input.get("min_stability")
     return float(value) if value is not None else ctx.settings.quality.min_stability
@@ -893,6 +915,7 @@ def quality_check(ctx: StudioContext, job: Job) -> dict[str, Any]:
             ctx.ffmpeg.read_rgb_frames(rendered, sheet_w, sheet_h, fps=fps),
             theme=manifest.style.theme, prompt=shot.prompt or manifest.style.prompt,
             columns=columns)
+        result.update(_judge(ctx, shot, rendered))  # advisory: never changes the decision
         sheet = ctx.store.project_dir(pid, "qc") / f"sheet_{shot.shot_id}_a{r.attempt:02d}.png"
         sheet.write_bytes(sheet_png)
         result["contact_sheet"] = ctx.store.rel(sheet)

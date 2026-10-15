@@ -144,12 +144,13 @@ class SubjectMasker(Protocol):
         ...
 
 
-def fetch_model(spec: MaskModel, path: Path) -> Path:
+def fetch_model(spec: MaskModel, path: Path, *, what: str = "subject mask model",
+                error: type[RuntimeError] = MaskerUnavailable) -> Path:
     """Download a model into ``path``; the file only appears once its checksum matches."""
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}.part")
     digest = hashlib.sha256()
-    log.info("downloading subject mask model", extra={"data": {"url": spec.url}})
+    log.info("downloading %s", what, extra={"data": {"url": spec.url}})
     try:
         with httpx.stream("GET", spec.url, follow_redirects=True,
                           timeout=httpx.Timeout(30, read=120)) as response:
@@ -160,11 +161,11 @@ def fetch_model(spec: MaskModel, path: Path) -> Path:
                     fh.write(chunk)
     except (httpx.HTTPError, OSError) as exc:
         part.unlink(missing_ok=True)
-        raise MaskerUnavailable(f"could not download the subject mask model ({exc}); put "
+        raise error(f"could not download the {what} ({exc}); put "
                                 f"{Path(spec.url).name} from {spec.url} into {path.parent}") from exc
     if digest.hexdigest() != spec.sha256:
         part.unlink(missing_ok=True)
-        raise MaskerUnavailable(f"the downloaded {path.name} does not match its checksum")
+        raise error(f"the downloaded {path.name} does not match its checksum")
     part.replace(path)
     return path
 

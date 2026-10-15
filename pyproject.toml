@@ -17,6 +17,7 @@ dependencies = [
   "numpy>=1.26",
   "onnxruntime>=1.17",  # subject masks on the CPU (pipeline/subject.py)
   "opencv-python-headless>=4.10",  # optical flow for QC stability (pipeline/qc.py), Apache-2.0
+  "pyarrow>=15",  # reads the RichHF-18K parquet files for the quality judge (pipeline/judge.py)
   "python-multipart>=0.0.9",
   "tzdata>=2024.1",  # time zone names for release times on Windows and slim images
 ]

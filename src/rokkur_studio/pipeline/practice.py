@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import re
-from typing import Any
+from typing import Any, Literal, cast
 
 from sqlalchemy import select
 
@@ -25,6 +25,8 @@ from rokkur_studio.pipeline.context import StudioContext
 from rokkur_studio.services import practice
 from rokkur_studio.services.assets import register_asset
 from rokkur_studio.services.projects import latest_document, save_document
+
+ReferenceMode = Literal["auto", "cutout", "source", "none"]
 
 
 def _slug(label: str) -> str:
@@ -68,8 +70,13 @@ def run_batch(ctx: StudioContext, job: Job) -> dict[str, Any]:
             raise PermanentJobError("practice_profile", f"{profile.workflow}: {live}")
     accepts = {v.needs: stages._accepts(ctx, profile.workflow, v.needs)
                for v in practice.CATALOG if v.needs}
+    keep = manifest.subject.mode == "keep"
+    if manifest.identity.reference_image:  # an uploaded character reference always wins
+        accepts["REFERENCE_IMAGE"] = False
+    current = {**shot.overrides, "reference_mode": practice.effective_reference(
+        manifest.identity.reference_mode, keep)}
     labels: list[str] = payload.get("variants") or practice.pick_variants(
-        int(payload.get("round", 0)), ctx.settings.practice.variants, accepts, shot.overrides)
+        int(payload.get("round", 0)), ctx.settings.practice.variants, accepts, current)
 
     # What this batch (or the batch it continues, or an earlier try of this job) rendered.
     done: dict[str, str] = dict(payload.get("done") or {})
@@ -83,9 +90,8 @@ def run_batch(ctx: StudioContext, job: Job) -> dict[str, Any]:
     # The seed variant first: the first render of a run also loads the models, so the
     # baseline's time, which the others are compared with, is a warm one.
     order = sorted(labels, key=lambda lb: lb != practice.SEED)
-    masker = (stages._subject_masker(ctx)
-              if manifest.subject.mode == "keep" or manifest.identity.reference_mode == "cutout"
-              else None)
+    cutout = manifest.identity.reference_mode == "cutout" or "reference cutout" in labels
+    masker = stages._subject_masker(ctx) if keep or cutout else None
     batch = (ctx.gpu.heavy_batch(job.id) if renderer.name != "ffmpeg_preview"
              else contextlib.nullcontext())
     first = True
@@ -99,7 +105,12 @@ def run_batch(ctx: StudioContext, job: Job) -> dict[str, Any]:
             variant.overrides = {**practice.overrides_for(label, shot.overrides, seed=shot.seed,
                                                           steps=profile.steps),
                                  "profile": profile.name}
-            render_id = stages._render_shot(ctx, job, manifest, variant, profile, renderer,
+            plan = manifest
+            if "reference_mode" in variant.overrides:  # set on a copy of the video's plan
+                plan = manifest.model_copy(deep=True)
+                plan.identity.reference_mode = cast(
+                    ReferenceMode, str(variant.overrides["reference_mode"]))
+            render_id = stages._render_shot(ctx, job, plan, variant, profile, renderer,
                                             masker=masker, target="local", practice=batch_id)
             with ctx.db.transaction() as s:
                 row = s.get(Render, render_id)
@@ -168,6 +179,7 @@ def _score(ctx: StudioContext, project: Project, manifest: ReconstructionManifes
             ctx.ffmpeg.read_rgb_frames(rendered, sheet_w, sheet_h, fps=fps),
             theme=manifest.style.theme, prompt=shot.prompt or manifest.style.prompt,
             columns=columns)
+        result.update(stages._judge(ctx, shot, rendered))
         sheet = batch_dir / f"sheet_{_slug(label)}.png"
         sheet.write_bytes(sheet_png)
         with ctx.db.transaction() as s:

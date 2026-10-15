@@ -246,6 +246,16 @@ class PracticeSection(BaseModel):
     apply_lessons: bool = False           # true: new videos start with the proven settings
 
 
+class JudgeSection(BaseModel):
+    """The quality judge (docs/judge.md): CLIP features + a head trained on rated AI images."""
+
+    enabled: bool = True        # score renders once a judge has been trained
+    download: bool = True       # fetch the CLIP model (checksum-verified) on first use
+    user_weight: float = Field(5.0, ge=0)  # your good/bad images count this many times
+    ridge: float = Field(1.0, gt=0)        # how strongly the head is kept simple
+    frames: int = Field(8, ge=1, le=32)    # frames of a render the judge looks at
+
+
 class JobsSection(BaseModel):
     default_max_attempts: int = 3
     lease_seconds: int = 900
@@ -302,6 +312,7 @@ class Settings(BaseModel):
     costs: CostsSection = CostsSection()
     jobs: JobsSection = JobsSection()
     practice: PracticeSection = PracticeSection()
+    judge: JudgeSection = JudgeSection()
     profiles: dict[str, RenderProfile] = Field(default_factory=dict)
     config_dir: Path = Path("config")
     workflows_dir: Path = Path("workflows")

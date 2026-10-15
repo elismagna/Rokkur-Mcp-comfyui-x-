@@ -60,7 +60,13 @@ CATALOG: tuple[Variant, ...] = (
     Variant("stabilizer off", {"stabilize": "off"}),
     Variant("stabilizer strong", {"stabilize": "strong"}),
     Variant("smoothed guide", {"smooth_control": 0.5}),
+    # The character reference image Wan gets (manifest identity, not a shot setting). Only
+    # tried on videos without an uploaded character reference: that one always wins.
+    Variant("reference none", {"reference_mode": "none"}, "REFERENCE_IMAGE"),
+    Variant("reference cutout", {"reference_mode": "cutout"}, "REFERENCE_IMAGE"),
+    Variant("reference first frame", {"reference_mode": "source"}, "REFERENCE_IMAGE"),
 )
+MANIFEST_KEYS = ("reference_mode",)  # variant keys set on the manifest, not the shot
 BY_LABEL = {v.label: v for v in CATALOG}
 
 
@@ -77,6 +83,11 @@ def overrides_for(label: str, shot_overrides: dict[str, Any], *, seed: int,
         base = int(shot_overrides.get("steps", steps))
         change["steps"] = max(1, round(base * float(scale)))
     return {**shot_overrides, **change}
+
+
+def effective_reference(mode: str, keep: bool) -> str:
+    """The reference a render really gets: ``auto`` is a cutout when the subject is kept."""
+    return ("cutout" if keep else "none") if mode == "auto" else mode
 
 
 def pick_variants(round_no: int, count: int, accepts: dict[str, bool],
@@ -101,28 +112,32 @@ def pick_variants(round_no: int, count: int, accepts: dict[str, bool],
 # -- general quality score ------------------------------------------------------------------
 def quality_score(shot: dict[str, Any], *, anatomy_floor: int = 4,
                   anatomy_cap: float = 5.0) -> dict[str, Any]:
-    """One QC'd shot's general quality, 0-10, from what QC measured and the AI review saw.
-
-    Half QC overall, half the mean of the five review scores. ``reviewed`` is False when the
-    vision model gave no review: the score is then QC alone, which steadier-but-melted renders
-    can game, so lessons never count it.
+    """One QC'd shot's general quality, 0-10: the mean of what QC measured, the AI review's
+    five scores (when the vision model gave one) and the quality judge (when one is trained,
+    pipeline/judge.py). ``reviewed`` is False with neither: the score is then QC alone, which
+    steadier-but-melted renders can game, so lessons never count it.
     """
     qc = float(shot.get("overall") or 0.0)
     review = shot.get("picture_review")
-    if not review:
-        return {"score": round(qc, 2), "qc": round(qc, 2), "ai": None, "anatomy": None,
-                "reviewed": False}
-    parts = [shot.get("prompt_adherence"), shot.get("style_consistency"), shot.get("identity"),
-             shot.get("hand_body_deformation"), review.get("steadiness")]
-    values = [float(v) for v in parts if v is not None]
-    ai = sum(values) / len(values) if values else qc
-    anatomy = shot.get("hand_body_deformation")
-    score = 0.5 * qc + 0.5 * ai
+    ai: float | None = None
+    anatomy = None
+    if review:
+        parts = [shot.get("prompt_adherence"), shot.get("style_consistency"),
+                 shot.get("identity"), shot.get("hand_body_deformation"),
+                 review.get("steadiness")]
+        values = [float(v) for v in parts if v is not None]
+        ai = sum(values) / len(values) if values else None
+        anatomy = shot.get("hand_body_deformation")
+    judge = shot.get("judge")
+    parts_used = [qc] + [v for v in (ai, judge) if v is not None]
+    score = sum(parts_used) / len(parts_used)
     capped = anatomy is not None and anatomy <= anatomy_floor and score > anatomy_cap
     if capped:  # a broken body is never a good render, however steady
         score = anatomy_cap
-    return {"score": round(score, 2), "qc": round(qc, 2), "ai": round(ai, 2),
-            "anatomy": anatomy, "reviewed": True, "anatomy_capped": capped}
+    return {"score": round(score, 2), "qc": round(qc, 2),
+            "ai": None if ai is None else round(ai, 2), "anatomy": anatomy,
+            "judge": judge, "judge_worst": shot.get("judge_worst"),
+            "reviewed": ai is not None or judge is not None, "anatomy_capped": capped}
 
 
 # -- queueing -------------------------------------------------------------------------------

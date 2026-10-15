@@ -73,6 +73,7 @@ from rokkur_studio.domain.states import ProjectStatus as S
 from rokkur_studio.jobs.queue import JobStatus
 from rokkur_studio.manifest.schema import ReconstructionManifest
 from rokkur_studio.media.ffmpeg import FFmpegError
+from rokkur_studio.pipeline import judge as judge_mod
 from rokkur_studio.pipeline.context import StudioContext, profile_availability, supported_controls
 from rokkur_studio.pipeline.subject import OnnxSubjectMasker, decide_subject
 from rokkur_studio.services import commands, practice, publishing, ratings, taste
@@ -887,7 +888,11 @@ def practice_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
     counts = dict(session.execute(
         select(Job.status, func.count(Job.id)).where(Job.kind == practice.KIND)
         .group_by(Job.status)).tuples().all())
+    loaded = judge_mod.judge_for(ctx.extras, ctx.settings)
+    _, _, examples = judge_mod.user_examples(ctx.settings, None)
     return _page(request, "practice.html", ctx, learned=learned, proven=proven,
+                 judge=loaded.report if loaded else None, examples=examples,
+                 references=judge_mod.references_dir(ctx.settings),
                  recent=practice.reports(session, limit=10),
                  projects=practice.practice_projects(session),
                  done=len(practice.reports(session)),
@@ -905,6 +910,29 @@ def practice_from_ui(ctx: Ctx, session: Db, project_id: Annotated[str, Form()] =
         return _back("/ui/practice", err=str(exc))
     return _back("/ui/practice", msg=f"Queued {len(jobs)} practice batches; they run after "
                                      "any real work")
+
+
+@router.post("/references/mark")
+def mark_reference(ctx: Ctx, session: Db, project_id: Annotated[str, Form()],
+                   asset_id: Annotated[str, Form()],
+                   label: Annotated[str, Form()]) -> RedirectResponse:
+    """Save frames of a render as a good or botched example and retrain the judge."""
+    asset = session.get(Asset, asset_id)
+    if asset is None or asset.project_id != project_id or label not in ("good", "bad"):
+        return _back("/ui/practice", err="Unknown render")
+    try:
+        frames = ctx.ffmpeg.read_rgb_frames(ctx.store.path_for(asset.rel_path), 448, 448,
+                                            fps=2, aspect=(1, 1))
+    except FFmpegError as exc:
+        return _back("/ui/practice", err=f"Could not read the render: {exc.summary}")
+    saved = judge_mod.mark_frames(ctx.settings, frames, label=label, name=asset_id)
+    what = "good" if label == "good" else "botched"
+    try:
+        judge_mod.train(ctx.settings, judge_mod.ClipEncoder(ctx.settings))
+        tail = "and retrained the judge"
+    except judge_mod.JudgeUnavailable as exc:
+        tail = f"the judge is not retrained yet: {exc}"
+    return _back("/ui/practice", msg=f"Saved {len(saved)} frames as {what} examples {tail}")
 
 
 # -- queue / approvals ---------------------------------------------------------------------

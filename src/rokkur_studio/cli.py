@@ -757,6 +757,40 @@ def cmd_lessons(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_references(args: argparse.Namespace) -> int:
+    """The quality judge's examples: fetch RichHF-18K, train, or show its status."""
+    from rokkur_studio.pipeline import judge
+
+    settings = _settings(args)
+    encoder = judge.ClipEncoder(settings)
+    try:
+        if args.action == "fetch":
+            splits = ["test", "validation", "train"] if args.split == "all" else [args.split]
+            counts = judge.fetch_richhf(settings, encoder, splits=splits, limit=args.limit,
+                                        progress=print)
+            print(f"Fetched {sum(counts.values())} rated images. Next: references train")
+            return 0
+        if args.action == "train":
+            print("Training the quality judge (new images in references/good and bad are "
+                  "run through CLIP first)...")
+            report = judge.train(settings, encoder)
+            print(json.dumps(report, indent=2))
+            return 0
+    except judge.JudgeUnavailable as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    loaded = judge.QualityJudge.load(settings)
+    root = judge.references_dir(settings)
+    _, _, counts = judge.user_examples(settings, None)
+    fetched = sorted(p.stem for p in (root / "richhf").glob("*.npz"))
+    print(f"Examples folder: {root}")
+    print(f"RichHF files fetched: {', '.join(fetched) or 'none'}")
+    print(f"Your examples already read: {counts['good']} good, {counts['bad']} bad "
+          "(new ones are read at the next train)")
+    print("Judge: " + (json.dumps(loaded.report, indent=2) if loaded else "not trained yet"))
+    return 0
+
+
 def cmd_prompt_schedule(args: argparse.Namespace) -> int:
     """Print a project's Batch Prompt Schedule, ready to paste into FizzNodes."""
     from rokkur_studio.db.session import Database
@@ -899,6 +933,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--recent", type=int, default=5, help="latest batches to list")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_lessons)
+    p = sub.add_parser("references", help="the quality judge: fetch rated images, train, status")
+    p.add_argument("action", choices=["fetch", "train", "status"])
+    p.add_argument("--split", choices=["all", "train", "validation", "test"], default="all")
+    p.add_argument("--limit", type=int, help="fetch: at most this many images per file")
+    p.set_defaults(func=cmd_references)
     return parser
 
 

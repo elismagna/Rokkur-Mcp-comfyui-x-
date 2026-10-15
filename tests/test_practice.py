@@ -19,7 +19,7 @@ from tests.test_quality_stage import SeeingProvider
 # -- scoring and picking -------------------------------------------------------------------
 def test_quality_score_needs_the_review_and_caps_broken_anatomy():
     plain = practice.quality_score({"overall": 7.2})
-    assert plain == {"score": 7.2, "qc": 7.2, "ai": None, "anatomy": None, "reviewed": False}
+    assert plain["score"] == 7.2 and plain["ai"] is None and not plain["reviewed"]
     shot = {"overall": 9.0, "prompt_adherence": 8, "style_consistency": 8, "identity": 8,
             "hand_body_deformation": 8, "picture_review": {"steadiness": 8}}
     assert practice.quality_score(shot)["score"] == 8.5
@@ -36,6 +36,10 @@ def test_variants_rotate_and_skip_what_the_workflow_or_shot_cannot_change():
     assert not set(first[2:]) & set(second[2:])  # the next batch tries other changes
     nothing = practice.pick_variants(0, 20, {}, {"stabilize": "off"})
     assert set(nothing[2:]) == {"stabilizer strong", "smoothed guide"}
+    refs = practice.pick_variants(0, 20, {"REFERENCE_IMAGE": True}, {"reference_mode": "none"})
+    assert {"reference cutout", "reference first frame"} <= set(refs)
+    assert "reference none" not in refs  # what the video already gets
+    assert practice.effective_reference("auto", keep=True) == "cutout"
     ov = practice.overrides_for("70% steps", {"cfg": 5.0}, seed=1, steps=20)
     assert ov == {"cfg": 5.0, "steps": 14}
     assert practice.overrides_for(practice.SEED, {}, seed=10, steps=20)["seed"] == 10 + 7919
@@ -109,6 +113,23 @@ def test_practice_hands_the_rest_of_a_batch_on_when_real_work_arrives(ctx, sampl
     assert not doc.data["reviewed"]  # rule-based agents cannot see: not counted as a lesson
 
 
+def test_reference_variants_render_with_their_own_reference_type(ctx, sample_video):
+    pid = _finished(ctx, sample_video)
+    labels = [practice.BASELINE, practice.SEED, "reference cutout", "reference first frame"]
+    with ctx.db.transaction() as s:
+        practice.queue_batches(s, ctx.settings, [get_project(s, pid)], batches=1)
+        job = s.scalars(select(Job).where(Job.kind == practice.KIND)).one()
+        job.payload = {**job.payload, "variants": labels}
+    run(ctx)
+    with ctx.db.session() as s:
+        report = latest_document(s, pid, practice.REPORT).data  # type: ignore[union-attr]
+        manifest = latest_document(s, pid, "manifest").data  # type: ignore[union-attr]
+    rows = {v["label"]: v for v in report["variants"]}
+    assert rows["reference cutout"]["overrides"] == {"reference_mode": "cutout"}
+    assert rows["reference first frame"]["overrides"] == {"reference_mode": "source"}
+    assert manifest["identity"]["reference_mode"] != "cutout"  # the video's plan is untouched
+
+
 def test_practice_needs_a_rendered_video(ctx, sample_video):
     pid = create(ctx, sample_video, autostart=False)
     with ctx.db.transaction() as s, pytest.raises(practice.PracticeError):
@@ -152,16 +173,20 @@ def test_lessons_need_enough_batches_and_a_gain_beyond_the_seed(ctx, sample_vide
 def test_proven_lessons_start_new_videos_only_when_switched_on(ctx, sample_video):
     other = create(ctx, sample_video, autostart=False)
     for base in (6.0, 7.0, 5.5):
-        _fake_report(ctx, other, base, {"cfg 4.5": 1.0})
+        _fake_report(ctx, other, base, {"cfg 4.5": 1.0, "reference first frame": 1.0})
     ctx.settings.practice.apply_lessons = True
-    pid = create(ctx, sample_video, cfg=7.0)
+    pid = create(ctx, sample_video, cfg=7.0, reference_mode="none")
     plain = create(ctx, sample_video)
     run(ctx)
     with ctx.db.session() as s:
-        own = latest_document(s, pid, "manifest").data["shots"]  # type: ignore[union-attr]
-        learned = latest_document(s, plain, "manifest").data["shots"]  # type: ignore[union-attr]
-    assert all(sh["overrides"]["cfg"] == 7.0 for sh in own)  # the video's own choice wins
-    assert all(sh["overrides"]["cfg"] == 4.5 for sh in learned)
+        own = latest_document(s, pid, "manifest").data  # type: ignore[union-attr]
+        learned = latest_document(s, plain, "manifest").data  # type: ignore[union-attr]
+    # the video's own choices win; lessons fill in what was left at the form's default
+    assert all(sh["overrides"]["cfg"] == 7.0 for sh in own["shots"])
+    assert own["identity"]["reference_mode"] == "none"
+    assert all(sh["overrides"]["cfg"] == 4.5 for sh in learned["shots"])
+    assert all("reference_mode" not in sh["overrides"] for sh in learned["shots"])
+    assert learned["identity"]["reference_mode"] == "source"
 
 
 def test_night_school_page_lists_lessons_and_queues_batches(ctx, sample_video):

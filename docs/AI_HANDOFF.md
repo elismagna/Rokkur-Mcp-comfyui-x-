@@ -503,6 +503,16 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Claude (2026-10-15): reference learning for Night School. Untested on the PC.** Two
+  parts. (1) Practice also tries the character reference type (none / subject cutout / first
+  frame) as manifest-level variants; a proven one replaces `reference_mode: auto` on new
+  videos when `practice.apply_lessons` is on. (2) Elis asked to feed it botched and perfect AI
+  images: a quality judge (`pipeline/judge.py`, `docs/judge.md`) = CLIP ViT-B/16 ONNX on the CPU
+  + a ridge head trained on RichHF-18K (about 18k AI images rated by people for artifacts and
+  overall quality; only features are kept) plus `data/references/good|bad` and Good/Botched
+  buttons on practice renders. Advisory in QC, a third of the practice score. CLI
+  `references fetch|train|status`; new dependency pyarrow. **Next:** Elis runs `references
+  fetch` and `references train`, then `practice --all` on old videos.
 - **Claude (2026-10-14): Night School, practice that learns general render quality. Untested on
   the PC.** Elis asked for a training mode, then clarified it must learn what is good in
   general, not his taste. A `practice` job (queue priority 200, after all real work, no
@@ -551,6 +561,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-15 Claude: practice reference-type variants; quality judge (CLIP + RichHF-18K + your good/bad examples).
 - 2026-10-14 Claude: Night School (practice batches, general quality score, lessons, optional apply). Test venv needs opencv-python-headless or the QC stability test fails.
 - 2026-10-10 Claude: picture checker (`docs/picture-checker.md`: contact sheets, motion-compensated stability, flicker, advisory vision-model review), post-render stabilizer and repair auto-tuning (`docs/stability.md`). Untested on a real render yet. Also render options (sampler, scheduler, shift, render size, edge detail, stability settings on the form/API/CLI) and the CLOUD_14B profile (Wan VACE 14B, fp8, up to 720P; needs the 34.7 GB 14B model on the pod, see `docs/cloud.md`). Tests pass; none of it has been run on a real GPU yet.
 - 2026-10-10 Claude: desktop icon + launcher (`scripts/launch.ps1`, `install-shortcut.ps1`,
