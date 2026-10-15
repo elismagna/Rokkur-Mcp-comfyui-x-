@@ -10,11 +10,11 @@ render observations; the latest Git commit is authoritative.
 
 ## How we share the work
 
-- **Repo:** GitHub `elismagna/Rokkur-Mcp-comfyui-x-`, branch `main`. Elis's working copy is
-  `C:\Users\Elis\rokkur studio` (Windows, RTX 3070 8 GB, 32 GB RAM).
-- **Claude** works in a Linux cloud clone and pushes straight to `main`. It cannot see Elis's
+- **Repo:** GitHub `elismagna/Rokkur-Mcp-comfyui-x-`, branch `main`. the owner's working copy is
+  `<repo dir>` (Windows).
+- **Claude** works in a Linux cloud clone and pushes straight to `main`. It cannot see the owner's
   PC: no local files, Docker, ComfyUI, Ollama or GPU. It only sees what is pushed to GitHub and
-  what Elis pastes into chat.
+  what the owner pastes into chat.
 - **Codex** works in the local folder and can run the real stack.
 - So: `git pull` before starting, commit and push when a piece of work is done, and never leave
   work uncommitted across a handoff. Put what you are doing in **Current work** so we don't
@@ -22,7 +22,7 @@ render observations; the latest Git commit is authoritative.
 - Local-only files that never go in git: `.env`, `secrets/` (YouTube OAuth client and token),
   `data/` (projects, renders, caches), `media/` (source clips). All are git-ignored.
 
-## Project rules (from Elis's master instruction, still in force)
+## Project rules (from the owner's master instruction, still in force)
 
 - Never commit OAuth refresh tokens, API tokens, Odysseus tokens, database credentials or keys.
 - Don't expose the Docker socket, Postgres, ComfyUI or the API to the internet. Compose binds
@@ -34,13 +34,13 @@ render observations; the latest Git commit is authoritative.
   person's click (or approval at autonomy level 3+).
 - Don't fake integrations. Unknown interfaces stay unimplemented and say so.
 - Don't change working components until you understand them.
-- **Workflows start from a proven published one** (Elis, 2026-10-08, permanent): adapt the
+- **Workflows start from a proven published one** (the owner, 2026-10-08, permanent): adapt the
   closest official, node-pack or well-used community workflow; never build a graph from
   scratch. Record the source and license in `params.yaml`; note in the Log when it works.
   See `docs/comfyui.md`.
-- **The app decides, not the chat** (Elis, 2026-10-08): a short prompt must just work. Choices
+- **The app decides, not the chat** (the owner, 2026-10-08): a short prompt must just work. Choices
   like keeping the real subject are made by the app (or asked once on the New video form),
-  never asked of Elis mid-run.
+  never asked of the owner mid-run.
 
 ## What exists (detail lives in the linked docs)
 
@@ -95,7 +95,7 @@ decision), `docs/milestones.md` (phase status), `docs/setup-windows.md`,
   in RTX3070_QUALITY). One prompt per shot; the FizzNodes prompt schedule is only an export.
 - **Agents return Pydantic schemas** using Ollama's `format`, and fall back to rules when
   Ollama is down. Measured facts override model output. The DP pass may only use a fixed
-  cinematography vocabulary (`director/vocabulary.py`), at Elis's request.
+  cinematography vocabulary (`director/vocabulary.py`), at the owner's request.
 - **QC uses deterministic metrics only.** Model-based metrics (identity, prompt adherence,
   style) are reported as `null` with a reason, never invented. Since `b69234d`, structure
   compares edge maps rather than brightness.
@@ -119,7 +119,7 @@ decision), `docs/milestones.md` (phase status), `docs/setup-windows.md`,
 
 ## Product direction: Rökkur Enterprise (working title)
 
-Elis's ambition is for Rökkur to feel like a small, high-end creative studio: turn the user's
+the owner's ambition is for Rökkur to feel like a small, high-end creative studio: turn the user's
 intent and footage into directed, coherent, reviewable video with less wasted waiting and fewer
 unnecessary rerenders. The user directs and approves; the app supplies strong defaults, preserves
 successful work, explains decisions, and makes failures easy to diagnose. “Rökkur Enterprise” is
@@ -169,12 +169,12 @@ Priorities captured in `docs/ROKKUR_ENTERPRISE_OPTIMIZATION_PROMPT.md`:
   product intent, and honest boundaries. Do not assume any optimization hypotheses in it are
   already implemented or verified.
 
-## Installed on the PC (from audits and Elis's reports, 2026-10-07)
+## Installed on the PC (from audits and the owner's reports, 2026-10-07)
 
 - Docker Desktop (WSL2). `studio.ps1 up` builds the image, migrates and starts db/api/worker.
 - ComfyUI Desktop 0.39.1 (PyTorch 2.12.1+cu130), started with `--listen 0.0.0.0` so Docker can
   reach it. Core nodes only. Models are in
-  `C:\Users\Elis\AppData\Local\Comfy-Desktop\ComfyUI-Shared\models`:
+  `<ComfyUI shared models dir>`:
   - `diffusion_models/wan2.1_vace_1.3B_fp16.safetensors`
   - `text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors`
   - `vae/wan_2.1_vae.safetensors`
@@ -196,7 +196,7 @@ Priorities captured in `docs/ROKKUR_ENTERPRISE_OPTIMIZATION_PROMPT.md`:
 ## Run and test
 
 ```powershell
-cd "C:\Users\Elis\rokkur studio"
+cd "<repo dir>"
 git pull
 .\scripts\studio.ps1 up            # build, migrate, start; dashboard http://127.0.0.1:8400/ui
 .\scripts\studio.ps1 audit         # what the container can reach (writes data/audit.json)
@@ -215,7 +215,7 @@ ComfyUI, Ollama and Google servers (`tests/fakes*.py`).
 
 ## Verified results
 
-Tested directly by Codex on Elis's PC, 2026-10-09:
+Tested directly by Codex on the owner's PC, 2026-10-09:
 - Current suite: **272 passed, 1 skipped**, with `ruff check src tests` and `mypy src` clean.
   Real FFmpeg and the separate `rokkur_test` database were used. Windows does not expose the
   POSIX mode bits checked by one OAuth test, so that assertion is conditional; the Linux app
@@ -226,7 +226,7 @@ Tested directly by Codex on Elis's PC, 2026-10-09:
 - The soundtrack upload, separate rights-evidence gate, short-track looping, and final mix passed
   dashboard, FFmpeg, and end-to-end pipeline tests. No live render was started.
 
-Tested directly by Codex on Elis's PC, 2026-10-07/08:
+Tested directly by Codex on the owner's PC, 2026-10-07/08:
 - Suite at that point: **199 passed**, with `ruff check src tests` and `mypy src` clean. Real FFmpeg
   and disposable Postgres; external APIs mocked in the suite. A `_test` database-name guard
   now prevents accidentally pointing tests at production.
@@ -252,11 +252,11 @@ Tested directly by Codex on Elis's PC, 2026-10-07/08:
   sampled contact sheet showed changing facial details during the shot; identity and anatomy
   remain unmeasured by QC. No media was added to git.
 
-Tested on Elis's PC (Elis ran the commands and pasted the output):
+Tested on the owner's PC (the owner ran the commands and pasted the output):
 - `up`, `audit` and migrations work. ComfyUI and Ollama are reachable from Docker.
 - `comfy-render` produced a real Wan VACE render (after the multiple-of-16 fix).
 - `agent-check`: Creative Director and Channel Manager answer on `qwen3.5:9b` on the GPU.
-- First full `render` of Elis's own clip (RTX3070_QUALITY): all 6 shots rendered. QC then
+- First full `render` of the owner's own clip (RTX3070_QUALITY): all 6 shots rendered. QC then
   failed and the project stopped at the repair limit after 3 rounds. QC per shot (score,
   temporal, motion, structure): 001 2.99/2.79/4.44/0.0, 002 4.2/9.23/0.1/0.0,
   003 4.58/9.35/0.91/0.0, 004 6.17/6.59/7.9/1.31, 005 6.76/8.88/8.24/1.44 (pass),
@@ -323,7 +323,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Previous handoff notes (historical snapshot; verify against current Git before acting)
 
-- **Claude (2026-10-09): local and cloud rendering (`docs/cloud.md`).** Elis asked for a local
+- **Claude (2026-10-09): local and cloud rendering (`docs/cloud.md`).** the owner asked for a local
   mode and a cloud mode. Each video now renders on this PC or on a cloud ComfyUI server
   (`creative.render_on`, "Where to render" on the New video page, shown only when
   `STUDIO_CLOUD__ENABLED` and `STUDIO_CLOUD__URL` are set in `.env`; token in
@@ -331,10 +331,10 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   `cloud_gpu_minutes` with an estimated cost, and stop at `costs.max_cloud_gpu_minutes`
   (60 per video). Profiles are checked against the cloud GPU's `vram_gb`. `comfy-check --cloud`
   validates the server. Tested here with a fake cloud server (`tests/test_cloud.py`), full suite,
-  ruff and mypy. **Not tried on a real cloud GPU**: Elis needs a server with the same models and
+  ruff and mypy. **Not tried on a real cloud GPU**: the owner needs a server with the same models and
   nodes, reached through an SSH tunnel or a token-checking HTTPS address (never an open port).
 
-- **Rökkur Enterprise vision (Elis, 2026-10-09).** Elis wants Rökkur to grow from restyling
+- **Rökkur Enterprise vision (the owner, 2026-10-09).** the owner wants Rökkur to grow from restyling
   footage into a studio that takes one idea to a finished series (his reference: Cocomelon-style
   nursery-rhyme videos made with a script assistant, an AI video generator, an editor and SEO
   tools). The vision prompt and Claude's honest notes are in `docs/ROKKUR_ENTERPRISE.md`; read it
@@ -390,7 +390,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
     shots; shown as **Follows** on the brief. Prompt side only; masks are unchanged.
   - Next for the subject: a segmentation model seeded by the locked subject, compared on the
     same shot against U²-Net before replacing it (Codex's acceptance test).
-  - Elis's better outputs: not seen yet; he still needs to attach them.
+  - the owner's better outputs: not seen yet; he still needs to attach them.
 
 - **Claude overnight (2026-10-09): draft profile + repair stall stop. Untested on the PC.**
   - New `RTX3070_DRAFT` profile (`v2v_3070_draft`, `v2v_3070_draft_keep`): the quality/keep
@@ -431,7 +431,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   marked depth unsupported. Next, match repair suggestions to controls available in the
   selected workflow and stop or ask for review when repeated rerolls do not improve QC.
 
-- **Codex: test the research update on the PC (Claude, 2026-10-09).** Elis's render notes so
+- **Codex: test the research update on the PC (Claude, 2026-10-09).** the owner's render notes so
   far:
   - 54 is the best yet.
   - 55 and 66 are notable for the subject/background split.
@@ -470,29 +470,29 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
      CFGZeroStar guidance, Video Depth Anything, VBench-style QC (DINOv2 subject and CLIP
      background consistency). Ranked list with sources: `docs/research/online-review-2026-10-09.md`.
 - **Claude (2026-10-08):** reviewed Codex's `5408dfe` and pushed the fixes listed in the Log.
-  No edit in progress. Next for Elis: rebuild, then on the Ape project press **Allow 20 more
+  No edit in progress. Next for the owner: rebuild, then on the Ape project press **Allow 20 more
   renders and continue** (or Cancel it). `qc-shots.zip` is no longer needed.
 - **Render quality experiments (proposed by Claude 2026-10-08, not run yet; Codex runs them on
-  the PC because Claude cannot reach it).** Elis says ComfyUI `render_00054_` was the best so far
+  the PC because Claude cannot reach it).** the owner says ComfyUI `render_00054_` was the best so far
   and wants renders 61+ improved before adding much. Start from the 00054 graph (drag it into
   ComfyUI), keep its seed, change one thing per run, same shot each time:
   (Items 1, 2, 3 and 5 are now built into the app; the test plan above replaces them.)
   1. Resolution: 832×480 (Wan 1.3B's training size) vs our 576×320.
   2. Reference: none vs source first frame vs one image already in the target style.
   3. Control: Canny 0.2/0.5 (now) vs softer edges (thresholds 0.3/0.7, or a slight blur first),
-     then depth: Elis installed `comfyui_controlnet_aux`, and profile `RTX3070_DEPTH`
+     then depth: the owner installed `comfyui_controlnet_aux`, and profile `RTX3070_DEPTH`
      (workflow `v2v_3070_depth`, Depth Anything V2 Small) now does this from the studio.
      Hypothesis: edges cause the outline/clay look and broken fingers; depth keeps layout
      without lines.
   4. Steps 20 vs 30 at the best setting so far.
-  5. Elis (renders 62/63): the room looks great (new tiles, towels) but the ape looks bad.
+  5. the owner (renders 62/63): the room looks great (new tiles, towels) but the ape looks bad.
      The app now keeps the real ape automatically, by compositing it over the render (see
      Current work). The better-blended next step is to feed the same masks into
      WanVaceToVideo's `control_masks` (white = regenerate the room, black = keep the source
      ape), adapted from a published VACE inpainting workflow.
   Later, post only: an upscale model (core node, just a model file) and RIFE interpolation
   (`ComfyUI-Frame-Interpolation`) for 16→32 fps.
-  **Report back through git:** record the setting changed, QC score, render time and Elis's
+  **Report back through git:** record the setting changed, QC score, render time and the owner's
   opinion in the Log. Do not commit contact sheets, frames or clips derived from the private
   Ape source.
 - **Codex (2026-10-08):** reliability/UI upgrade is implemented, tested and deployed locally.
@@ -535,21 +535,21 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   card with Stop, the rail a chip while it runs, and the worker stops the pod after
   `cloud.auto_stop_idle_minutes` (30) without cloud work. Code: `services/runpod.py`, CLI
   `cloud-pod`, `tests/test_runpod.py` (fake RunPod). The PowerShell launcher was parse-checked
-  and run here with stand-in docker/ssh only. **Next:** Elis adds the key and pod id, makes the
+  and run here with stand-in docker/ssh only. **Next:** the owner adds the key and pod id, makes the
   icon and tries it; details in `docs/cloud.md` ("Start the cloud GPU with the studio").
 - **Claude (2026-10-10): render speed, second pass. Untested on the PC.** `docs/speed.md` item 4:
   **Render in quality**. PREVIEW and DRAFT profiles name `upgrade_to: RTX3070_QUALITY`; on a
   finished fast video the project page (and `POST /projects/{id}/upgrade`) re-renders the picked
   shots, or all, in quality with the same prompt/seed/settings, via `redo_shots(upgrade=True)`.
   First pass (models kept loaded per render stage, `stall_reports: 2`, 1 s poll, `timings`) is
-  in main since aa19052, also untested on the PC. Still needs Elis: `timings` before/after, and
+  in main since aa19052, also untested on the PC. Still needs the owner: `timings` before/after, and
   DRAFT vs QUALITY rated on the same clip (needs the LoRA file, see `docs/speed.md`).
-- **Claude (2026-10-09): cloud mode checked on a real GPU.** Elis's RunPod RTX 4090 runs ComfyUI
+- **Claude (2026-10-09): cloud mode checked on a real GPU.** the owner's RunPod RTX 4090 runs ComfyUI
   0.39.0 with the Wan VACE 1.3B, umt5 fp8 and Wan VAE models. The studio on the PC reaches it
   through an SSH tunnel on port 8189 (`host.docker.internal:8189` from Docker).
   `comfy-check --cloud` passes `v2v_3070_quality` and `v2v_3070_keep`; the depth, draft and
   preview workflows still miss their node, LoRA and checkpoint on the pod. The first cloud
-  render exposed the FUTURE_24GB size bug, which is now fixed. **Next:** Elis confirms a finished
+  render exposed the FUTURE_24GB size bug, which is now fixed. **Next:** the owner confirms a finished
   cloud render. Setup lessons and troubleshooting are in `docs/cloud.md`. Pod details (address,
   keys) stay out of git.
 
@@ -570,11 +570,11 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
   idle auto-stop in the worker (`IdleStopper`), new `cloud.*` settings, `tests/test_runpod.py`.
 - 2026-10-10 Claude: "Render in quality" (draft-first flow, `upgrade_to` on fast profiles).
 - 2026-10-09 Claude: cloud mode checked against a RunPod RTX 4090 (`comfy-check --cloud` ok for quality and keep); `docs/cloud.md` gained the keep-alive tunnel command, troubleshooting and RunPod notes.
-- 2026-10-09 Claude: FUTURE_24GB got `max_pixels: 399360`. It renders the same Wan 1.3B workflow, and a 1920x800 source came out 1920 wide, which failed the template's WIDTH max of 1280 (Elis's first cloud render). It now renders at 976x400.
+- 2026-10-09 Claude: FUTURE_24GB got `max_pixels: 399360`. It renders the same Wan 1.3B workflow, and a 1920x800 source came out 1920 wide, which failed the template's WIDTH max of 1280 (the owner's first cloud render). It now renders at 976x400.
 - 2026-10-09 Claude: local/cloud render mode (`docs/cloud.md`, `tests/test_cloud.py`).
 - 2026-10-09 Claude: speed pass (`docs/speed.md`): models kept loaded across a render stage,
   repairs stop after one non-improving round, 1 s ComfyUI poll, `timings` command.
-- 2026-10-09 Claude: `docs/ROKKUR_ENTERPRISE.md` (vision prompt + honest notes on Elis's
+- 2026-10-09 Claude: `docs/ROKKUR_ENTERPRISE.md` (vision prompt + honest notes on the owner's
   material); reviewed Codex a865054.
 - 2026-10-09 Codex: checked the connected GitHub commit history; latest `main` was `a865054`,
   matching the local checkout, with no newer Claude/Codex push visible. Added the Rökkur
