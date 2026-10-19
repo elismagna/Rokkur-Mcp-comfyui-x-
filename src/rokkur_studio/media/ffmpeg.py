@@ -321,6 +321,17 @@ class FFmpeg:
         self._run(self._ff("-t", str(seconds), "-i", str(video), "-vf", vf, str(out)))
         return out
 
+    def test_pattern(self, out: Path, *, width: int, height: int, frames: int = 1,
+                     fps: int = 16) -> Path:
+        """A test-pattern picture (``frames`` 1, any image suffix) or silent H.264 clip."""
+        src = f"testsrc2=size={width}x{height}:rate={fps}"
+        if frames <= 1:
+            self._run(self._ff("-f", "lavfi", "-i", src, "-frames:v", "1", str(out)))
+        else:
+            self._run(self._ff("-f", "lavfi", "-i", src, "-frames:v", str(frames),
+                               "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out)))
+        return out
+
     def make_test_video(self, out: Path, *, seconds: float = 4, width: int = 360,
                         height: int = 640, fps: int = 24, with_audio: bool = True,
                         scene_cut: bool = True) -> Path:

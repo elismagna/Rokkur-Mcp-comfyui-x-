@@ -115,7 +115,12 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
     runnable = [p for p in profiles if _profile_fits(settings, p, cloud=cloud)]
     needed = ({p.workflow for p in runnable}
               | {p.keep_workflow for p in runnable if p.keep_workflow})
-    for name in sorted(set(registry.names()) | used):
+    # The Create page's workflows are checked too, but a missing one only turns that page's
+    # kind of take off; it never fails the check for videos.
+    c = settings.create
+    create_used = ({c.image_workflow, c.video_workflow, c.animate_workflow}
+                   if c.enabled else set())
+    for name in sorted(set(registry.names()) | used | create_used):
         try:
             template = registry.get(name)
         except TemplateError as exc:
@@ -123,7 +128,8 @@ def cmd_comfy_check(args: argparse.Namespace) -> int:
             ok = ok and name not in needed
             continue
         problems = validate_against_object_info(template, info)
-        note = ("" if name in needed else "  (not used by any render profile)" if name not in used
+        note = ("" if name in needed else "  (Create page)" if name in create_used
+                else "  (not used by any render profile)" if name not in used
                 else "  (only for profiles this server cannot run)")
         print(f"  [{'ok' if not problems else 'FAIL'}] {name} v{template.spec.version}{note}")
         for p in problems:

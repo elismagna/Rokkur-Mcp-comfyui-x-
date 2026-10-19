@@ -235,7 +235,9 @@ def test_draft_workflow_takes_the_shift_and_reports_the_sampler_ignored(settings
 
 
 # -- workflow templates -------------------------------------------------------------------
-@pytest.mark.parametrize("name", REGISTRY.names())
+# Render workflows; the Create page's prompt-only ones are covered in test_create.py.
+@pytest.mark.parametrize("name", [n for n in REGISTRY.names()
+                                  if REGISTRY.get(n).spec.input_kind == "video"])
 def test_every_template_loads_and_compiles_with_the_new_params(name):
     template = REGISTRY.get(name)
     raw = template.workflow

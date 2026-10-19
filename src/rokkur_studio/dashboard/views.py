@@ -52,6 +52,7 @@ from rokkur_studio.db.models import (
     Project,
     Publication,
     Render,
+    Take,
 )
 from rokkur_studio.director.assets import (
     AssetTracker,
@@ -76,7 +77,7 @@ from rokkur_studio.media.ffmpeg import FFmpegError
 from rokkur_studio.pipeline import judge as judge_mod
 from rokkur_studio.pipeline.context import StudioContext, profile_availability, supported_controls
 from rokkur_studio.pipeline.subject import OnnxSubjectMasker, decide_subject
-from rokkur_studio.services import commands, practice, publishing, ratings, taste
+from rokkur_studio.services import commands, create, practice, publishing, ratings, taste
 from rokkur_studio.services.projects import (
     at_budget_limit,
     at_repair_limit,
@@ -228,6 +229,15 @@ def running_now(session: Session) -> list[dict[str, Any]]:
                     f", attempt {active.attempt}" if active.attempt > 1 else "")
         out.append({"project_id": job.project_id, "name": name, "step": step,
                     "since": job.started_at.isoformat() if job.started_at else None})
+    # Create-page takes have no project; name them by their prompt.
+    takes = session.execute(select(Job, Take).join(Take, Take.job_id == Job.id)
+                            .where(Job.status == "RUNNING", Job.kind == create.KIND)
+                            .order_by(Job.started_at.desc())).all()
+    for job, take in takes:
+        out.append({"project_id": None, "take_id": take.id,
+                    "name": take.prompt[:60] + ("…" if len(take.prompt) > 60 else ""),
+                    "step": "Making a picture" if take.mode == "image" else "Making a clip",
+                    "since": job.started_at.isoformat() if job.started_at else None})
     return out
 
 
@@ -374,11 +384,12 @@ def _tracker(ctx: StudioContext) -> tuple[AssetTracker | None, str | None]:
 
 
 @router.get("/new", response_class=HTMLResponse)
-def new_page(request: Request, ctx: Ctx, session: Db) -> HTMLResponse:
+def new_page(request: Request, ctx: Ctx, session: Db, take: str = "") -> HTMLResponse:
     tracker, _ = _tracker(ctx)
     profile = taste.build_profile(session)
     cloud = ctx.settings.cloud
     return _page(request, "new.html", ctx, media=media_files(ctx),
+                 take_source=create.video_source(session, ctx.settings, take) if take else None,
                  suggestions=taste.suggestions(profile), taste=profile,
                  profile_status=profile_availability(ctx),
                  cloud=cloud if cloud.ready else None,

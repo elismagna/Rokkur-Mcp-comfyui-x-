@@ -4,7 +4,7 @@ Shared notes for the AI assistants working on this repo (Claude and Codex). Read
 then inspect the files it points to before changing anything. Keep it short and current:
 update **Current work** and the **Log** after meaningful work. Never put credentials here.
 
-Last updated: 2026-10-09 by Claude (cloud mode checked on a RunPod RTX 4090; docs/cloud.md).
+Last updated: 2026-10-19 by Claude (Create page after Open Higgsfield; docs/create.md).
 See the [local upgrade findings](upgrade-2026-10-07.md) for implementation details and real
 render observations; the latest Git commit is authoritative.
 
@@ -62,6 +62,7 @@ shot-level repair → encode → metadata/thumbnail → publish.
 | Main subject: keep real or restyle, masks, composite | `pipeline/subject.py` | `docs/subject.md` |
 | Subject lock: one main subject per video in the prompts | `director/subject.py` | `docs/director.md` |
 | Your ratings, redo, taste profile and suggestions | `services/ratings.py`, `services/taste.py` | `docs/ratings.md` |
+| Create page: pictures and clips from a prompt, Cinema controls | `services/create.py`, `pipeline/create.py`, `dashboard/create_views.py` | `docs/create.md` |
 | Render speed: where time goes, `timings` command | `services/timings.py`, `gpu/lease.py` | `docs/speed.md` |
 | Rights gate | `domain/rights.py` | `docs/rights.md` |
 | YouTube OAuth, upload, schedule, playlists, approvals | `youtube/`, `services/publishing.py` | `docs/youtube.md` |
@@ -503,6 +504,21 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Current work
 
+- **Claude (2026-10-19): Create page, after Open Higgsfield. Untested on the PC.** The owner
+  asked to "upgrade to Open Higgsfield" (github.com/Anil-matcha/Open-Higgsfield-AI, MIT,
+  renamed Open Generative AI). It is a Next.js/Electron front end whose models run through the
+  paid Muapi.ai API (local video only via Wan2GP), with no ComfyUI or pipeline, so Rökkur was
+  not moved onto it. Its studio design was brought in instead: `/ui/create` with Image, Video
+  and Cinema tabs (camera, lens, focal length, aperture, shot size, angle, lighting, 13 camera
+  moves written into the prompt), a takes grid (like/dislike, Again, Animate, Save, Delete),
+  and **Make a video**, which opens New video with the clip as the source. Code:
+  `services/create.py`, `pipeline/create.py` (job `create_take`, GPU lease locally),
+  `dashboard/create_views.py`, `api/routes_create.py`, table `takes` (migration `0003`), config
+  `create:`. Three workflows adapted from Comfy-Org templates (sources in each params.yaml):
+  `t2i_zimage_turbo`, `t2v_3070_vace`, `i2v_3070_vace`. Paid Muapi models were not added; the
+  owner was asked. Docs `docs/create.md`, tests `tests/test_create.py`. **Next:** the owner
+  pulls, runs `up` and `comfy-check` (Z-Image may need `vae/ae.safetensors`), and makes one
+  picture, one clip and one animated picture.
 - **Claude (2026-10-15): reference learning for Night School. Untested on the PC.** Two
   parts. (1) Practice also tries the character reference type (none / subject cutout / first
   frame) as manifest-level variants; a proven one replaces `reference_mode: auto` on new
@@ -561,6 +577,7 @@ Other files: `data/director/asset_tracker.json` (characters and global look) and
 
 ## Log (newest first)
 
+- 2026-10-19 Claude: Create page (Open Higgsfield-style Image/Video/Cinema studio on our ComfyUI), migration 0003, three Comfy-Org-based workflows. Branch `claude/open-higgsfield-overhaul-7cx70e`.
 - 2026-10-15 Claude: practice reference-type variants; quality judge (CLIP + RichHF-18K + your good/bad examples).
 - 2026-10-14 Claude: Night School (practice batches, general quality score, lessons, optional apply). Test venv needs opencv-python-headless or the QC stability test fails.
 - 2026-10-10 Claude: picture checker (`docs/picture-checker.md`: contact sheets, motion-compensated stability, flicker, advisory vision-model review), post-render stabilizer and repair auto-tuning (`docs/stability.md`). Untested on a real render yet. Also render options (sampler, scheduler, shift, render size, edge detail, stability settings on the form/API/CLI) and the CLOUD_14B profile (Wan VACE 14B, fp8, up to 720P; needs the 34.7 GB 14B model on the pod, see `docs/cloud.md`). Tests pass; none of it has been run on a real GPU yet.

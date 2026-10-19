@@ -1,0 +1,32 @@
+# Z-Image Turbo text-to-image for the Create page's Image and Cinema tabs, core nodes only.
+# Source: Comfy-Org workflow_templates, templates/image_z_image_turbo.json (MIT licence,
+# https://github.com/Comfy-Org/workflow_templates). Its "Text to Image (Z-Image-Turbo)"
+# subgraph was flattened into API format with the template's own values: 8 steps, cfg 1,
+# res_multistep/simple, AuraFlow shift 3, an empty negative (ConditioningZeroOut), 1024x1024.
+# Changes: node ids kept, prompt/size/seed/steps exposed as parameters, output prefix renamed.
+# Models (all three were listed in the Comfy-Org template; the PC already has the first two):
+#   diffusion_models/z_image_turbo_bf16.safetensors
+#   text_encoders/qwen_3_4b.safetensors
+#   vae/ae.safetensors   (the FLUX VAE, from huggingface.co/Comfy-Org/z_image_turbo)
+# The bf16 model is about 12 GB; ComfyUI offloads part of it on an 8 GB card, which is slower
+# but works. Run `scripts/studio.ps1 comfy-check` to see whether every file is installed.
+name: t2i_zimage_turbo
+version: 1
+description: Z-Image Turbo text-to-image (Comfy-Org template)
+resource_class: GPU_HEAVY
+input_kind: none
+output_kinds: [images]
+parameters:
+  DIFFUSION_MODEL: {node: "28", input: unet_name, type: str, default: z_image_turbo_bf16.safetensors}
+  TEXT_ENCODER: {node: "30", input: clip_name, type: str, default: qwen_3_4b.safetensors}
+  VAE: {node: "29", input: vae_name, type: str, default: ae.safetensors}
+  PROMPT: {node: "27", input: text, type: str, required: true}
+  WIDTH: {node: "13", input: width, type: int, min: 256, max: 2048}
+  HEIGHT: {node: "13", input: height, type: int, min: 256, max: 2048}
+  SEED: {node: "3", input: seed, type: int, default: 0, min: 0}
+  STEPS: {node: "3", input: steps, type: int, default: 8, min: 1, max: 50}
+  CFG: {node: "3", input: cfg, type: float, default: 1.0, min: 0, max: 10}
+  SHIFT: {node: "11", input: shift, type: float, default: 3.0, min: 0.5, max: 20}
+  SAMPLER: {node: "3", input: sampler_name, type: str, default: res_multistep}
+  SCHEDULER: {node: "3", input: scheduler, type: str, default: simple}
+  OUTPUT_PREFIX: {node: "9", input: filename_prefix, type: str, default: rokkur/create}
