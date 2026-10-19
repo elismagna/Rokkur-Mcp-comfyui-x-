@@ -299,3 +299,37 @@ class Publication(Base):
     youtube_video_id: Mapped[str | None] = mapped_column(String(32))
     error: Mapped[dict[str, Any] | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Take(Base):
+    """One generation on the Create page: a still or a short clip made from a prompt.
+
+    ``mode``: image (text to picture), video (text to clip) or animate (start picture to clip).
+    ``camera`` holds the Cinema choices that were written into ``final_prompt``; ``settings``
+    the size, length, seed and sampler values the workflow got. Files live under
+    ``<data_dir>/create/<take id>/``; the paths here are relative to ``<data_dir>/create``.
+    """
+
+    __tablename__ = "takes"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("take"))
+    mode: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    prompt: Mapped[str] = mapped_column(Text)
+    final_prompt: Mapped[str] = mapped_column(Text)
+    negative_prompt: Mapped[str] = mapped_column(Text, default="")
+    camera: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    settings: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    workflow: Mapped[str] = mapped_column(String(64))
+    render_on: Mapped[str] = mapped_column(String(16), default="local")
+    start_image: Mapped[str | None] = mapped_column(Text)
+    output: Mapped[str | None] = mapped_column(Text)
+    thumbnail: Mapped[str | None] = mapped_column(Text)
+    parent_id: Mapped[str | None] = mapped_column(String(64))  # the take this one varies
+    job_id: Mapped[str | None] = mapped_column(String(64))
+    remote_id: Mapped[str | None] = mapped_column(String(64))
+    rating: Mapped[int | None] = mapped_column(Integer)  # -2 … 2, like project ratings
+    error: Mapped[str | None] = mapped_column(Text)
+    duration_s: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -1151,6 +1151,12 @@ def _practice(ctx: StudioContext, job: Job) -> dict[str, Any]:
     return run_batch(ctx, job)
 
 
+def _create_take(ctx: StudioContext, job: Job) -> dict[str, Any]:
+    from rokkur_studio.pipeline.create import run_take
+
+    return run_take(ctx, job)
+
+
 HANDLERS: dict[str, Handler] = {
     "rights_check": rights_check,
     "ingest": ingest,
@@ -1162,5 +1168,6 @@ HANDLERS: dict[str, Handler] = {
     "repair": repair,
     "edit": edit,
     "practice": _practice,
+    "create_take": _create_take,
 }
 

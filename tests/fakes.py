@@ -28,6 +28,10 @@ class FakeComfyUI:
         self.deleted: list[str] = []
         self.object_info_data = object_info or {}
         self.down = False
+        # what a workflow with no LoadVideo (a Create-page take) "renders"
+        self.generated_image = b""
+        self.generated_video = b""
+        self.generated: dict[str, bytes] = {}
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -44,9 +48,17 @@ class FakeComfyUI:
             self.history_store[prompt_id] = {"prompt": [], "outputs": {}, "status": {
                 "status_str": "error", "completed": False, "messages": msgs}}
             return
-        video_name = next(n["inputs"].get("file") for n in workflow.values()
-                          if n["class_type"] == "LoadVideo")
         msgs.append(["execution_success", {"prompt_id": prompt_id, "timestamp": 3500}])
+        video_name = next((n["inputs"].get("file") for n in workflow.values()
+                           if n["class_type"] == "LoadVideo"), None)
+        if video_name is None:  # made from a prompt: return the configured picture or clip
+            is_video = any(n["class_type"] == "SaveVideo" for n in workflow.values())
+            name = f"gen_{prompt_id}.{'mp4' if is_video else 'png'}"
+            self.generated[name] = self.generated_video if is_video else self.generated_image
+            self.history_store[prompt_id] = {"prompt": [], "outputs": {"19": {"images": [
+                {"filename": name, "subfolder": "rokkur", "type": "output"}]}},
+                "status": {"status_str": "success", "completed": True, "messages": msgs}}
+            return
         self.history_store[prompt_id] = {"prompt": [], "outputs": {"16": {"images": [
             {"filename": f"out_{video_name}", "subfolder": "rokkur", "type": "output"}],
             "animated": [True]}}, "status": {"status_str": "success", "completed": True,
@@ -103,6 +115,8 @@ class FakeComfyUI:
             return httpx.Response(200, json={})
         if path == "/view":
             filename = request.url.params["filename"]
+            if filename in self.generated:
+                return httpx.Response(200, content=self.generated[filename])
             source = filename.removeprefix("out_")
             if source not in self.uploads:
                 return httpx.Response(404)

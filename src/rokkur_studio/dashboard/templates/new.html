@@ -9,6 +9,10 @@
 <div class="create-layout">
 <div class="stack">
   <section class="card"><div class="section-heading"><span class="step-number">01</span><div><h2>Your footage</h2><p class="hint">A short, clear shot is the best place to start.</p></div></div>
+    {% if take_source %}
+    <div class="callout" style="margin-bottom:14px"><img src="{{ take_source.thumb }}" alt="" class="mini" style="object-fit:cover;width:64px;height:auto"><div><p><b>Using your Create clip</b></p><p class="hint" style="margin:0">{{ take_source.prompt|truncate(120) }}</p></div></div>
+    <input type="hidden" name="local_path" value="{{ take_source.path }}">
+    {% endif %}
     {% if media %}
     <label for="media_file">Choose from your media folder</label>
     <select id="media_file" name="media_file"><option value="">Choose a video…</option>
@@ -103,7 +107,7 @@
   </section>
   <section class="card"><div class="section-heading"><span class="step-number">04</span><h2>Source permission</h2></div>
     <label for="rights_category">Why may you use this footage?</label><select id="rights_category" name="rights_category">{% for c in categories %}<option value="{{c}}" {% if c=='USER_OWNED' %}selected{% endif %}>{{c|replace('_',' ')|lower|capitalize}}</option>{% endfor %}</select>
-    <label for="permission_evidence">Evidence or attribution</label><input id="permission_evidence" name="permission_evidence" placeholder="I filmed it / licence link / written permission">
+    <label for="permission_evidence">Evidence or attribution</label><input id="permission_evidence" name="permission_evidence" placeholder="I filmed it / licence link / written permission"{% if take_source %} value="Made in Rökkur Create from my own prompt (take {{ take_source.id }})"{% endif %}>
     <p class="hint">Clips with unconfirmed rights wait for your decision.</p>
   </section>
   <section class="card launch-card"><h2>Ready when you are.</h2><p class="hint">Analyse → direct → render → review. Progress and individual shot previews appear on the project page.</p>

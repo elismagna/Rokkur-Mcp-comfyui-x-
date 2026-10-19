@@ -12,6 +12,7 @@
   <a class="cta" href="/ui/new">{{ icon('plus') }} New video</a>
   <nav class="nav-list" aria-label="Main navigation">
     <a class="nav {% if path=='/ui' %}on{% endif %}" href="/ui">{{icon('home')}}Home</a>
+    <a class="nav {% if path.startswith('/ui/create') %}on{% endif %}" href="/ui/create">{{icon('spark')}}Create</a>
     <a class="nav {% if path.startswith('/ui/projects') %}on{% endif %}" href="/ui/projects">{{icon('film')}}Projects</a>
     <a class="nav {% if path=='/ui/taste' %}on{% endif %}" href="/ui/taste">{{icon('taste')}}Your taste</a>
     <a class="nav {% if path=='/ui/practice' %}on{% endif %}" href="/ui/practice">{{icon('spark')}}Night School</a>

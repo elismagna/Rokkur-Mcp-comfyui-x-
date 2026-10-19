@@ -1,0 +1,131 @@
+{% extends "base.html" %}{% from "_icons.html" import icon %}
+{% block title %}Create · Rökkur Studio{% endblock %}
+{% block crumb %}Rökkur / Create{% endblock %}
+{% block head %}<script src="/ui/static/create.js?v={{ static_version }}" defer></script>{% endblock %}
+
+{% block body %}
+<div class="cr">
+<form class="cr-composer card" method="post" action="/ui/create" enctype="multipart/form-data" id="cr-form" data-tab="{{ tab }}">
+  <div class="cr-head">
+    <div><div class="eyebrow">Create</div><h1>Make a picture or a clip</h1></div>
+  </div>
+  <input type="hidden" name="tab" id="cr-tab" value="{{ tab }}">
+  <div class="cr-tabs" role="tablist" aria-label="Kind of take">
+    {% for t, label, hint in [('image', 'Image', 'A still from text'), ('video', 'Video', 'A clip from text or a picture'), ('cinema', 'Cinema', 'Camera, lens and moves')] %}
+    <button type="button" role="tab" class="cr-tab" data-tab="{{ t }}" aria-selected="{{ 'true' if tab == t else 'false' }}"><b>{{ label }}</b><span>{{ hint }}</span></button>
+    {% endfor %}
+  </div>
+
+  <div class="cr-only" data-show="cinema">
+    <div class="seg" role="group" aria-label="Still or clip">
+      <button type="button" data-output="still" aria-pressed="true">Still</button>
+      <button type="button" data-output="clip" aria-pressed="false">Clip</button>
+    </div>
+    <input type="hidden" name="output" id="cr-output" value="still">
+  </div>
+
+  <label for="cr-prompt">What do you want to see?</label>
+  <textarea id="cr-prompt" name="prompt" rows="4" maxlength="2000" required placeholder="A small red fox in a snowy birch forest at dawn, breath steaming, soft golden light"></textarea>
+
+  <div class="cr-only" data-show="clip">
+    <label>Start picture <span class="muted">optional: animate it instead of starting from nothing</span></label>
+    {% set pictures = takes|selectattr('mode', 'equalto', 'image')|selectattr('status', 'equalto', 'succeeded')|list %}
+    <div class="cr-starts" role="radiogroup" aria-label="Start picture">
+      <label class="cr-start"><input type="radio" name="start_take" value="" {% if not start_take %}checked{% endif %}><span class="none">None</span></label>
+      {% for p in pictures[:11] %}
+      <label class="cr-start"><input type="radio" name="start_take" value="{{ p.id }}" {% if start_take and start_take.id == p.id %}checked{% endif %}><img src="{{ p.thumb }}" alt="{{ p.prompt|truncate(60) }}" loading="lazy"></label>
+      {% endfor %}
+    </div>
+    <label for="cr-start-file" class="upload-zone cr-upload"><b>Or upload a picture</b><span>PNG, JPG or WebP. It is cropped to the clip's shape.</span>
+    <input id="cr-start-file" type="file" name="start_file" accept="image/png,image/jpeg,image/webp"></label>
+  </div>
+
+  <div class="cr-only" data-show="cinema">
+    <div class="cr-cinema">
+      {% for key, options in cinema.items() %}
+      <div class="cr-field" {% if key == 'move' %}data-clip-only{% endif %}>
+        <label for="cam-{{ key }}">{{ cinema_labels[key] }}</label>
+        <select id="cam-{{ key }}" name="cam_{{ key }}"><option value="">Any</option>{% for name in options %}<option value="{{ name }}">{{ name }}</option>{% endfor %}</select>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="cr-row">
+    <div>
+      <label>Shape</label>
+      <div class="cr-chips" data-for="still">{% for a, size in image_sizes.items() %}<label><input type="radio" name="aspect" value="{{ a }}" {% if loop.first %}checked{% endif %}><span>{{ a }}</span></label>{% endfor %}</div>
+      <div class="cr-chips" data-for="clip">{% for a, size in video_sizes.items() %}<label><input type="radio" name="aspect" value="{{ a }}" {% if loop.first %}checked{% endif %} disabled><span>{{ a }}</span></label>{% endfor %}</div>
+    </div>
+    <div class="cr-only" data-show="clip">
+      <label>Length</label>
+      <div class="cr-chips">{% for s in seconds %}<label><input type="radio" name="seconds" value="{{ s }}" {% if loop.last %}checked{% endif %}><span>{{ s }} s</span></label>{% endfor %}</div>
+    </div>
+    <div>
+      <label>How many</label>
+      <div class="cr-chips">{% for n in range(1, max_batch + 1) %}<label><input type="radio" name="count" value="{{ n }}" {% if n == 1 %}checked{% endif %}><span>{{ n }}</span></label>{% endfor %}</div>
+    </div>
+  </div>
+
+  <details class="cr-more"><summary>More settings</summary>
+    <label for="cr-seed">Seed <span class="muted">blank picks one; several takes count up from it</span></label>
+    <input id="cr-seed" name="seed" inputmode="numeric" pattern="[0-9]*" placeholder="Random">
+    <label for="cr-negative">Leave out</label>
+    <input id="cr-negative" name="negative_prompt" maxlength="2000" placeholder="Clips use Wan's own negative prompt when this is blank">
+    {% if cloud %}
+    <label for="cr-on">Where to render</label>
+    <select id="cr-on" name="render_on"><option value="local">This PC</option><option value="cloud" {% if cloud.default == 'cloud' %}selected{% endif %}>Cloud GPU</option></select>
+    {% endif %}
+  </details>
+
+  <div class="cr-reads"><span>The model reads</span><p id="cr-final">Your prompt, as written.</p></div>
+  <button class="ember cr-go" type="submit" id="cr-go">{{ icon('spark') }} <span>Make a picture</span></button>
+  <p class="hint cr-note">{% if preview %}The preview renderer is on, so takes are test patterns. Set <code>STUDIO_RENDER__RENDERER=comfyui</code> to make real ones.{% else %}Pictures use Z-Image Turbo and clips Wan 2.1 VACE 1.3B, on {{ 'this PC or the cloud GPU' if cloud else 'this PC' }}. A take waits while a video is rendering.{% endif %}</p>
+  <script type="application/json" id="cr-phrases">{{ cinema|tojson }}</script>
+</form>
+
+<section class="cr-gallery" aria-labelledby="cr-takes-title">
+  <div class="section-title"><h2 id="cr-takes-title">Your takes</h2>
+    <div class="chips cr-filter" role="group" aria-label="Show">
+      <a href="#" data-filter="all" class="on">All</a><a href="#" data-filter="image">Pictures</a><a href="#" data-filter="clip">Clips</a><a href="#" data-filter="liked">Liked</a>
+    </div>
+  </div>
+  <div id="cr-takes" class="cr-grid" data-busy="{{ 'true' if busy else 'false' }}">
+    {% for t in takes %}
+    <article class="cr-take" data-kind="{{ 'clip' if t.is_video else 'image' }}" data-status="{{ t.status }}" data-rating="{{ t.rating or 0 }}" id="take-{{ t.id }}">
+      <div class="cr-media" style="aspect-ratio:{{ t.width or 1 }}/{{ t.height or 1 }}">
+        {% if t.status == 'succeeded' and t.file %}
+          {% if t.is_video %}<video src="{{ t.file }}" poster="{{ t.thumb }}" muted loop playsinline preload="none" controls></video>
+          {% else %}<a href="{{ t.file }}" target="_blank" rel="noopener"><img src="{{ t.file }}" alt="{{ t.prompt|truncate(80) }}" loading="lazy"></a>{% endif %}
+        {% else %}
+          <div class="cr-wait {{ t.status }}">
+            {% if t.start %}<img src="{{ t.start }}" alt="" class="cr-ghost">{% endif %}
+            <b>{{ {'queued': 'Waiting for the GPU', 'running': 'Rendering…', 'retrying': 'Retrying', 'failed': 'Failed', 'cancelled': 'Cancelled'}.get(t.status, t.status) }}</b>
+            {% if t.error %}<span>{{ t.error|truncate(160) }}</span>{% endif %}
+          </div>
+        {% endif %}
+        <span class="pill cr-badge">{{ 'Clip' if t.is_video else 'Picture' }}{% if t.seconds %} · {{ t.seconds }} s{% endif %}</span>
+      </div>
+      <p class="cr-cap" title="{{ t.final_prompt }}">{{ t.prompt }}</p>
+      <p class="cr-meta">{{ t.aspect or '' }} · seed {{ t.seed }}{% if t.render_on == 'cloud' %} · cloud{% endif %}{% if t.duration_s %} · {{ t.duration_s }} s to make{% endif %}{% for k, v in t.camera.items() %} · {{ v }}{% endfor %}</p>
+      <div class="cr-actions">
+        {% if t.status == 'succeeded' %}
+        <button type="button" class="small ghost cr-rate {{ 'on' if (t.rating or 0) > 0 }}" data-take="{{ t.id }}" data-value="{{ 0 if (t.rating or 0) > 0 else 1 }}" aria-label="Like" title="Like">{{ icon('up') }}</button>
+        <button type="button" class="small ghost cr-rate {{ 'on bad' if (t.rating or 0) < 0 }}" data-take="{{ t.id }}" data-value="{{ 0 if (t.rating or 0) < 0 else -1 }}" aria-label="Dislike" title="Dislike">{{ icon('down') }}</button>
+        {% if not t.is_video %}<a class="btn small secondary" href="/ui/create?tab=video&start={{ t.id }}">Animate</a>
+        {% else %}<a class="btn small secondary" href="/ui/new?take={{ t.id }}" title="Restyle this clip as a full video project">Make a video</a>{% endif %}
+        <a class="btn small ghost" href="{{ t.file }}" download>Save</a>
+        {% endif %}
+        {% if t.status not in ('queued', 'running') %}
+        <form method="post" action="/ui/create/takes/{{ t.id }}/again"><button class="small ghost" title="Same settings, next seed">{{ icon('redo') }} Again</button></form>
+        {% endif %}
+        <form method="post" action="/ui/create/takes/{{ t.id }}/delete" data-confirm="Delete this take and its files?"><button class="small ghost" aria-label="Delete" title="Delete">{{ icon('nope') }}</button></form>
+      </div>
+    </article>
+    {% else %}
+    <div class="cr-empty"><b>Nothing made yet</b><p>Write a prompt and press Make. Pictures take seconds to a minute; a 5 second clip takes a few minutes on the 3070.</p></div>
+    {% endfor %}
+  </div>
+</section>
+</div>
+{% endblock %}

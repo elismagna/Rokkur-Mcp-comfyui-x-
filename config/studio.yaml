@@ -125,3 +125,14 @@ judge:
   download: true          # fetch the CLIP model (346 MB, checksum-verified) on first use
   user_weight: 5          # each of your good/bad images counts as much as 5 public ones
   frames: 8               # frames of a render the judge looks at
+
+create:                      # the Create page: image and video takes from a prompt (docs/create.md)
+  enabled: true
+  image_workflow: t2i_zimage_turbo   # Z-Image Turbo (Comfy-Org template)
+  video_workflow: t2v_3070_vace      # Wan 2.1 VACE 1.3B text to video
+  animate_workflow: i2v_3070_vace    # Wan 2.1 VACE 1.3B start picture to video
+  video_fps: 16
+  max_frames: 81             # 5 s at 16 fps; VACE 1.3B is made for 480P clips up to 5 s
+  video_steps: 20
+  image_steps: 8
+  negative_prompt: ""        # empty: Wan's own negative prompt from the default render profile

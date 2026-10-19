@@ -256,6 +256,28 @@ class JudgeSection(BaseModel):
     frames: int = Field(8, ge=1, le=32)    # frames of a render the judge looks at
 
 
+class CreateSection(BaseModel):
+    """The Create page: quick image and video takes from a prompt (docs/create.md).
+
+    Each kind of take runs one workflow template, adapted from a Comfy-Org template. Takes
+    render on this PC or the cloud server like videos do, one at a time on the GPU lease.
+    """
+
+    enabled: bool = True
+    image_workflow: str = "t2i_zimage_turbo"     # Image and Cinema stills
+    video_workflow: str = "t2v_3070_vace"        # text to video
+    animate_workflow: str = "i2v_3070_vace"      # start picture to video
+    video_fps: int = Field(16, ge=1, le=60)      # what Wan 2.1 was trained at
+    max_frames: int = Field(81, ge=5, le=161)    # 81 at 16 fps = 5 s, the most 1.3B is made for
+    video_steps: int = Field(20, ge=1, le=60)
+    image_steps: int = Field(8, ge=1, le=50)
+    negative_prompt: str = ""  # empty: the default render profile's negative_base (Wan's own)
+
+    def workflow_for(self, mode: str) -> str:
+        return {"image": self.image_workflow, "video": self.video_workflow,
+                "animate": self.animate_workflow}[mode]
+
+
 class JobsSection(BaseModel):
     default_max_attempts: int = 3
     lease_seconds: int = 900
@@ -313,6 +335,7 @@ class Settings(BaseModel):
     jobs: JobsSection = JobsSection()
     practice: PracticeSection = PracticeSection()
     judge: JudgeSection = JudgeSection()
+    create: CreateSection = CreateSection()
     profiles: dict[str, RenderProfile] = Field(default_factory=dict)
     config_dir: Path = Path("config")
     workflows_dir: Path = Path("workflows")
